@@ -1,10 +1,21 @@
-// main/demo_reader.c —— 内置书库与按页阅读演示。
+// main/demo_reader.c - 内置书库与按页阅读演示。
 #include "demo.h"
 #include "ui_font_noto_sc_14.h"
-#include "ui_pixel.h"
 #include "lvgl.h"
 
 #define ARRAY_SIZE(items) (sizeof(items) / sizeof((items)[0]))
+
+/* Reader 专属深色主题。避免修改共享像素主题，以免影响其他硬件 Demo。 */
+#define READER_BG              0x0B0D11
+#define READER_SURFACE         0x191D24
+#define READER_SURFACE_ACTIVE  0xECE9DF
+#define READER_BORDER          0x303641
+#define READER_TEXT            0xF3F1EB
+#define READER_MUTED           0xA6ABB5
+#define READER_TEXT_ACTIVE     0x13161B
+#define READER_ACCENT          0xC6AA70
+#define READER_TRACK           0x363B45
+#define READER_PAGE_MAX        4
 
 typedef struct {
     const char *title;
@@ -54,12 +65,55 @@ static const builtin_book_t BOOKS[] = {
 static lv_obj_t *s_scr;
 static lv_obj_t *s_content;
 static lv_obj_t *s_cards[BOOK_COUNT];
+static lv_obj_t *s_card_titles[BOOK_COUNT];
+static lv_obj_t *s_card_markers[BOOK_COUNT];
 static lv_obj_t *s_progress[BOOK_COUNT];
 static lv_obj_t *s_text;
 static lv_obj_t *s_page_info;
+static lv_obj_t *s_page_steps[READER_PAGE_MAX];
 static uint8_t s_selected;
 static uint8_t s_book_pages[BOOK_COUNT];
 static reader_view_t s_view;
+
+static lv_obj_t *reader_block(lv_obj_t *parent, int x, int y, int w, int h,
+                              uint32_t color)
+{
+    lv_obj_t *obj = lv_obj_create(parent);
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_pos(obj, x, y);
+    lv_obj_set_size(obj, w, h);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(color), 0);
+    lv_obj_set_style_border_width(obj, 0, 0);
+    lv_obj_set_style_pad_all(obj, 0, 0);
+    return obj;
+}
+
+static lv_obj_t *reader_surface(lv_obj_t *parent, int x, int y, int w, int h,
+                                uint32_t color, uint32_t border)
+{
+    lv_obj_t *surface = reader_block(parent, x, y, w, h, color);
+    lv_obj_set_style_radius(surface, 10, 0);
+    lv_obj_set_style_border_width(surface, 1, 0);
+    lv_obj_set_style_border_color(surface, lv_color_hex(border), 0);
+    return surface;
+}
+
+static lv_obj_t *reader_label(lv_obj_t *parent, const char *text,
+                              const lv_font_t *font, uint32_t color)
+{
+    lv_obj_t *label = lv_label_create(parent);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_font(label, font, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
+    return label;
+}
+
+static lv_obj_t *reader_screen_create(void)
+{
+    lv_obj_t *screen = reader_block(NULL, 0, 0, 240, 320, READER_BG);
+    lv_obj_set_style_radius(screen, 0, 0);
+    return screen;
+}
 
 static void clear_content(void)
 {
@@ -69,7 +123,12 @@ static void clear_content(void)
     }
     for (size_t i = 0; i < BOOK_COUNT; i++) {
         s_cards[i] = NULL;
+        s_card_titles[i] = NULL;
+        s_card_markers[i] = NULL;
         s_progress[i] = NULL;
+    }
+    for (size_t i = 0; i < READER_PAGE_MAX; i++) {
+        s_page_steps[i] = NULL;
     }
     s_text = NULL;
     s_page_info = NULL;
@@ -77,21 +136,42 @@ static void clear_content(void)
 
 static lv_obj_t *content_create(void)
 {
-    lv_obj_t *content = lv_obj_create(s_scr);
-    lv_obj_remove_flag(content, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_pos(content, 0, 0);
-    lv_obj_set_size(content, 240, 286);
+    lv_obj_t *content = reader_block(s_scr, 0, 0, 240, 320, READER_BG);
     lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(content, 0, 0);
-    lv_obj_set_style_pad_all(content, 0, 0);
     return content;
+}
+
+static void add_header(lv_obj_t *parent, const char *section, const char *detail)
+{
+    lv_obj_t *section_label = reader_label(parent, section, &lv_font_montserrat_14,
+                                           READER_TEXT);
+    lv_obj_set_pos(section_label, 16, 15);
+
+    lv_obj_t *detail_label = reader_label(parent, detail, &lv_font_montserrat_14,
+                                          READER_MUTED);
+    lv_obj_set_width(detail_label, 92);
+    lv_obj_set_style_text_align(detail_label, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_pos(detail_label, 132, 15);
+
+    reader_block(parent, 16, 37, 208, 1, READER_BORDER);
 }
 
 static void library_refresh(void)
 {
     for (size_t i = 0; i < BOOK_COUNT; i++) {
-        ui_pixel_set_selected(s_cards[i], i == s_selected, true);
-        lv_label_set_text_fmt(s_progress[i], "PAGE %u/%u",
+        bool selected = i == s_selected;
+        uint32_t card_color = selected ? READER_SURFACE_ACTIVE : READER_SURFACE;
+        uint32_t text_color = selected ? READER_TEXT_ACTIVE : READER_TEXT;
+        uint32_t muted_color = selected ? 0x50555D : READER_MUTED;
+
+        lv_obj_set_style_bg_color(s_cards[i], lv_color_hex(card_color), 0);
+        lv_obj_set_style_border_color(s_cards[i],
+                                      lv_color_hex(selected ? READER_ACCENT : READER_BORDER), 0);
+        lv_obj_set_style_border_width(s_cards[i], selected ? 2 : 1, 0);
+        lv_obj_set_style_text_color(s_card_titles[i], lv_color_hex(text_color), 0);
+        lv_obj_set_style_text_color(s_card_markers[i], lv_color_hex(muted_color), 0);
+        lv_obj_set_style_text_color(s_progress[i], lv_color_hex(muted_color), 0);
+        lv_label_set_text_fmt(s_progress[i], "PAGE %u / %u",
                               (unsigned)(s_book_pages[i] + 1),
                               (unsigned)BOOKS[i].page_count);
     }
@@ -101,27 +181,37 @@ static void library_build(void)
 {
     clear_content();
     s_content = content_create();
+    add_header(s_content, "LVGL", "3 BOOKS");
 
-    lv_obj_t *heading = ui_pixel_label(s_content, "3 BUILT-IN BOOKS",
-                                       &lv_font_montserrat_14, UI_INK);
-    lv_obj_set_pos(heading, 48, 48);
+    lv_obj_t *back = reader_label(s_content, "<", &lv_font_montserrat_20,
+                                  READER_TEXT);
+    lv_obj_set_pos(back, 18, 48);
+
+    lv_obj_t *heading = reader_label(s_content, "YOUR SHELF", &lv_font_montserrat_20,
+                                     READER_TEXT);
+    lv_obj_set_width(heading, 208);
+    lv_obj_set_style_text_align(heading, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_pos(heading, 16, 50);
 
     for (size_t i = 0; i < BOOK_COUNT; i++) {
-        s_cards[i] = ui_pixel_panel_create(s_content, 17, 67 + (int)i * 51,
-                                           206, 43, UI_PAPER);
-        lv_obj_t *title = ui_pixel_label(s_cards[i], BOOKS[i].title,
-                                         BOOKS[i].font, UI_INK);
-        lv_obj_set_pos(title, 10, 4);
-        s_progress[i] = ui_pixel_label(s_cards[i], "", &lv_font_montserrat_14,
-                                       UI_INK);
-        lv_obj_set_pos(s_progress[i], 10, 22);
+        int y = 94 + (int)i * 66;
+        s_cards[i] = reader_surface(s_content, 16, y, 208, 60,
+                                    READER_SURFACE, READER_BORDER);
+        reader_block(s_cards[i], 0, 12, 4, 36, READER_ACCENT);
+
+        s_card_titles[i] = reader_label(s_cards[i], BOOKS[i].title,
+                                        BOOKS[i].font, READER_TEXT);
+        lv_obj_set_pos(s_card_titles[i], 17, 12);
+
+        s_progress[i] = reader_label(s_cards[i], "", &lv_font_montserrat_14,
+                                     READER_MUTED);
+        lv_obj_set_pos(s_progress[i], 17, 36);
+
+        s_card_markers[i] = reader_label(s_cards[i], ">", &lv_font_montserrat_20,
+                                         READER_MUTED);
+        lv_obj_set_pos(s_card_markers[i], 180, 17);
     }
 
-    lv_obj_t *help = ui_pixel_label(s_content, "UP/DOWN: SELECT\nOK: READ",
-                                    &lv_font_montserrat_14, UI_INK);
-    lv_obj_set_style_text_align(help, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_width(help, 180);
-    lv_obj_set_pos(help, 30, 218);
     library_refresh();
 }
 
@@ -131,8 +221,18 @@ static void reader_refresh(void)
     uint8_t page = s_book_pages[s_selected];
 
     lv_label_set_text_static(s_text, book->pages[page]);
-    lv_label_set_text_fmt(s_page_info, "%s  %u/%u", book->title,
+    lv_label_set_text_fmt(s_page_info, "PAGE %u / %u",
                           (unsigned)(page + 1), (unsigned)book->page_count);
+
+    for (size_t i = 0; i < READER_PAGE_MAX; i++) {
+        if (i < book->page_count) {
+            lv_obj_remove_flag(s_page_steps[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_bg_color(s_page_steps[i],
+                                      lv_color_hex(i <= page ? READER_ACCENT : READER_TRACK), 0);
+        } else {
+            lv_obj_add_flag(s_page_steps[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 }
 
 static void reader_build(void)
@@ -140,25 +240,35 @@ static void reader_build(void)
     clear_content();
     s_content = content_create();
 
-    const lv_font_t *font = BOOKS[s_selected].font;
-    lv_obj_t *panel = ui_pixel_panel_create(s_content, 10, 54, 220, 205, UI_PAPER);
+    const builtin_book_t *book = &BOOKS[s_selected];
+    add_header(s_content, "READING", "");
+
+    lv_obj_t *title = reader_label(s_content, book->title, book->font, READER_TEXT);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(title, 208);
+    lv_obj_set_pos(title, 16, 50);
+
+    lv_obj_t *panel = reader_surface(s_content, 16, 78, 208, 184,
+                                     READER_SURFACE, READER_BORDER);
     s_text = lv_label_create(panel);
     lv_label_set_long_mode(s_text, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_text, 194);
-    lv_obj_set_style_text_font(s_text, font, 0);
-    lv_obj_set_style_text_color(s_text, lv_color_hex(UI_INK), 0);
-    lv_obj_set_pos(s_text, 9, 11);
+    lv_obj_set_width(s_text, 180);
+    lv_obj_set_style_text_font(s_text, book->font, 0);
+    lv_obj_set_style_text_color(s_text, lv_color_hex(READER_TEXT), 0);
+    lv_obj_set_style_text_line_space(s_text, 4, 0);
+    lv_obj_set_pos(s_text, 14, 14);
 
-    s_page_info = lv_label_create(panel);
-    lv_obj_set_style_text_font(s_page_info, font, 0);
-    lv_obj_set_style_text_color(s_page_info, lv_color_hex(UI_SKY_DARK), 0);
-    lv_obj_set_pos(s_page_info, 9, 159);
+    s_page_info = reader_label(s_content, "", &lv_font_montserrat_14, READER_MUTED);
+    lv_obj_set_width(s_page_info, 208);
+    lv_obj_set_style_text_align(s_page_info, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_pos(s_page_info, 16, 273);
 
-    lv_obj_t *help = ui_pixel_label(s_content, "UP: PREV  DOWN: NEXT\nOK: LIBRARY",
-                                    &lv_font_montserrat_14, UI_INK);
-    lv_obj_set_style_text_align(help, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_width(help, 220);
-    lv_obj_set_pos(help, 10, 264);
+    for (size_t i = 0; i < READER_PAGE_MAX; i++) {
+        s_page_steps[i] = reader_block(s_content, 16 + (int)i * 53, 300, 49, 4,
+                                       READER_TRACK);
+        lv_obj_set_style_radius(s_page_steps[i], 2, 0);
+    }
+
     reader_refresh();
 }
 
@@ -166,7 +276,7 @@ void demo_reader_enter(void)
 {
     s_selected = 0;
     s_view = READER_LIBRARY;
-    s_scr = ui_pixel_screen_create("READER");
+    s_scr = reader_screen_create();
     library_build();
     lv_screen_load(s_scr);
 }
@@ -182,7 +292,12 @@ void demo_reader_exit(void)
     s_page_info = NULL;
     for (size_t i = 0; i < BOOK_COUNT; i++) {
         s_cards[i] = NULL;
+        s_card_titles[i] = NULL;
+        s_card_markers[i] = NULL;
         s_progress[i] = NULL;
+    }
+    for (size_t i = 0; i < READER_PAGE_MAX; i++) {
+        s_page_steps[i] = NULL;
     }
 }
 
