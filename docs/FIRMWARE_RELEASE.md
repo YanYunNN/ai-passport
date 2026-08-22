@@ -160,7 +160,7 @@ idf.py -p /dev/cu.usbmodemXXXX monitor
 - Startup logs are stable; there is no reboot loop, assertion, or watchdog reset.
 - The display has correct orientation, colors, backlight, and refresh behavior.
 - `UP`, `DOWN`, short `OK`, and long `OK` follow the expected menu behavior.
-- Reader opens the two bundled books, changes pages, returns to its library on short `OK`, and returns to the main menu on long `OK`.
+- Reader opens all three bundled books, including the Chinese `青岚问道` sample; it changes pages, returns to its library on short `OK`, and returns to the main menu on long `OK`.
 - Audio and battery pages behave correctly when their hardware is present; the menu marks optional unavailable peripherals as failed without blocking other pages.
 - Repeated page transitions do not visibly leak objects, tasks, or heap.
 

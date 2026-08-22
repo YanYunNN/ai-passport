@@ -1,5 +1,6 @@
 // main/demo_reader.c —— 内置书库与按页阅读演示。
 #include "demo.h"
+#include "ui_font_noto_sc_14.h"
 #include "ui_pixel.h"
 #include "lvgl.h"
 
@@ -9,6 +10,7 @@ typedef struct {
     const char *title;
     const char * const *pages;
     uint8_t page_count;
+    const lv_font_t *font;
 } builtin_book_t;
 
 typedef enum {
@@ -17,8 +19,8 @@ typedef enum {
 } reader_view_t;
 
 /*
- * 这些短篇直接编译到 Flash，避免 Demo 阶段引入文件系统和动态分配。
- * 当前工程只启用了 Montserrat 字体，故示例使用 ASCII 文本以保证真机可见。
+ * 所有书籍直接编译到 Flash，避免 Demo 阶段引入文件系统和动态分配。
+ * 英文短篇使用 Montserrat；中文短篇使用受限 Noto Sans SC 字符子集。
  */
 static const char * const LITTLE_CIRCUIT[] = {
     "At dusk, Mina found a\ntiny circuit under a\nbench. One blue light\nblinked beside a note:\nMAKE ONE KIND THING\nTODAY.",
@@ -34,9 +36,18 @@ static const char * const SKY_LIBRARY[] = {
     "Before he left, Arlo\nreturned the book. The\ncloud smiled: EVERY\nQUESTION MAKES ROOM\nFOR ANOTHER STORY.",
 };
 
+/* 原创中文修真短篇，不包含任何第三方小说正文。 */
+static const char * const QINGLAN_PATH[] = {
+    "青岚村外，夜雨初歇。\n少年陆川在石桥下\n拾到一枚温热的青玉。\n玉面只刻着两字：守心。",
+    "次日清晨，陆川沿着\n山路上行。雾里传来\n钟声，他看见古观门前\n有一盏未灭的灯。",
+    "老人递来木剑，说：\n修行先学取舍。若只求\n快，心便会比脚步更早\n迷路。",
+    "陆川将青玉放回掌中，\n朝晨光走去。他知道前方\n没有捷径，只有每日不改\n的问心。",
+};
+
 static const builtin_book_t BOOKS[] = {
-    { "LITTLE CIRCUIT", LITTLE_CIRCUIT, ARRAY_SIZE(LITTLE_CIRCUIT) },
-    { "SKY LIBRARY",    SKY_LIBRARY,    ARRAY_SIZE(SKY_LIBRARY) },
+    { "LITTLE CIRCUIT", LITTLE_CIRCUIT, ARRAY_SIZE(LITTLE_CIRCUIT), &lv_font_montserrat_14 },
+    { "SKY LIBRARY",    SKY_LIBRARY,    ARRAY_SIZE(SKY_LIBRARY),    &lv_font_montserrat_14 },
+    { "青岚问道",        QINGLAN_PATH,   ARRAY_SIZE(QINGLAN_PATH),   &ui_font_noto_sc_14 },
 };
 #define BOOK_COUNT ARRAY_SIZE(BOOKS)
 
@@ -91,27 +102,26 @@ static void library_build(void)
     clear_content();
     s_content = content_create();
 
-    lv_obj_t *heading = ui_pixel_label(s_content, "2 BUILT-IN BOOKS",
+    lv_obj_t *heading = ui_pixel_label(s_content, "3 BUILT-IN BOOKS",
                                        &lv_font_montserrat_14, UI_INK);
     lv_obj_set_pos(heading, 48, 48);
 
     for (size_t i = 0; i < BOOK_COUNT; i++) {
-        s_cards[i] = ui_pixel_panel_create(s_content, 17, 72 + (int)i * 63,
-                                           206, 54, UI_PAPER);
+        s_cards[i] = ui_pixel_panel_create(s_content, 17, 67 + (int)i * 51,
+                                           206, 43, UI_PAPER);
         lv_obj_t *title = ui_pixel_label(s_cards[i], BOOKS[i].title,
-                                         &lv_font_montserrat_14, UI_INK);
-        lv_obj_set_pos(title, 10, 7);
+                                         BOOKS[i].font, UI_INK);
+        lv_obj_set_pos(title, 10, 4);
         s_progress[i] = ui_pixel_label(s_cards[i], "", &lv_font_montserrat_14,
                                        UI_INK);
-        lv_obj_set_pos(s_progress[i], 10, 28);
+        lv_obj_set_pos(s_progress[i], 10, 22);
     }
 
     lv_obj_t *help = ui_pixel_label(s_content, "UP/DOWN: SELECT\nOK: READ",
                                     &lv_font_montserrat_14, UI_INK);
     lv_obj_set_style_text_align(help, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(help, 180);
-    lv_obj_set_pos(help, 30, 204);
-    ui_pixel_mascot_create(s_content, 101, 238);
+    lv_obj_set_pos(help, 30, 218);
     library_refresh();
 }
 
@@ -130,16 +140,17 @@ static void reader_build(void)
     clear_content();
     s_content = content_create();
 
+    const lv_font_t *font = BOOKS[s_selected].font;
     lv_obj_t *panel = ui_pixel_panel_create(s_content, 10, 54, 220, 205, UI_PAPER);
     s_text = lv_label_create(panel);
     lv_label_set_long_mode(s_text, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(s_text, 194);
-    lv_obj_set_style_text_font(s_text, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_text, font, 0);
     lv_obj_set_style_text_color(s_text, lv_color_hex(UI_INK), 0);
     lv_obj_set_pos(s_text, 9, 11);
 
     s_page_info = lv_label_create(panel);
-    lv_obj_set_style_text_font(s_page_info, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_page_info, font, 0);
     lv_obj_set_style_text_color(s_page_info, lv_color_hex(UI_SKY_DARK), 0);
     lv_obj_set_pos(s_page_info, 9, 159);
 
