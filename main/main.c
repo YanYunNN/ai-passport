@@ -22,6 +22,7 @@ static const demo_entry_t DEMOS[] = {
     { "Button",  demo_button_enter,  demo_button_exit,  demo_button_key  },
     { "Audio",   demo_audio_enter,   demo_audio_exit,   demo_audio_key   },
     { "Battery", demo_battery_enter, demo_battery_exit, demo_battery_key },
+    { "Reader",  demo_reader_enter,  demo_reader_exit,  demo_reader_key  },
 };
 #define DEMO_COUNT (sizeof(DEMOS) / sizeof(DEMOS[0]))
 
@@ -50,9 +51,10 @@ static void menu_build(void) {
     s_menu_scr = ui_pixel_screen_create("FoloToy");
 
     for (size_t i = 0; i < DEMO_COUNT; i++) {
+        // 两列三行的紧凑布局，最多容纳六个 Demo，同时给底部吉祥物留出空间。
         int x = 11 + (int)(i % 2) * 112;
-        int y = 58 + (int)(i / 2) * 86;
-        s_cards[i] = ui_pixel_panel_create(s_menu_scr, x, y, 102, 72, UI_PAPER);
+        int y = 55 + (int)(i / 2) * 60;
+        s_cards[i] = ui_pixel_panel_create(s_menu_scr, x, y, 102, 54, UI_PAPER);
         s_rows[i] = lv_label_create(s_cards[i]);
         lv_obj_set_style_text_font(s_rows[i], &lv_font_montserrat_20, 0);
         lv_obj_set_style_text_align(s_rows[i], LV_TEXT_ALIGN_CENTER, 0);
@@ -120,9 +122,10 @@ void app_main(void) {
     s_ok[1] = (bsp_button_init(on_key, NULL) == ESP_OK);
     s_ok[2] = (bsp_audio_init() == ESP_OK);
     s_ok[3] = (bsp_battery_init() == ESP_OK);
+    s_ok[4] = true;                                   // Reader 使用内置书库，无硬件依赖
 
     if (bsp_lvgl_lock(1000)) { enter_menu(); bsp_lvgl_unlock(); }
 
-    ESP_LOGI(TAG, "就绪:Display=%d Button=%d Audio=%d Battery=%d",
-             s_ok[0], s_ok[1], s_ok[2], s_ok[3]);
+    ESP_LOGI(TAG, "就绪:Display=%d Button=%d Audio=%d Battery=%d Reader=%d",
+             s_ok[0], s_ok[1], s_ok[2], s_ok[3], s_ok[4]);
 }

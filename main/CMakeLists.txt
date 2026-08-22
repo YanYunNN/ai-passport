@@ -6,6 +6,7 @@ idf_component_register(
          "demo_button.c"
          "demo_audio.c"
          "demo_battery.c"
+         "demo_reader.c"
     INCLUDE_DIRS "."
     REQUIRES bsp
 )
