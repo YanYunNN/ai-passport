@@ -24,20 +24,36 @@ interface Outcome {
     reason: DenyReason | "user";
 }
 
+interface Projection {
+    pending: PendingRequest;
+    outcome: Outcome;
+    decidedAt: number;
+}
+
 interface RelayState {
     deviceId?: string;
     currentSessionId?: string;
     pending?: PendingRequest;
+    outbox?: Projection[];
 }
 
 interface SocketAttachment {
     deviceId: string;
+    credentialHash: string;
     sessionId?: string;
+}
+
+interface DeviceAuthorizationRecord {
+    credential_hash: string;
+    previous_credential_hash: string | null;
+    previous_credential_expires_at: number | null;
+    status: "active" | "revoked";
 }
 
 const STATE_KEY = "relay_state";
 const requestKey = (requestId: string): string => `request:${requestId}`;
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
+const projectionRetryDelayMs = 10_000;
 
 export class PassportRelay extends DurableObject<Env> {
     private readonly sockets = new Map<WebSocket, SocketAttachment>();
@@ -46,7 +62,9 @@ export class PassportRelay extends DurableObject<Env> {
         super(ctx, env);
         for (const socket of ctx.getWebSockets()) {
             const attachment = socket.deserializeAttachment() as SocketAttachment | null;
-            if (attachment && isDeviceId(attachment.deviceId)) this.sockets.set(socket, attachment);
+            if (attachment && isDeviceId(attachment.deviceId) && attachment.credentialHash) {
+                this.sockets.set(socket, attachment);
+            }
         }
     }
 
@@ -59,26 +77,29 @@ export class PassportRelay extends DurableObject<Env> {
         if (request.method === "GET" && url.pathname.startsWith("/internal/requests/")) {
             return this.getRequest(request, url.pathname.slice("/internal/requests/".length));
         }
+        if (request.method === "POST" && url.pathname === "/internal/revoke") return this.revoke(request);
         return json({ error: "not found" }, 404);
     }
 
     async alarm(): Promise<void> {
         const state = await this.loadState();
-        if (!state.pending) return;
-        if (state.pending.expiresAt <= nowSeconds()) {
+        if (state.pending && state.pending.expiresAt <= nowSeconds()) {
             await this.finishPending(state.pending, "deny", "timeout");
-        } else {
-            await this.ctx.storage.setAlarm(state.pending.expiresAt * 1000);
+            return;
         }
+        await this.flushOutbox();
     }
 
     async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
-        const attachment = this.sockets.get(socket) ?? socket.deserializeAttachment() as SocketAttachment | null;
+        const attachment = this.attachmentFor(socket);
         if (!attachment || typeof message !== "string") {
             await this.denyCurrentForProtocolError();
             return;
         }
-        const state = await this.loadState();
+        if (!(await this.credentialStillValid(attachment))) {
+            await this.invalidateSession(attachment.sessionId, true);
+            return;
+        }
         if (!attachment.sessionId) {
             const hello = parseHello(message, attachment.deviceId);
             if (!hello) {
@@ -89,6 +110,7 @@ export class PassportRelay extends DurableObject<Env> {
             return;
         }
 
+        const state = await this.loadState();
         const decision = parseDecision(message, attachment.deviceId);
         if (!decision || state.deviceId !== attachment.deviceId || state.currentSessionId !== attachment.sessionId ||
             decision.session_id !== attachment.sessionId || !state.pending ||
@@ -103,17 +125,9 @@ export class PassportRelay extends DurableObject<Env> {
     }
 
     async webSocketClose(socket: WebSocket): Promise<void> {
-        const attachment = this.sockets.get(socket) ?? socket.deserializeAttachment() as SocketAttachment | null;
+        const attachment = this.attachmentFor(socket);
         this.sockets.delete(socket);
-        if (!attachment?.sessionId) return;
-        const state = await this.loadState();
-        if (state.currentSessionId === attachment.sessionId) {
-            const next: RelayState = { ...state, currentSessionId: undefined };
-            await this.saveState(next);
-            if (state.pending?.sessionId === attachment.sessionId) {
-                await this.finishPending(state.pending, "deny", "session_lost");
-            }
-        }
+        await this.invalidateSession(attachment?.sessionId, false);
     }
 
     async webSocketError(socket: WebSocket): Promise<void> {
@@ -121,8 +135,9 @@ export class PassportRelay extends DurableObject<Env> {
     }
 
     private async connectDevice(request: Request, deviceId: string): Promise<Response> {
+        const credentialHash = request.headers.get("X-Passport-Credential-Hash");
         if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket" || !isDeviceId(deviceId) ||
-            request.headers.get("X-Passport-Authenticated-Device") !== deviceId) {
+            request.headers.get("X-Passport-Authenticated-Device") !== deviceId || !credentialHash) {
             return json({ error: "unauthorized" }, 401);
         }
         const state = await this.loadState();
@@ -131,7 +146,7 @@ export class PassportRelay extends DurableObject<Env> {
 
         const pair = new WebSocketPair();
         const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
-        const attachment: SocketAttachment = { deviceId };
+        const attachment: SocketAttachment = { deviceId, credentialHash };
         server.serializeAttachment(attachment);
         this.ctx.acceptWebSocket(server);
         this.sockets.set(server, attachment);
@@ -144,17 +159,12 @@ export class PassportRelay extends DurableObject<Env> {
             socket.close(1008, "device mismatch");
             return;
         }
-        if (state.pending) await this.finishPending(state.pending, "deny", "session_lost");
-        for (const [existing, existingAttachment] of this.sockets) {
-            if (existing !== socket && existingAttachment.sessionId) {
-                existing.close(1000, "superseded by new session");
-                this.sockets.delete(existing);
-            }
-        }
-        const nextAttachment: SocketAttachment = { deviceId: attachment.deviceId, sessionId };
+        if (state.currentSessionId) await this.invalidateSession(state.currentSessionId, true);
+        const nextAttachment: SocketAttachment = { ...attachment, sessionId };
         socket.serializeAttachment(nextAttachment);
         this.sockets.set(socket, nextAttachment);
-        await this.saveState({ deviceId: attachment.deviceId, currentSessionId: sessionId });
+        const current = await this.loadState();
+        await this.saveState({ ...current, deviceId: attachment.deviceId, currentSessionId: sessionId });
     }
 
     private async createRequest(request: Request): Promise<Response> {
@@ -162,12 +172,12 @@ export class PassportRelay extends DurableObject<Env> {
         if (!deviceId || !isDeviceId(deviceId)) return json({ error: "unauthorized" }, 401);
         const input = await request.json<Partial<PendingRequest>>().catch(() => null);
         if (!input || input.deviceId !== deviceId || typeof input.requestId !== "string" ||
-            typeof input.tool !== "string" || typeof input.summary !== "string" ||
-            typeof input.expiresAt !== "number") {
+            typeof input.tool !== "string" || typeof input.summary !== "string" || typeof input.expiresAt !== "number") {
             return json({ error: "invalid internal request" }, 400);
         }
         const state = await this.loadState();
         if (state.pending) return json({ error: "approval already pending" }, 409);
+        const socket = state.currentSessionId ? await this.currentAuthorizedSocket(state.currentSessionId) : undefined;
         const created: PendingRequest = {
             requestId: input.requestId,
             deviceId,
@@ -176,8 +186,7 @@ export class PassportRelay extends DurableObject<Env> {
             summary: input.summary,
             expiresAt: input.expiresAt,
         };
-        if (created.expiresAt <= nowSeconds() || !state.currentSessionId ||
-            !this.currentSocket(state.currentSessionId)) {
+        if (created.expiresAt <= nowSeconds() || !socket) {
             const outcome: Outcome = { requestId: created.requestId, status: "deny", reason: "offline" };
             await this.storeOutcome(created, outcome);
             return json(toResponse(outcome));
@@ -185,9 +194,9 @@ export class PassportRelay extends DurableObject<Env> {
 
         await this.saveState({ ...state, pending: created });
         await this.ctx.storage.put(requestKey(created.requestId), { status: "pending" });
-        await this.ctx.storage.setAlarm(created.expiresAt * 1000);
+        await this.refreshAlarm(await this.loadState());
         try {
-            this.currentSocket(created.sessionId)?.send(serializeDeviceRequest({
+            socket.send(serializeDeviceRequest({
                 v: 1,
                 type: "request",
                 device_id: created.deviceId,
@@ -211,6 +220,14 @@ export class PassportRelay extends DurableObject<Env> {
         return this.getStoredResponse(requestId);
     }
 
+    private async revoke(request: Request): Promise<Response> {
+        const deviceId = request.headers.get("X-Passport-Device-Id");
+        if (!deviceId || !isDeviceId(deviceId)) return json({ error: "unauthorized" }, 401);
+        const state = await this.loadState();
+        if (state.currentSessionId) await this.invalidateSession(state.currentSessionId, true);
+        return json({ status: "revoked" });
+    }
+
     private async getStoredResponse(requestId: string): Promise<Response> {
         const stored = await this.ctx.storage.get<{ status: ApprovalStatus; reason?: DenyReason | "user" }>(requestKey(requestId));
         if (!stored) return json({ error: "not found" }, 404);
@@ -220,11 +237,50 @@ export class PassportRelay extends DurableObject<Env> {
         });
     }
 
+    private attachmentFor(socket: WebSocket): SocketAttachment | null {
+        return this.sockets.get(socket) ?? socket.deserializeAttachment() as SocketAttachment | null;
+    }
+
     private currentSocket(sessionId: string): WebSocket | undefined {
         for (const [socket, attachment] of this.sockets) {
             if (attachment.sessionId === sessionId) return socket;
         }
         return undefined;
+    }
+
+    private async currentAuthorizedSocket(sessionId: string): Promise<WebSocket | undefined> {
+        const socket = this.currentSocket(sessionId);
+        const attachment = socket ? this.attachmentFor(socket) : null;
+        if (socket && attachment && await this.credentialStillValid(attachment)) return socket;
+        await this.invalidateSession(sessionId, true);
+        return undefined;
+    }
+
+    private async credentialStillValid(attachment: SocketAttachment): Promise<boolean> {
+        const record = await this.env.DB.prepare(
+            "SELECT credential_hash, previous_credential_hash, previous_credential_expires_at, status " +
+            "FROM devices WHERE device_id = ?1",
+        ).bind(attachment.deviceId).first<DeviceAuthorizationRecord>();
+        if (!record || record.status !== "active") return false;
+        if (record.credential_hash === attachment.credentialHash) return true;
+        return record.previous_credential_hash === attachment.credentialHash &&
+            record.previous_credential_expires_at !== null && record.previous_credential_expires_at >= nowSeconds();
+    }
+
+    private async invalidateSession(sessionId: string | undefined, closeSockets: boolean): Promise<void> {
+        if (!sessionId) return;
+        const state = await this.loadState();
+        if (closeSockets) {
+            for (const [socket, attachment] of this.sockets) {
+                if (attachment.sessionId === sessionId) {
+                    socket.close(1008, "session invalidated");
+                    this.sockets.delete(socket);
+                }
+            }
+        }
+        if (state.currentSessionId !== sessionId) return;
+        await this.saveState({ ...state, currentSessionId: undefined });
+        if (state.pending?.sessionId === sessionId) await this.finishPending(state.pending, "deny", "session_lost");
     }
 
     private async denyCurrentForProtocolError(): Promise<void> {
@@ -239,28 +295,44 @@ export class PassportRelay extends DurableObject<Env> {
     ): Promise<void> {
         const state = await this.loadState();
         if (!state.pending || state.pending.requestId !== pending.requestId) return;
-        const next: RelayState = { ...state, pending: undefined };
-        const outcome: Outcome = { requestId: pending.requestId, status, reason };
-        await this.ctx.storage.put({ [STATE_KEY]: next, [requestKey(pending.requestId)]: outcome });
-        await this.refreshAlarm(next);
-        await writeTerminalAudit(this.env, {
-            request_id: pending.requestId,
-            device_id: pending.deviceId,
-            tool: pending.tool,
-            summary: pending.summary,
-            expires_at: pending.expiresAt,
-        }, pending.sessionId, status, reason, nowSeconds());
+        const projection: Projection = {
+            pending,
+            outcome: { requestId: pending.requestId, status, reason },
+            decidedAt: nowSeconds(),
+        };
+        const next: RelayState = { ...state, pending: undefined, outbox: [...(state.outbox ?? []), projection] };
+        await this.ctx.storage.put({ [STATE_KEY]: next, [requestKey(pending.requestId)]: projection.outcome });
+        await this.flushOutbox();
     }
 
     private async storeOutcome(pending: PendingRequest, outcome: Outcome): Promise<void> {
-        await this.ctx.storage.put(requestKey(pending.requestId), outcome);
-        await writeTerminalAudit(this.env, {
-            request_id: pending.requestId,
-            device_id: pending.deviceId,
-            tool: pending.tool,
-            summary: pending.summary,
-            expires_at: pending.expiresAt,
-        }, pending.sessionId, outcome.status, outcome.reason, nowSeconds());
+        const state = await this.loadState();
+        const projection: Projection = { pending, outcome, decidedAt: nowSeconds() };
+        const next: RelayState = { ...state, outbox: [...(state.outbox ?? []), projection] };
+        await this.ctx.storage.put({ [STATE_KEY]: next, [requestKey(pending.requestId)]: outcome });
+        await this.flushOutbox();
+    }
+
+    private async flushOutbox(): Promise<void> {
+        let state = await this.loadState();
+        const remaining: Projection[] = [];
+        for (const projection of state.outbox ?? []) {
+            try {
+                await writeTerminalAudit(this.env, {
+                    request_id: projection.pending.requestId,
+                    device_id: projection.pending.deviceId,
+                    tool: projection.pending.tool,
+                    summary: projection.pending.summary,
+                    expires_at: projection.pending.expiresAt,
+                }, projection.pending.sessionId, projection.outcome.status, projection.outcome.reason, projection.decidedAt);
+            } catch (error) {
+                console.error("Unable to project Passport terminal state to D1", error);
+                remaining.push(projection);
+            }
+        }
+        state = await this.loadState();
+        await this.saveState({ ...state, outbox: remaining });
+        await this.refreshAlarm(await this.loadState());
     }
 
     private async loadState(): Promise<RelayState> {
@@ -272,7 +344,11 @@ export class PassportRelay extends DurableObject<Env> {
     }
 
     private async refreshAlarm(state: RelayState): Promise<void> {
-        if (state.pending) await this.ctx.storage.setAlarm(state.pending.expiresAt * 1000);
+        const alarmAt = Math.min(
+            state.pending ? state.pending.expiresAt * 1000 : Number.POSITIVE_INFINITY,
+            state.outbox?.length ? Date.now() + projectionRetryDelayMs : Number.POSITIVE_INFINITY,
+        );
+        if (Number.isFinite(alarmAt)) await this.ctx.storage.setAlarm(alarmAt);
         else await this.ctx.storage.deleteAlarm();
     }
 }

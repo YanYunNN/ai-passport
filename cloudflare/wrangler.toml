@@ -7,7 +7,7 @@ compatibility_date = "2026-08-23"
 [[d1_databases]]
 binding = "DB"
 database_name = "kiro-passport"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "ebc29622-5e24-4af8-be5c-23448bf439b5"
 
 [[durable_objects.bindings]]
 name = "PASSPORTS"

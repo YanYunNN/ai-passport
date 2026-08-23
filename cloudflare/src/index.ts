@@ -8,7 +8,7 @@ import {
 import { createRequestIndex, getRequestIndex } from "./db";
 import type { Env } from "./env";
 import { PassportRelay } from "./passport-relay";
-import { isDeviceId, parseApprovalInput, REQUEST_ID_PATTERN, SESSION_ID_PATTERN } from "./protocol";
+import { isDeviceId, parseApprovalInput, REQUEST_ID_PATTERN } from "./protocol";
 
 export { PassportRelay };
 
@@ -31,6 +31,8 @@ export default {
             if (request.method === "POST" && url.pathname === "/v1/admin/devices") {
                 return registerDevice(request, env);
             }
+            const adminDeviceMatch = url.pathname.match(/^\/v1\/admin\/devices\/(passport-[A-F0-9]{12})$/u);
+            if (request.method === "DELETE" && adminDeviceMatch) return revokeDevice(request, env, adminDeviceMatch[1]);
             const rotateMatch = url.pathname.match(/^\/v1\/admin\/devices\/(passport-[A-F0-9]{12})\/rotate$/u);
             if (request.method === "POST" && rotateMatch) return rotateDevice(request, env, rotateMatch[1]);
 
@@ -49,11 +51,13 @@ export default {
 async function connectDevice(request: Request, env: Env, deviceId: string): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return json({ error: "websocket upgrade required" }, 426);
     const credential = bearerToken(request);
-    if (!credential || !(await verifyDeviceCredential(env, deviceId, credential))) return json({ error: "unauthorized" }, 401);
+    const verified = credential ? await verifyDeviceCredential(env, deviceId, credential) : null;
+    if (!verified) return json({ error: "unauthorized" }, 401);
 
     const headers = new Headers(request.headers);
-    // Overwrite, never trust an externally supplied forwarding identity header.
+    // Overwrite, never trust externally supplied forwarding identity or credential-hash headers.
     headers.set("X-Passport-Authenticated-Device", deviceId);
+    headers.set("X-Passport-Credential-Hash", verified.credentialHash);
     const id = env.PASSPORTS.idFromName(deviceId);
     return env.PASSPORTS.get(id).fetch(new Request(request, { headers }));
 }
@@ -89,16 +93,44 @@ async function rotateDevice(request: Request, env: Env, deviceId: string): Promi
         return json({ error: "grace_seconds must be 60..3600" }, 400);
     }
 
+    const existing = await env.DB.prepare(
+        "SELECT credential_version FROM devices WHERE device_id = ?1 AND status = 'active'",
+    ).bind(deviceId).first<{ credential_version: number }>();
+    if (!existing) return json({ error: "device not found" }, 404);
+
     const credential = issueDeviceCredential();
     const credentialHash = await hashDeviceCredential(credential, env.DEVICE_CREDENTIAL_PEPPER);
     const now = nowSeconds();
-    const result = await env.DB.prepare(
+    await env.DB.prepare(
         "UPDATE devices SET previous_credential_hash = credential_hash, previous_credential_expires_at = ?1, " +
         "credential_hash = ?2, credential_version = credential_version + 1, rotated_at = ?3 " +
         "WHERE device_id = ?4 AND status = 'active'",
     ).bind(now + value, credentialHash, now, deviceId).run();
+    return json({
+        device_id: deviceId,
+        credential,
+        credential_version: existing.credential_version + 1,
+        grace_expires_at: now + value,
+    });
+}
+
+async function revokeDevice(request: Request, env: Env, deviceId: string): Promise<Response> {
+    if (!hasBearerSecret(request, env.ADMIN_API_KEY)) return json({ error: "unauthorized" }, 401);
+    const result = await env.DB.prepare(
+        "UPDATE devices SET status = 'revoked', previous_credential_hash = NULL, previous_credential_expires_at = NULL WHERE device_id = ?1 AND status = 'active'",
+    ).bind(deviceId).run();
     if (!result.meta.changed_db_rows) return json({ error: "device not found" }, 404);
-    return json({ device_id: deviceId, credential, credential_version: undefined, grace_expires_at: now + value });
+
+    try {
+        await env.PASSPORTS.get(env.PASSPORTS.idFromName(deviceId)).fetch("https://passport.internal/internal/revoke", {
+            method: "POST",
+            headers: { "X-Passport-Device-Id": deviceId },
+        });
+    } catch (error) {
+        // The persisted revoked status is still checked before any future allow; DO retry on next activity is safe.
+        console.error("Unable to immediately close revoked Passport session", error);
+    }
+    return json({ device_id: deviceId, status: "revoked" });
 }
 
 async function createApproval(request: Request, env: Env, deviceId: string): Promise<Response> {

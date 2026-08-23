@@ -9,6 +9,11 @@ export interface DeviceCredentialRecord {
     status: "active" | "revoked";
 }
 
+export interface VerifiedDeviceCredential {
+    record: DeviceCredentialRecord;
+    credentialHash: string;
+}
+
 const encoder = new TextEncoder();
 
 function base64Url(bytes: Uint8Array): string {
@@ -54,17 +59,17 @@ export async function verifyDeviceCredential(
     env: Env,
     deviceId: string,
     credential: string,
-): Promise<DeviceCredentialRecord | null> {
+): Promise<VerifiedDeviceCredential | null> {
     const record = await env.DB.prepare(
         "SELECT device_id, credential_hash, previous_credential_hash, previous_credential_expires_at, credential_version, status " +
         "FROM devices WHERE device_id = ?1",
     ).bind(deviceId).first<DeviceCredentialRecord>();
     if (!record || record.status !== "active") return null;
 
-    const hash = await hashDeviceCredential(credential, env.DEVICE_CREDENTIAL_PEPPER);
-    const currentMatches = constantTimeEqual(hash, record.credential_hash);
+    const credentialHash = await hashDeviceCredential(credential, env.DEVICE_CREDENTIAL_PEPPER);
+    const currentMatches = constantTimeEqual(credentialHash, record.credential_hash);
     const previousMatches = record.previous_credential_hash !== null &&
         record.previous_credential_expires_at !== null && record.previous_credential_expires_at >= Date.now() / 1000 &&
-        constantTimeEqual(hash, record.previous_credential_hash);
-    return currentMatches || previousMatches ? record : null;
+        constantTimeEqual(credentialHash, record.previous_credential_hash);
+    return currentMatches || previousMatches ? { record, credentialHash } : null;
 }

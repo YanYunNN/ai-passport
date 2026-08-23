@@ -108,7 +108,17 @@ curl --fail --silent --show-error -X POST \
   --data '{"grace_seconds":600}'
 ```
 
-在 grace window 内把新 credential 写入设备并确认重新上线；窗口过后旧 credential 会被拒绝。若设备遗失，应在 Dashboard/D1 运维流程中将 `devices.status` 设为 `revoked`，然后部署专用管理 API 或受控 SQL 操作；不要仅依赖改 Wi-Fi 密码。
+在 grace window 内把新 credential 写入设备并确认重新上线；窗口过后，旧 credential 的**新连接和存活会话的后续请求/decision**均会被拒绝。Worker 在每次创建审批和处理设备 decision 时都会重新检查 D1 中的设备状态与该 socket 的 credential hash，不能仅依赖握手时的一次认证。
+
+设备遗失或需要立刻收回权限时，调用撤销 API。它先持久化 `revoked` 状态，再通知对应 DO 关闭 socket 并将未决请求置为 `deny/session_lost`：
+
+```sh
+curl --fail --silent --show-error -X DELETE \
+  "$RELAY/v1/admin/devices/passport-AABBCCDDEEFF" \
+  -H "Authorization: Bearer $ADMIN_KEY"
+```
+
+撤销是单向状态；如要重新启用设备，使用新的受控管理流程注册/替换 credential，不要仅依赖改 Wi-Fi 密码。
 
 ## 5. 设备烧录与 provisioning
 
@@ -182,7 +192,8 @@ if result.get("status") != "allow":
 5. **断线**：请求显示后断 Wi-Fi；该 session 的 pending 必须变为 `deny/session_lost`，重连不可恢复旧请求。
 6. **错误身份或 credential**：WSS 握手应得到 401；不要把响应差异用作设备枚举接口。
 7. **重放/篡改 decision**：修改 session ID、request ID、expiry 或重复传 decision 不得产生 allow；有效 pending 进入 `deny/protocol_error` 或保持 deny。
-8. **轮换**：在 grace window 内新旧 credential 都能连接；到期后旧 credential 必须失败，新 credential 可连接。
+8. **轮换**：在 grace window 内新旧 credential 都能连接；到期后旧 credential 的存活 WSS 会话在下一次请求或 decision 时也必须进入 deny，不得产生 allow。
+9. **撤销**：调用 `DELETE /v1/admin/devices/:device_id` 后，DO 关闭该设备 socket，未决请求为 `deny/session_lost`；此后 WSS 握手与任何已存活 socket 的 allow 均失败。
 
 ## 8. 当前固件兼容性说明
 
