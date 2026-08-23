@@ -16,7 +16,8 @@ idf_component_register(
          "demo_reader.c"
          "demo_settings.c"
          "demo_kiro_passport.c"
-         "kiro_passport_ble.c"
+         "kiro_passport.c"
+         "kiro_passport_network.c"
     INCLUDE_DIRS "."
-    REQUIRES bsp bt esp_event esp_http_server esp_netif esp_wifi lwip nvs_flash
+    REQUIRES bsp esp_event esp_http_server esp_netif esp_wifi lwip nvs_flash esp-tls
 )

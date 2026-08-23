@@ -100,9 +100,9 @@ shasum -a 256 "$FIRMWARE"
 ## 6. 硬件验收
 
 1. 首次迁移烧录后重新完成 Wi-Fi 配网，等待显示 `ONLINE`。
-2. RESET 或断电重启，确认自动重连。
-3. 再次烧录新生成的 all-in-one BIN，确认 Wi-Fi、亮度、时间、BLE bond（如已配对）和应用设置仍保留。
-4. 在 Kiro Passport 页面确认 `Advertising: KiroPass`，使用 bridge 连接后确认 `Connected: bridge ready`。
+2. 通过受控注册流程将设备凭据写入加密 NVS，等待 NTP 同步。
+3. 在 Kiro Passport 页面确认显示 `Relay ready`；RESET 或断电重启后确认会自动重连。
+4. 再次烧录新生成的 all-in-one BIN，确认 Wi-Fi、亮度、时间、设备凭据和应用设置仍保留。
 5. 触发一个高风险 Kiro 工具调用；设备应显示请求，OK 批准、DOWN 拒绝，断连或超时必须拒绝。
 6. 确认未使用任何整片擦除或填充整个 Flash 的打包选项。
 

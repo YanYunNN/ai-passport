@@ -12,7 +12,7 @@
 #include "bsp_pins.h"
 #include "app_settings.h"
 #include "demo.h"
-#include "kiro_passport_ble.h"
+#include "kiro_passport_network.h"
 #include "ui_font_noto_sc_14.h"
 #include "ui_font_noto_sc_20.h"
 #include "ui_status.h"
@@ -157,7 +157,7 @@ void app_main(void)
     s_ok[3] = (bsp_battery_init() == ESP_OK);
     s_ok[4] = true;
     s_ok[5] = true;
-    s_ok[6] = (kiro_passport_ble_init() == ESP_OK);
+    s_ok[6] = true;
 
     esp_err_t wifi_enable_result = wifi_manager_set_enabled(app_settings_get()->wifi_enabled);
     if (wifi_enable_result != ESP_OK) {
@@ -166,6 +166,12 @@ void app_main(void)
     esp_err_t wifi_result = wifi_manager_init();
     if (wifi_result != ESP_OK) {
         ESP_LOGW(TAG, "Wi-Fi 初始化失败: %s", esp_err_to_name(wifi_result));
+    }
+
+    esp_err_t passport_result = kiro_passport_network_init();
+    s_ok[6] = (passport_result == ESP_OK);
+    if (passport_result != ESP_OK) {
+        ESP_LOGW(TAG, "Kiro Passport Wi-Fi 初始化失败: %s", esp_err_to_name(passport_result));
     }
 
     if (bsp_lvgl_lock(1000)) {

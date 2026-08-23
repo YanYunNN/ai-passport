@@ -53,11 +53,11 @@ idf.py -p /dev/cu.usbmodemXXXX app-flash monitor
 
 只有变更分区表、bootloader 或首次迁移时才运行完整 `idf.py flash`。
 
-## 验收 Wi-Fi 与 BLE 持久化
+## 验收 Wi-Fi 与 WSS Passport
 
 1. 第一次烧录后重新完成 Wi-Fi 配网，等待显示 `ONLINE`。
-2. 从设备菜单打开 **Kiro**，确认显示 `Advertising: KiroPass`。
-3. 配对并连接本机 bridge 后，确认显示 `Connected: bridge ready`。
-4. 只按 RESET 或断电重启，不运行烧录工具；设备应自动重连 Wi-Fi，之后 bridge 可再次连接。
+2. 使用受控注册流程将设备凭据写入加密 NVS；设备不会接受或保存 Cloudflare 部署/API Token。
+3. 从设备菜单打开 **Kiro**，确认在 NTP 同步后显示 `Relay ready`。
+4. 只按 RESET 或断电重启，不运行烧录工具；设备应自动重连 Wi-Fi 和 WSS relay。
 5. 用新的 `FoloToy-AI-Passport_0x0_all-in-one.bin` 升级。
-6. 确认 Wi-Fi、亮度、时间、BLE bond 与应用设置仍保留。
+6. 确认 Wi-Fi、亮度、时间、加密保存的设备凭据与应用设置仍保留。

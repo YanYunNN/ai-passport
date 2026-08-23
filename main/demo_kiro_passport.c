@@ -4,7 +4,8 @@
 #include <string.h>
 
 #include "esp_log.h"
-#include "kiro_passport_ble.h"
+#include "kiro_passport.h"
+#include "kiro_passport_network.h"
 #include "ui_font_noto_sc_14.h"
 #include "ui_font_noto_sc_20.h"
 #include "ui_pixel.h"
@@ -22,10 +23,8 @@ static lv_timer_t *s_refresh_timer;
 
 static const char *connection_text(const kiro_passport_snapshot_t *snapshot)
 {
-    if (!snapshot->initialized) return "BLE unavailable";
-    if (!snapshot->connected) return snapshot->advertising ? "Advertising: KiroPass" : "BLE starting";
-    if (!snapshot->encrypted) return "Connected: securing";
-    return snapshot->subscribed ? "Connected: bridge ready" : "Connected: waiting bridge";
+    if (!snapshot->initialized) return "Passport unavailable";
+    return kiro_passport_network_state_name(kiro_passport_network_get_state());
 }
 
 static const char *state_text(const kiro_passport_snapshot_t *snapshot)
@@ -43,7 +42,7 @@ static void refresh_page(lv_timer_t *timer)
     if (!s_screen) return;
 
     kiro_passport_snapshot_t snapshot;
-    kiro_passport_ble_get_snapshot(&snapshot);
+    kiro_passport_get_snapshot(&snapshot);
     lv_label_set_text(s_connection, connection_text(&snapshot));
     lv_label_set_text(s_state, state_text(&snapshot));
 
@@ -126,15 +125,15 @@ void demo_kiro_passport_key(bsp_btn_t btn, bsp_btn_ev_t event)
     if (event != BSP_BTN_CLICK) return;
 
     kiro_passport_snapshot_t snapshot;
-    kiro_passport_ble_get_snapshot(&snapshot);
+    kiro_passport_get_snapshot(&snapshot);
     if (!snapshot.pending) return;
 
     if (btn == BSP_BTN_OK) {
         ESP_LOGI(TAG, "批准 Kiro 请求 %s", snapshot.request_id);
-        kiro_passport_ble_decide(true);
+        kiro_passport_decide(true);
     } else if (btn == BSP_BTN_DOWN) {
         ESP_LOGI(TAG, "拒绝 Kiro 请求 %s", snapshot.request_id);
-        kiro_passport_ble_decide(false);
+        kiro_passport_decide(false);
     }
     refresh_page(NULL);
 }
