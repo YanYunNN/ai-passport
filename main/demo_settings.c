@@ -6,7 +6,16 @@
 #include "ui_system.h"
 #include "lvgl.h"
 
-#define SETTING_COUNT 2
+#define SETTING_COUNT 6
+
+typedef enum {
+    SETTING_BRIGHTNESS,
+    SETTING_HOUR,
+    SETTING_MINUTE,
+    SETTING_SECOND,
+    SETTING_TIME_FORMAT,
+    SETTING_RESET,
+} setting_id_t;
 
 static const uint8_t BRIGHTNESS_LEVELS[] = { 30, 60, 100 };
 
@@ -20,14 +29,25 @@ static uint8_t s_brightness_index = 2;
 
 static void settings_refresh(void)
 {
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+    ui_status_get_time(&hour, &minute, &second);
+
     for (size_t i = 0; i < SETTING_COUNT; i++) {
         ui_system_set_item_state(s_items[i], s_titles[i], s_values[i],
                                  s_indicators[i], i == s_selected, true);
     }
 
-    lv_label_set_text_fmt(s_values[0], "%u%%",
+    lv_label_set_text_fmt(s_values[SETTING_BRIGHTNESS], "%u%%",
                           (unsigned)BRIGHTNESS_LEVELS[s_brightness_index]);
-    lv_label_set_text(s_values[1], "100%");
+    lv_label_set_text_fmt(s_values[SETTING_HOUR], "%02u", (unsigned)hour);
+    lv_label_set_text_fmt(s_values[SETTING_MINUTE], "%02u", (unsigned)minute);
+    lv_label_set_text_fmt(s_values[SETTING_SECOND], "%02u", (unsigned)second);
+    lv_label_set_text(s_values[SETTING_TIME_FORMAT],
+                      ui_status_get_time_format() == UI_STATUS_TIME_HH_MM_SS
+                          ? "HH:MM:SS" : "HH:MM");
+    lv_label_set_text(s_values[SETTING_RESET], "100%");
 }
 
 static void settings_build(void)
@@ -47,25 +67,29 @@ static void settings_build(void)
 
     static const char * const titles[SETTING_COUNT] = {
         "屏幕亮度",
+        "小时",
+        "分钟",
+        "秒钟",
+        "时间格式",
         "恢复默认",
     };
 
     for (size_t i = 0; i < SETTING_COUNT; i++) {
-        int y = 94 + (int)i * 60;
-        s_items[i] = ui_system_item_create(s_scr, 16, y, 208, 52);
+        int y = 86 + (int)i * 38;
+        s_items[i] = ui_system_item_create(s_scr, 16, y, 208, 35);
         s_titles[i] = ui_system_label(s_items[i], titles[i], &ui_font_noto_sc_14,
                                       UI_SYSTEM_TEXT);
-        lv_obj_set_pos(s_titles[i], 16, 17);
+        lv_obj_set_pos(s_titles[i], 16, 9);
 
         s_values[i] = ui_system_label(s_items[i], "", &lv_font_montserrat_14,
                                       UI_SYSTEM_MUTED);
-        lv_obj_set_width(s_values[i], 56);
+        lv_obj_set_width(s_values[i], 72);
         lv_obj_set_style_text_align(s_values[i], LV_TEXT_ALIGN_RIGHT, 0);
-        lv_obj_set_pos(s_values[i], 118, 18);
+        lv_obj_set_pos(s_values[i], 96, 10);
 
         s_indicators[i] = ui_system_label(s_items[i], ">", &lv_font_montserrat_20,
                                           UI_SYSTEM_MUTED);
-        lv_obj_set_pos(s_indicators[i], 180, 15);
+        lv_obj_set_pos(s_indicators[i], 180, 6);
     }
 
     settings_refresh();
@@ -102,17 +126,45 @@ void demo_settings_key(bsp_btn_t btn, bsp_btn_ev_t ev)
     if (btn == BSP_BTN_UP) {
         s_selected = (s_selected + SETTING_COUNT - 1) % SETTING_COUNT;
         settings_refresh();
-    } else if (btn == BSP_BTN_DOWN) {
+        return;
+    }
+    if (btn == BSP_BTN_DOWN) {
         s_selected = (s_selected + 1) % SETTING_COUNT;
         settings_refresh();
-    } else if (btn == BSP_BTN_OK) {
-        if (s_selected == 0) {
-            s_brightness_index = (s_brightness_index + 1) %
-                                 (sizeof(BRIGHTNESS_LEVELS) / sizeof(BRIGHTNESS_LEVELS[0]));
-        } else {
-            s_brightness_index = 2;
-        }
-        bsp_display_backlight(BRIGHTNESS_LEVELS[s_brightness_index]);
-        settings_refresh();
+        return;
     }
+    if (btn != BSP_BTN_OK) return;
+
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+    ui_status_get_time(&hour, &minute, &second);
+
+    switch ((setting_id_t)s_selected) {
+    case SETTING_BRIGHTNESS:
+        s_brightness_index = (s_brightness_index + 1) %
+                             (sizeof(BRIGHTNESS_LEVELS) / sizeof(BRIGHTNESS_LEVELS[0]));
+        bsp_display_backlight(BRIGHTNESS_LEVELS[s_brightness_index]);
+        break;
+    case SETTING_HOUR:
+        ui_status_set_time((hour + 1) % 24, minute, second);
+        break;
+    case SETTING_MINUTE:
+        ui_status_set_time(hour, (minute + 1) % 60, second);
+        break;
+    case SETTING_SECOND:
+        ui_status_set_time(hour, minute, (second + 1) % 60);
+        break;
+    case SETTING_TIME_FORMAT:
+        ui_status_set_time_format(ui_status_get_time_format() == UI_STATUS_TIME_HH_MM
+                                      ? UI_STATUS_TIME_HH_MM_SS : UI_STATUS_TIME_HH_MM);
+        break;
+    case SETTING_RESET:
+        s_brightness_index = 2;
+        bsp_display_backlight(BRIGHTNESS_LEVELS[s_brightness_index]);
+        ui_status_set_time(0, 0, 0);
+        ui_status_set_time_format(UI_STATUS_TIME_HH_MM);
+        break;
+    }
+    settings_refresh();
 }
