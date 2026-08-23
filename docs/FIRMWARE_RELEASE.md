@@ -1,10 +1,16 @@
 # Firmware Release Guide
 
-目标硬件为 **ESP32-C3 / 8 MB Flash**。发布给普通升级使用的文件统一位于项目根目录的 [`deploy/`](../deploy/)；其文件名包含实际 Flash 偏移，避免烧录时混淆。
+目标硬件为 **ESP32-C3 / 8 MB Flash**。普通用户交付物统一位于 [`deploy/`](../deploy/)：一个从 `0x0` 烧录的 all-in-one BIN。
 
-设备 NVS 区间是 `0x9000`–`0xefff`，其中保存 Wi-Fi 凭据、亮度、时间和 Wi-Fi 开关。**正常升级不得擦除或写入该区域。**
+该项目的自定义分区表将 NVS 放在 `0x187000`–`0x18cfff`，位于 factory App 分区之后。因此，连续 raw 镜像从 `0x0` 写入时不会覆盖 NVS，后续单 BIN 固件升级可保留 Wi-Fi 凭据、亮度、时间和 Wi-Fi 开关。
 
-## 1. 发布要求
+## 1. 一次性分区迁移
+
+旧版固件的 NVS 位于 `0x9000`。本版本将 NVS 移到 `0x187000`，所以设备**第一次**刷入此版 all-in-one 镜像后，旧 Wi-Fi 与应用设置不会迁移，必须重新配网一次。
+
+完成首次迁移和配网后，后续使用本指南的 all-in-one 镜像升级将保留新的 NVS 数据。不要启用 `erase_flash`、**Erase all** 或类似功能。
+
+## 2. 发布要求
 
 - ESP-IDF **v5.5.3**。
 - CMake 可通过 `PATH` 使用。
@@ -18,7 +24,7 @@ export IDF_PATH="$HOME/esp/esp-idf-v5.5.3"
 source "$IDF_PATH/export.sh"
 ```
 
-## 2. 构建与检查
+## 3. 构建与检查
 
 在仓库根目录运行：
 
@@ -36,71 +42,57 @@ idf.py build
 git diff --check
 ```
 
-确认构建输出显示应用能够装入 factory 分区。
+确认构建输出显示应用能够装入 1500 KiB 的 factory 分区，且生成的分区表与 [`partitions.csv`](../partitions.csv) 一致。
 
-## 3. 整理 deploy 交付文件
+## 4. 生成 deploy 一体化镜像
 
-每次成功构建后，将三个分段文件移动到 `deploy/` 并按偏移命名：
+每次成功构建后，生成唯一面向最终用户的升级文件：
 
 ```sh
-mv build/bootloader/bootloader.bin \
-  deploy/FoloToy-AI-Passport_0x0_bootloader.bin
-mv build/partition_table/partition-table.bin \
-  deploy/FoloToy-AI-Passport_0x8000_partition-table.bin
-mv build/FoloToy-AI-Passport.bin \
-  deploy/FoloToy-AI-Passport_0x10000_app.bin
+FIRMWARE="deploy/FoloToy-AI-Passport_0x0_all-in-one.bin"
+
+python -m esptool --chip esp32c3 merge_bin \
+  --output "$FIRMWARE" \
+  --format raw \
+  --flash_mode dio \
+  --flash_freq 80m \
+  --flash_size 8MB \
+  0x0 build/bootloader/bootloader.bin \
+  0x8000 build/partition_table/partition-table.bin \
+  0x10000 build/FoloToy-AI-Passport.bin
+
+shasum -a 256 "$FIRMWARE"
 ```
 
 交付目录必须包含：
 
-| 文件 | Flash 偏移 |
-| --- | ---: |
-| `deploy/FoloToy-AI-Passport_0x0_bootloader.bin` | `0x0` |
-| `deploy/FoloToy-AI-Passport_0x8000_partition-table.bin` | `0x8000` |
-| `deploy/FoloToy-AI-Passport_0x10000_app.bin` | `0x10000` |
-| `deploy/FLASHING.md` | 烧录与验收说明 |
+| 文件 | 用途 |
+| --- | --- |
+| `deploy/FoloToy-AI-Passport_0x0_all-in-one.bin` | 最终用户从 `0x0` 烧录的唯一镜像 |
+| `deploy/FLASHING.md` | 图形工具、命令行和持久化验收说明 |
 
-分别记录交付文件的校验和：
+不要将 build 中单独的 bootloader、partition-table 或 app 文件作为普通用户交付物。
 
-```sh
-shasum -a 256 deploy/*.bin
-```
+## 5. 最终用户烧录
 
-## 4. 正常升级：保留 NVS、Wi-Fi 和设备设置
+最终用户只需选择：
 
-使用三个明确段进行烧录，或按 [`deploy/FLASHING.md`](../deploy/FLASHING.md) 在图形工具中添加相同三行：
+| 字段 | 值 |
+| --- | --- |
+| Chip | ESP32-C3 |
+| BIN 文件 | `deploy/FoloToy-AI-Passport_0x0_all-in-one.bin` |
+| Flash offset | `0x0` |
+| Flash size | 8 MB |
+| Flash mode | DIO |
+| Flash frequency | 80 MHz |
 
-```sh
-python -m esptool --chip esp32c3 -b 460800 \
-  --before default_reset --after hard_reset \
-  write_flash --flash_mode dio --flash_freq 80m --flash_size 8MB \
-  0x0 deploy/FoloToy-AI-Passport_0x0_bootloader.bin \
-  0x8000 deploy/FoloToy-AI-Passport_0x8000_partition-table.bin \
-  0x10000 deploy/FoloToy-AI-Passport_0x10000_app.bin
-```
-
-不要启用 `erase_flash`、**Erase all** 或类似功能。它们会清空 NVS，设备需要重新配网。
-
-## 5. 工厂初始化
-
-连续 raw 合并镜像在段间带有填充字节；从 `0x0` 烧录时会覆盖 `0x9000`–`0xefff` 的 NVS。因此，它只可用于工厂初始化或明确要求清空全部用户配置的场景，不能放入普通升级 `deploy/` 包。
-
-如确实需要工厂镜像，生成文件名必须明确标记会清空 NVS：
-
-```sh
-python -m esptool --chip esp32c3 merge_bin \
-  --output build/FoloToy-AI-Passport-esp32c3-8mb-factory.bin \
-  --format raw --flash_mode dio --flash_freq 80m --flash_size 8MB \
-  0x0 build/bootloader/bootloader.bin \
-  0x8000 build/partition_table/partition-table.bin \
-  0x10000 build/FoloToy-AI-Passport.bin
-```
+命令行等价写法见 [`deploy/FLASHING.md`](../deploy/FLASHING.md)。
 
 ## 6. 硬件验收
 
-1. 用 `deploy/` 的三段包完成烧录。
-2. 配置 Wi-Fi，等待显示 `ONLINE`。
-3. 只通过 RESET 或断电重启，确认自动重连。
-4. 再使用相同的三段包升级，确认 Wi-Fi、亮度、时间与 Wi-Fi 开关仍保留。
+1. 首次迁移烧录后重新完成 Wi-Fi 配网，等待显示 `ONLINE`。
+2. RESET 或断电重启，确认自动重连。
+3. 再次烧录新生成的 all-in-one BIN，确认 Wi-Fi、亮度、时间和 Wi-Fi 开关仍保留。
+4. 确认未使用任何整片擦除选项。
 
 记录实际板卡上的结果；未完成该流程前，发布状态应标注为未完成硬件验证。

@@ -1,0 +1,6 @@
+# Name,     Type, SubType, Offset,   Size,   Flags
+# Keep NVS after the factory application so a raw image written at 0x0 does
+# not touch saved Wi-Fi credentials or application settings on later updates.
+factory,    app,  factory, 0x10000,  1500K,
+nvs,        data, nvs,     0x187000, 0x6000,
+phy_init,   data, phy,     0x18d000, 0x1000,
