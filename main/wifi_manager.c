@@ -136,9 +136,16 @@ static void connect_task(void *argument)
     stop_portal_server();
     esp_err_t result = stop_wifi();
     if (result == ESP_OK) result = esp_wifi_set_mode(WIFI_MODE_STA);
-    if (result == ESP_OK) result = esp_wifi_set_storage(WIFI_STORAGE_RAM);
+
+    /* Persist before starting the station: a reset, DHCP failure, or lost GOT_IP event
+     * must not discard a valid provisioning submission. Invalid credentials can always
+     * be replaced by starting provisioning again from Settings. */
+    if (result == ESP_OK) result = esp_wifi_set_storage(WIFI_STORAGE_FLASH);
     if (result == ESP_OK) result = esp_wifi_set_config(WIFI_IF_STA, &s_station_config);
-    if (result == ESP_OK) result = esp_wifi_start();
+    if (result == ESP_OK) {
+        ESP_LOGI(TAG, "候选 Wi-Fi 凭据已在连接前写入 Flash");
+        result = esp_wifi_start();
+    }
     s_transitioning = false;
 
     if (result != ESP_OK) {
