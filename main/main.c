@@ -15,6 +15,7 @@
 #include "ui_font_noto_sc_20.h"
 #include "ui_status.h"
 #include "ui_system.h"
+#include "wifi_manager.h"
 #include "lvgl.h"
 #include "esp_log.h"
 
@@ -150,12 +151,18 @@ void app_main(void)
     s_ok[4] = true;
     s_ok[5] = true;
 
+    esp_err_t wifi_result = wifi_manager_init();
+    if (wifi_result != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi 初始化失败: %s", esp_err_to_name(wifi_result));
+    }
+
     if (bsp_lvgl_lock(1000)) {
         ui_status_init();
         enter_menu();
         bsp_lvgl_unlock();
     }
 
-    ESP_LOGI(TAG, "就绪:显示=%d 按键=%d 音频=%d 电量=%d 阅读=%d 设置=%d",
-             s_ok[0], s_ok[1], s_ok[2], s_ok[3], s_ok[4], s_ok[5]);
+    ESP_LOGI(TAG, "就绪:显示=%d 按键=%d 音频=%d 电量=%d 阅读=%d 设置=%d Wi-Fi=%d",
+             s_ok[0], s_ok[1], s_ok[2], s_ok[3], s_ok[4], s_ok[5],
+             wifi_result == ESP_OK);
 }

@@ -1,15 +1,19 @@
 #include "ui_status.h"
 #include "bsp_battery.h"
 #include "ui_system.h"
+#include "wifi_manager.h"
 #include "lvgl.h"
 #include <stdio.h>
 
 #define STATUS_BATTERY_HEALTHY 0x45D483
 #define STATUS_BATTERY_LOW     0xF05252
+#define STATUS_WIFI_CONNECTED  0x45D483
+#define STATUS_WIFI_ACTIVITY   0xC6AA70
 
 static lv_obj_t *s_bar;
 static lv_obj_t *s_time;
 static lv_obj_t *s_soc;
+static lv_obj_t *s_wifi_bars[3];
 static lv_obj_t *s_battery_outline;
 static lv_obj_t *s_battery_cap;
 static lv_obj_t *s_battery_fill;
@@ -68,6 +72,25 @@ static void refresh_time(void)
     lv_label_set_text_static(s_time, s_time_text);
 }
 
+static void refresh_wifi(void)
+{
+    wifi_manager_state_t state = wifi_manager_get_state();
+    uint32_t color = UI_SYSTEM_DISABLED;
+    size_t active_bars = 0;
+
+    if (state == WIFI_MANAGER_CONNECTED) {
+        color = STATUS_WIFI_CONNECTED;
+        active_bars = 3;
+    } else if (state == WIFI_MANAGER_CONNECTING || state == WIFI_MANAGER_PROVISIONING) {
+        color = STATUS_WIFI_ACTIVITY;
+        active_bars = 1;
+    }
+    for (size_t i = 0; i < sizeof(s_wifi_bars) / sizeof(s_wifi_bars[0]); i++) {
+        lv_obj_set_style_bg_color(s_wifi_bars[i],
+                                  lv_color_hex(i < active_bars ? color : UI_SYSTEM_DISABLED), 0);
+    }
+}
+
 static void set_battery_color(uint32_t color)
 {
     lv_obj_set_style_text_color(s_soc, lv_color_hex(color), 0);
@@ -91,6 +114,7 @@ static void status_refresh(lv_timer_t *timer)
 {
     (void)timer;
     refresh_time();
+    refresh_wifi();
     refresh_charge_icon();
 
     uint32_t tick = lv_tick_get();
@@ -123,10 +147,9 @@ void ui_status_init(void)
                              UI_SYSTEM_TEXT);
     lv_obj_set_pos(s_time, 10, 6);
 
-    /* Wi-Fi 未初始化时以灰色信号条表示未连接。 */
-    block(s_bar, 132, 16, 2, 3, UI_SYSTEM_DISABLED);
-    block(s_bar, 136, 13, 2, 6, UI_SYSTEM_DISABLED);
-    block(s_bar, 140, 10, 2, 9, UI_SYSTEM_DISABLED);
+    s_wifi_bars[0] = block(s_bar, 132, 16, 2, 3, UI_SYSTEM_DISABLED);
+    s_wifi_bars[1] = block(s_bar, 136, 13, 2, 6, UI_SYSTEM_DISABLED);
+    s_wifi_bars[2] = block(s_bar, 140, 10, 2, 9, UI_SYSTEM_DISABLED);
 
     /* 蓝牙协议栈未初始化，显示灰色 BT 标识而非连接状态。 */
     lv_obj_t *bluetooth = ui_system_label(s_bar, "BT", &lv_font_montserrat_14,
@@ -147,7 +170,6 @@ void ui_status_init(void)
     s_battery_fill = block(s_bar, 216, 10, 0, 5, UI_SYSTEM_DISABLED);
     lv_obj_set_style_radius(s_battery_fill, 1, 0);
 
-    /* 与 iPhone 一致：闪电位于电池图标内；仅由真实外部状态驱动。 */
     s_charge_bolt[0] = block(s_bar, 222, 9, 3, 2, UI_SYSTEM_BG);
     s_charge_bolt[1] = block(s_bar, 220, 11, 3, 2, UI_SYSTEM_BG);
     s_charge_bolt[2] = block(s_bar, 223, 13, 3, 2, UI_SYSTEM_BG);
