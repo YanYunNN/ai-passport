@@ -6,7 +6,9 @@ idf_component_register(
          "ui_font_noto_sc_20.c"
          "ui_system.c"
          "ui_status.c"
+         "app_settings.c"
          "wifi_manager.c"
+         "time_sync.c"
          "demo_display.c"
          "demo_button.c"
          "demo_audio.c"
@@ -14,5 +16,5 @@ idf_component_register(
          "demo_reader.c"
          "demo_settings.c"
     INCLUDE_DIRS "."
-    REQUIRES bsp esp_event esp_http_server esp_netif esp_wifi nvs_flash
+    REQUIRES bsp esp_event esp_http_server esp_netif esp_wifi lwip nvs_flash
 )

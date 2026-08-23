@@ -10,6 +10,7 @@
 #include "bsp_audio.h"
 #include "bsp_battery.h"
 #include "bsp_pins.h"
+#include "app_settings.h"
 #include "demo.h"
 #include "ui_font_noto_sc_14.h"
 #include "ui_font_noto_sc_20.h"
@@ -142,7 +143,11 @@ void app_main(void)
                  BSP_LCD_MOSI, BSP_LCD_SCLK, BSP_LCD_CS, BSP_LCD_DC, BSP_LCD_BL);
         return;
     }
-    bsp_display_backlight(100);
+    esp_err_t settings_result = app_settings_init();
+    if (settings_result != ESP_OK) {
+        ESP_LOGW(TAG, "应用设置初始化失败: %s", esp_err_to_name(settings_result));
+    }
+    bsp_display_backlight(app_settings_get_brightness_percent());
 
     s_ok[0] = true;
     s_ok[1] = (bsp_button_init(on_key, NULL) == ESP_OK);
@@ -151,13 +156,21 @@ void app_main(void)
     s_ok[4] = true;
     s_ok[5] = true;
 
+    esp_err_t wifi_enable_result = wifi_manager_set_enabled(app_settings_get()->wifi_enabled);
+    if (wifi_enable_result != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi 开关设置失败: %s", esp_err_to_name(wifi_enable_result));
+    }
     esp_err_t wifi_result = wifi_manager_init();
     if (wifi_result != ESP_OK) {
         ESP_LOGW(TAG, "Wi-Fi 初始化失败: %s", esp_err_to_name(wifi_result));
     }
 
     if (bsp_lvgl_lock(1000)) {
+        const app_settings_t *settings = app_settings_get();
         ui_status_init();
+        ui_status_set_time(settings->hour, settings->minute, settings->second);
+        ui_status_set_time_format(settings->time_format == APP_SETTINGS_TIME_HH_MM_SS
+                                      ? UI_STATUS_TIME_HH_MM_SS : UI_STATUS_TIME_HH_MM);
         enter_menu();
         bsp_lvgl_unlock();
     }

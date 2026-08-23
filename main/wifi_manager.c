@@ -1,4 +1,5 @@
 #include "wifi_manager.h"
+#include "time_sync.h"
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -16,7 +17,10 @@
 #define WIFI_PORTAL_MAX_FORM_LENGTH 160
 #define WIFI_CONNECT_RETRY_LIMIT 4
 
+static const char *TAG = "wifi_manager";
+
 static bool s_initialized;
+static bool s_enabled = true;
 static volatile wifi_manager_state_t s_state = WIFI_MANAGER_UNAVAILABLE;
 static bool s_portal_active;
 static bool s_transitioning;
@@ -37,6 +41,21 @@ static void stop_portal_server(void)
         httpd_stop(s_server);
         s_server = NULL;
     }
+}
+
+static esp_err_t stop_wifi(void)
+{
+    esp_err_t result = esp_wifi_stop();
+    return result == ESP_ERR_WIFI_NOT_STARTED ? ESP_OK : result;
+}
+
+static void clear_pending_config(void)
+{
+    taskENTER_CRITICAL(&s_provisioning_lock);
+    s_pending_config = false;
+    s_connection_scheduled = false;
+    memset(&s_station_config, 0, sizeof(s_station_config));
+    taskEXIT_CRITICAL(&s_provisioning_lock);
 }
 
 static int hex_value(char character)
@@ -86,7 +105,7 @@ static bool claim_connection_transition(uint32_t generation)
     bool claimed = false;
 
     taskENTER_CRITICAL(&s_provisioning_lock);
-    if (s_portal_active && s_connection_scheduled &&
+    if (s_enabled && s_portal_active && s_connection_scheduled &&
         generation == s_provisioning_generation) {
         s_portal_active = false;
         s_connection_scheduled = false;
@@ -94,6 +113,13 @@ static bool claim_connection_transition(uint32_t generation)
     }
     taskEXIT_CRITICAL(&s_provisioning_lock);
     return claimed;
+}
+
+static void fail_connection(const char *operation, esp_err_t result)
+{
+    ESP_LOGW(TAG, "%s 失败: %s", operation, esp_err_to_name(result));
+    s_state = WIFI_MANAGER_FAILED;
+    clear_pending_config();
 }
 
 static void connect_task(void *argument)
@@ -108,15 +134,23 @@ static void connect_task(void *argument)
 
     s_transitioning = true;
     stop_portal_server();
-    esp_wifi_stop();
-    esp_wifi_set_mode(WIFI_MODE_STA);
-    esp_wifi_set_storage(WIFI_STORAGE_RAM);
-    esp_wifi_set_config(WIFI_IF_STA, &s_station_config);
+    esp_err_t result = stop_wifi();
+    if (result == ESP_OK) result = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (result == ESP_OK) result = esp_wifi_set_storage(WIFI_STORAGE_RAM);
+    if (result == ESP_OK) result = esp_wifi_set_config(WIFI_IF_STA, &s_station_config);
+    if (result == ESP_OK) result = esp_wifi_start();
+    s_transitioning = false;
+
+    if (result != ESP_OK) {
+        fail_connection("启动候选 Wi-Fi 配置", result);
+        vTaskDelete(NULL);
+        return;
+    }
+
     s_state = WIFI_MANAGER_CONNECTING;
     s_retry_count = 0;
-    esp_wifi_start();
-    s_transitioning = false;
-    esp_wifi_connect();
+    result = esp_wifi_connect();
+    if (result != ESP_OK) fail_connection("连接候选 Wi-Fi", result);
     vTaskDelete(NULL);
 }
 
@@ -135,7 +169,7 @@ static esp_err_t submit_station_config(const char *ssid, const char *password,
     station_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
     taskENTER_CRITICAL(&s_provisioning_lock);
-    if (!s_portal_active || s_pending_config || s_connection_scheduled) {
+    if (!s_enabled || !s_portal_active || s_pending_config || s_connection_scheduled) {
         taskEXIT_CRITICAL(&s_provisioning_lock);
         memset(&station_config, 0, sizeof(station_config));
         return ESP_ERR_INVALID_STATE;
@@ -151,7 +185,7 @@ static esp_err_t submit_station_config(const char *ssid, const char *password,
 static esp_err_t schedule_station_connection(uint32_t generation)
 {
     taskENTER_CRITICAL(&s_provisioning_lock);
-    if (!s_portal_active || !s_pending_config ||
+    if (!s_enabled || !s_portal_active || !s_pending_config ||
         generation != s_provisioning_generation || s_connection_scheduled) {
         taskEXIT_CRITICAL(&s_provisioning_lock);
         return ESP_ERR_INVALID_STATE;
@@ -164,13 +198,8 @@ static esp_err_t schedule_station_connection(uint32_t generation)
         return ESP_OK;
     }
 
-    taskENTER_CRITICAL(&s_provisioning_lock);
-    if (generation == s_provisioning_generation) {
-        s_connection_scheduled = false;
-        s_pending_config = false;
-        memset(&s_station_config, 0, sizeof(s_station_config));
-    }
-    taskEXIT_CRITICAL(&s_provisioning_lock);
+    ESP_LOGW(TAG, "无法创建 Wi-Fi 连接任务");
+    clear_pending_config();
     return ESP_ERR_NO_MEM;
 }
 
@@ -194,10 +223,14 @@ static esp_err_t portal_configure_handler(httpd_req_t *request)
     }
 
     char form[WIFI_PORTAL_MAX_FORM_LENGTH + 1];
-    int received = httpd_req_recv(request, form, request->content_len);
-    if (received != request->content_len) {
-        httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Incomplete request");
-        return ESP_FAIL;
+    size_t received = 0;
+    while (received < request->content_len) {
+        int count = httpd_req_recv(request, form + received, request->content_len - received);
+        if (count <= 0) {
+            httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Incomplete request");
+            return ESP_FAIL;
+        }
+        received += (size_t)count;
     }
     form[received] = '\0';
 
@@ -243,27 +276,57 @@ static esp_err_t start_portal_server(void)
     return result;
 }
 
+static bool station_config_matches(const wifi_config_t *expected,
+                                   const wifi_config_t *actual)
+{
+    return expected && actual &&
+           memcmp(expected->sta.ssid, actual->sta.ssid, sizeof(expected->sta.ssid)) == 0;
+}
+
+static bool persist_pending_config(void)
+{
+    wifi_config_t saved_config = { 0 };
+    esp_err_t result = esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+    if (result == ESP_OK) result = esp_wifi_set_config(WIFI_IF_STA, &s_station_config);
+    if (result == ESP_OK) result = esp_wifi_get_config(WIFI_IF_STA, &saved_config);
+
+    bool saved = result == ESP_OK && station_config_matches(&s_station_config, &saved_config);
+    memset(&saved_config, 0, sizeof(saved_config));
+    if (!saved) {
+        if (result == ESP_OK) result = ESP_FAIL;
+        ESP_LOGW(TAG, "Wi-Fi 凭据未写入 Flash: %s", esp_err_to_name(result));
+        return false;
+    }
+
+    s_saved_config = true;
+    ESP_LOGI(TAG, "Wi-Fi 凭据已写入 Flash，并已读取回验");
+    clear_pending_config();
+    return true;
+}
+
 static void wifi_event_handler(void *argument, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
     (void)argument;
     (void)event_base;
     (void)event_data;
-    if (s_transitioning || s_portal_active) return;
+    if (!s_enabled || s_transitioning || s_portal_active) return;
 
     if (event_id == WIFI_EVENT_STA_START) {
         if (s_saved_config || s_pending_config) {
             s_state = WIFI_MANAGER_CONNECTING;
-            esp_wifi_connect();
+            esp_err_t result = esp_wifi_connect();
+            if (result != ESP_OK) fail_connection("启动后连接 Wi-Fi", result);
         }
     } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
         if (s_state == WIFI_MANAGER_CONNECTING && s_retry_count < WIFI_CONNECT_RETRY_LIMIT) {
             s_retry_count++;
-            esp_wifi_connect();
+            esp_err_t result = esp_wifi_connect();
+            if (result != ESP_OK) fail_connection("重试 Wi-Fi 连接", result);
         } else if (s_state == WIFI_MANAGER_CONNECTING) {
+            ESP_LOGW(TAG, "Wi-Fi 连接重试已耗尽");
             s_state = WIFI_MANAGER_FAILED;
-            s_pending_config = false;
-            memset(&s_station_config, 0, sizeof(s_station_config));
+            clear_pending_config();
         }
     }
 }
@@ -275,16 +338,79 @@ static void ip_event_handler(void *argument, esp_event_base_t event_base,
     (void)event_base;
     (void)event_id;
     (void)event_data;
+    if (!s_enabled) return;
 
-    if (s_pending_config) {
-        esp_wifi_set_storage(WIFI_STORAGE_FLASH);
-        if (esp_wifi_set_config(WIFI_IF_STA, &s_station_config) == ESP_OK) {
-            s_saved_config = true;
-        }
+    if (s_pending_config) persist_pending_config();
+    s_state = WIFI_MANAGER_CONNECTED;
+    ESP_LOGI(TAG, "已获取 IP，网络已连接");
+
+    /* The NTP worker is independent from LVGL; ui_status consumes its result safely. */
+    esp_err_t result = time_sync_request();
+    if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "自动 NTP 同步无法启动: %s", esp_err_to_name(result));
+    }
+}
+
+esp_err_t wifi_manager_set_enabled(bool enabled)
+{
+    s_enabled = enabled;
+    if (!s_initialized) return ESP_OK;
+
+    if (!enabled) {
+        taskENTER_CRITICAL(&s_provisioning_lock);
+        s_provisioning_generation++;
+        s_portal_active = false;
+        s_connection_scheduled = false;
         s_pending_config = false;
         memset(&s_station_config, 0, sizeof(s_station_config));
+        taskEXIT_CRITICAL(&s_provisioning_lock);
+
+        s_transitioning = true;
+        stop_portal_server();
+        esp_err_t result = stop_wifi();
+        s_transitioning = false;
+        if (result != ESP_OK) {
+            s_state = WIFI_MANAGER_FAILED;
+            ESP_LOGW(TAG, "关闭 Wi-Fi 失败: %s", esp_err_to_name(result));
+            return result;
+        }
+        s_state = WIFI_MANAGER_DISABLED;
+        ESP_LOGI(TAG, "Wi-Fi 已关闭；已保存的路由器凭据仍保留");
+        return ESP_OK;
     }
-    s_state = WIFI_MANAGER_CONNECTED;
+
+    s_transitioning = true;
+    esp_err_t result = esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+    if (result == ESP_OK) result = esp_wifi_set_mode(WIFI_MODE_STA);
+    wifi_config_t saved_config = { 0 };
+    if (result == ESP_OK) result = esp_wifi_get_config(WIFI_IF_STA, &saved_config);
+    if (result == ESP_OK) s_saved_config = saved_config.sta.ssid[0] != '\0';
+    memset(&saved_config, 0, sizeof(saved_config));
+    if (result == ESP_OK) result = esp_wifi_start();
+    s_transitioning = false;
+    if (result != ESP_OK) {
+        s_state = WIFI_MANAGER_FAILED;
+        ESP_LOGW(TAG, "启用 Wi-Fi 失败: %s", esp_err_to_name(result));
+        return result;
+    }
+
+    s_state = s_saved_config ? WIFI_MANAGER_CONNECTING : WIFI_MANAGER_UNCONFIGURED;
+    if (s_saved_config) {
+        result = esp_wifi_connect();
+        if (result != ESP_OK) {
+            fail_connection("重新连接已保存的 Wi-Fi", result);
+            return result;
+        }
+        ESP_LOGI(TAG, "Wi-Fi 已启用，正在重连已保存网络");
+    } else {
+        ESP_LOGI(TAG, "Wi-Fi 已启用，尚未配置网络");
+    }
+    return ESP_OK;
+}
+
+bool wifi_manager_is_enabled(void)
+{
+    return s_enabled;
 }
 
 esp_err_t wifi_manager_init(void)
@@ -320,11 +446,25 @@ esp_err_t wifi_manager_init(void)
     if (result != ESP_OK) return result;
     s_saved_config = saved_config.sta.ssid[0] != '\0';
     memset(&saved_config, 0, sizeof(saved_config));
-
-    result = esp_wifi_start();
-    if (result != ESP_OK) return result;
-    s_state = s_saved_config ? WIFI_MANAGER_CONNECTING : WIFI_MANAGER_UNCONFIGURED;
     s_initialized = true;
+
+    if (!s_enabled) {
+        s_state = WIFI_MANAGER_DISABLED;
+        ESP_LOGI(TAG, "Wi-Fi 按保存的开关状态保持关闭");
+        return ESP_OK;
+    }
+
+    s_state = s_saved_config ? WIFI_MANAGER_CONNECTING : WIFI_MANAGER_UNCONFIGURED;
+    result = esp_wifi_start();
+    if (result != ESP_OK) {
+        s_state = WIFI_MANAGER_FAILED;
+        return result;
+    }
+    if (s_saved_config) {
+        ESP_LOGI(TAG, "检测到已保存 Wi-Fi 凭据，正在自动重连");
+    } else {
+        ESP_LOGI(TAG, "未检测到已保存 Wi-Fi 凭据");
+    }
     return ESP_OK;
 }
 
@@ -333,14 +473,35 @@ wifi_manager_state_t wifi_manager_get_state(void)
     return s_state;
 }
 
+esp_err_t wifi_manager_get_connected_ssid(char *ssid, size_t size)
+{
+    if (!ssid || size == 0) return ESP_ERR_INVALID_ARG;
+    ssid[0] = '\0';
+    if (s_state != WIFI_MANAGER_CONNECTED) return ESP_ERR_INVALID_STATE;
+
+    wifi_ap_record_t access_point = { 0 };
+    esp_err_t result = esp_wifi_sta_get_ap_info(&access_point);
+    if (result != ESP_OK) return result;
+
+    size_t output_length = 0;
+    for (size_t i = 0; i < sizeof(access_point.ssid) && access_point.ssid[i]; i++) {
+        if (output_length + 1 >= size) break;
+        uint8_t character = access_point.ssid[i];
+        ssid[output_length++] = character >= 0x20u && character <= 0x7eu
+                                  ? (char)character : '?';
+    }
+    ssid[output_length] = '\0';
+    return ESP_OK;
+}
+
 esp_err_t wifi_manager_start_provisioning(void)
 {
-    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+    if (!s_initialized || !s_enabled) return ESP_ERR_INVALID_STATE;
 
     uint32_t random = esp_random();
     snprintf(s_ap_ssid, sizeof(s_ap_ssid), "FoloToy-%04X", (unsigned)(random & 0xFFFFu));
-    snprintf(s_ap_password, sizeof(s_ap_password), "P%08X%03X", (unsigned)random,
-             (unsigned)(esp_random() & 0xFFFu));
+    snprintf(s_ap_password, sizeof(s_ap_password), "Folo-%06u",
+             (unsigned)(random % 1000000u));
 
     wifi_config_t ap_config = { 0 };
     size_t ap_ssid_length = strlen(s_ap_ssid);
@@ -361,25 +522,24 @@ esp_err_t wifi_manager_start_provisioning(void)
 
     s_transitioning = true;
     stop_portal_server();
-    esp_wifi_stop();
-    esp_err_t result = esp_wifi_set_mode(WIFI_MODE_APSTA);
+    esp_err_t result = stop_wifi();
+    if (result == ESP_OK) result = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (result == ESP_OK) result = esp_wifi_set_config(WIFI_IF_AP, &ap_config);
     if (result == ESP_OK) result = esp_wifi_start();
+    if (result == ESP_OK) result = start_portal_server();
+    s_transitioning = false;
+
     if (result == ESP_OK) {
         taskENTER_CRITICAL(&s_provisioning_lock);
         s_portal_active = true;
         s_state = WIFI_MANAGER_PROVISIONING;
         taskEXIT_CRITICAL(&s_provisioning_lock);
-        result = start_portal_server();
-    }
-    s_transitioning = false;
-
-    if (result != ESP_OK) {
+        ESP_LOGI(TAG, "Wi-Fi 配网页已启动");
+    } else {
         stop_portal_server();
-        taskENTER_CRITICAL(&s_provisioning_lock);
-        s_portal_active = false;
+        stop_wifi();
         s_state = WIFI_MANAGER_FAILED;
-        taskEXIT_CRITICAL(&s_provisioning_lock);
+        ESP_LOGW(TAG, "启动 Wi-Fi 配网页失败: %s", esp_err_to_name(result));
     }
     return result;
 }
@@ -400,12 +560,25 @@ void wifi_manager_stop_provisioning(void)
 
     s_transitioning = true;
     stop_portal_server();
-    esp_wifi_stop();
-    esp_wifi_set_mode(WIFI_MODE_STA);
-    s_state = s_saved_config ? WIFI_MANAGER_CONNECTING : WIFI_MANAGER_UNCONFIGURED;
-    esp_wifi_start();
+    esp_err_t result = stop_wifi();
+    if (result == ESP_OK) result = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (result == ESP_OK && s_enabled) result = esp_wifi_start();
     s_transitioning = false;
-    if (s_saved_config) esp_wifi_connect();
+    if (result != ESP_OK) {
+        s_state = WIFI_MANAGER_FAILED;
+        ESP_LOGW(TAG, "停止 Wi-Fi 配网失败: %s", esp_err_to_name(result));
+        return;
+    }
+
+    if (!s_enabled) {
+        s_state = WIFI_MANAGER_DISABLED;
+    } else {
+        s_state = s_saved_config ? WIFI_MANAGER_CONNECTING : WIFI_MANAGER_UNCONFIGURED;
+        if (s_saved_config) {
+            result = esp_wifi_connect();
+            if (result != ESP_OK) fail_connection("恢复已保存 Wi-Fi", result);
+        }
+    }
 }
 
 const char *wifi_manager_get_provisioning_ssid(void)

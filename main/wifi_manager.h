@@ -2,9 +2,11 @@
 
 #include "esp_err.h"
 #include <stdbool.h>
+#include <stddef.h>
 
 typedef enum {
     WIFI_MANAGER_UNAVAILABLE,
+    WIFI_MANAGER_DISABLED,
     WIFI_MANAGER_UNCONFIGURED,
     WIFI_MANAGER_PROVISIONING,
     WIFI_MANAGER_CONNECTING,
@@ -12,11 +14,18 @@ typedef enum {
     WIFI_MANAGER_FAILED,
 } wifi_manager_state_t;
 
-/* 初始化 NVS、网络栈与 STA；已有成功配置时自动尝试重连。 */
+/* Sets the desired radio state. It may be called before init to select boot behavior. */
+esp_err_t wifi_manager_set_enabled(bool enabled);
+bool wifi_manager_is_enabled(void);
+
+/* Initializes NVS, the network stack and STA; saved credentials reconnect when enabled. */
 esp_err_t wifi_manager_init(void);
 wifi_manager_state_t wifi_manager_get_state(void);
 
-/* 启动受 WPA2 密码保护的临时 SoftAP 配置页。 */
+/* Only returns the associated SSID while connected; never exposes the password. */
+esp_err_t wifi_manager_get_connected_ssid(char *ssid, size_t size);
+
+/* Starts a WPA2-protected temporary SoftAP configuration page while Wi-Fi is enabled. */
 esp_err_t wifi_manager_start_provisioning(void);
 void wifi_manager_stop_provisioning(void);
 const char *wifi_manager_get_provisioning_ssid(void);

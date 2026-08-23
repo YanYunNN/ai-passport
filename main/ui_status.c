@@ -1,9 +1,12 @@
-#include "ui_status.h"
+#include "app_settings.h"
 #include "bsp_battery.h"
+#include "time_sync.h"
+#include "ui_status.h"
 #include "ui_system.h"
 #include "wifi_manager.h"
 #include "lvgl.h"
 #include <stdio.h>
+#include <time.h>
 
 #define STATUS_BATTERY_HEALTHY 0x45D483
 #define STATUS_BATTERY_LOW     0xF05252
@@ -43,6 +46,13 @@ static lv_obj_t *block(lv_obj_t *parent, int x, int y, int w, int h,
 static uint32_t clock_seconds_now(void)
 {
     return (s_clock_seconds + (lv_tick_get() - s_clock_base_tick) / 1000u) % 86400u;
+}
+
+static void set_clock_time(uint8_t hour, uint8_t minute, uint8_t second)
+{
+    s_clock_seconds = ((uint32_t)(hour % 24u) * 3600u) +
+                      ((uint32_t)(minute % 60u) * 60u) + (second % 60u);
+    s_clock_base_tick = lv_tick_get();
 }
 
 static void write_two_digits(char *text, uint32_t value)
@@ -110,9 +120,33 @@ static void refresh_charge_icon(void)
     }
 }
 
+static void apply_synchronized_time(void)
+{
+    time_t epoch;
+    if (!time_sync_take_epoch(&epoch)) return;
+
+    struct tm local_time;
+    if (!localtime_r(&epoch, &local_time)) return;
+
+    set_clock_time((uint8_t)local_time.tm_hour, (uint8_t)local_time.tm_min,
+                   (uint8_t)local_time.tm_sec);
+    const app_settings_t *current = app_settings_get();
+    app_settings_t settings = {
+        .brightness_index = current->brightness_index,
+        .hour = (uint8_t)local_time.tm_hour,
+        .minute = (uint8_t)local_time.tm_min,
+        .second = (uint8_t)local_time.tm_sec,
+        .time_format = s_time_format == UI_STATUS_TIME_HH_MM_SS
+                           ? APP_SETTINGS_TIME_HH_MM_SS : APP_SETTINGS_TIME_HH_MM,
+        .wifi_enabled = wifi_manager_is_enabled(),
+    };
+    app_settings_save(&settings);
+}
+
 static void status_refresh(lv_timer_t *timer)
 {
     (void)timer;
+    apply_synchronized_time();
     refresh_time();
     refresh_wifi();
     refresh_charge_icon();
@@ -194,9 +228,7 @@ void ui_status_set_visible(bool visible)
 
 void ui_status_set_time(uint8_t hour, uint8_t minute, uint8_t second)
 {
-    s_clock_seconds = ((uint32_t)(hour % 24u) * 3600u) +
-                      ((uint32_t)(minute % 60u) * 60u) + (second % 60u);
-    s_clock_base_tick = lv_tick_get();
+    set_clock_time(hour, minute, second);
     if (s_bar) status_refresh(NULL);
 }
 
