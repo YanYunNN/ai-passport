@@ -1,0 +1,24 @@
+name = "kiro-passport-relay"
+main = "src/index.ts"
+compatibility_date = "2026-08-23"
+
+# Before the first remote deployment, replace this placeholder with the ID printed by:
+#   npx wrangler d1 create kiro-passport
+[[d1_databases]]
+binding = "DB"
+database_name = "kiro-passport"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[[durable_objects.bindings]]
+name = "PASSPORTS"
+class_name = "PassportRelay"
+
+# Legacy DO migrations remain supported. Do not change the tag after deploying it.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PassportRelay"]
+
+# The parent zone must be onboarded to Cloudflare. This creates the Worker custom domain.
+[[routes]]
+pattern = "ws.yanyunnnx.cc.cd"
+custom_domain = true

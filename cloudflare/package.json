@@ -1,0 +1,19 @@
+{
+  "name": "kiro-passport-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Worker relay for Kiro Passport hardware approvals",
+  "type": "module",
+  "scripts": {
+    "cf-types": "wrangler types",
+    "typecheck": "npm run cf-types && tsc --noEmit",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply kiro-passport --local",
+    "db:migrate:remote": "wrangler d1 migrations apply kiro-passport --remote"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "wrangler": "4.125.0"
+  }
+}
