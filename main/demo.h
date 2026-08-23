@@ -26,3 +26,6 @@ void demo_battery_key(bsp_btn_t btn, bsp_btn_ev_t ev);
 
 void demo_reader_enter(void);  void demo_reader_exit(void);
 void demo_reader_key(bsp_btn_t btn, bsp_btn_ev_t ev);
+
+void demo_settings_enter(void); void demo_settings_exit(void);
+void demo_settings_key(bsp_btn_t btn, bsp_btn_ev_t ev);

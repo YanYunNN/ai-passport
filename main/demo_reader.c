@@ -1,6 +1,7 @@
 // main/demo_reader.c - 内置书库与按页阅读演示。
 #include "demo.h"
 #include "ui_font_noto_sc_14.h"
+#include "ui_status.h"
 #include "lvgl.h"
 
 #define ARRAY_SIZE(items) (sizeof(items) / sizeof((items)[0]))
@@ -145,15 +146,15 @@ static void add_header(lv_obj_t *parent, const char *section, const char *detail
 {
     lv_obj_t *section_label = reader_label(parent, section, &lv_font_montserrat_14,
                                            READER_TEXT);
-    lv_obj_set_pos(section_label, 16, 15);
+    lv_obj_set_pos(section_label, 16, 37);
 
     lv_obj_t *detail_label = reader_label(parent, detail, &lv_font_montserrat_14,
                                           READER_MUTED);
     lv_obj_set_width(detail_label, 92);
     lv_obj_set_style_text_align(detail_label, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_pos(detail_label, 132, 15);
+    lv_obj_set_pos(detail_label, 132, 37);
 
-    reader_block(parent, 16, 37, 208, 1, READER_BORDER);
+    reader_block(parent, 16, 59, 208, 1, READER_BORDER);
 }
 
 static void library_refresh(void)
@@ -185,16 +186,16 @@ static void library_build(void)
 
     lv_obj_t *back = reader_label(s_content, "<", &lv_font_montserrat_20,
                                   READER_TEXT);
-    lv_obj_set_pos(back, 18, 48);
+    lv_obj_set_pos(back, 18, 70);
 
     lv_obj_t *heading = reader_label(s_content, "YOUR SHELF", &lv_font_montserrat_20,
                                      READER_TEXT);
     lv_obj_set_width(heading, 208);
     lv_obj_set_style_text_align(heading, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_pos(heading, 16, 50);
+    lv_obj_set_pos(heading, 16, 72);
 
     for (size_t i = 0; i < BOOK_COUNT; i++) {
-        int y = 94 + (int)i * 66;
+        int y = 104 + (int)i * 66;
         s_cards[i] = reader_surface(s_content, 16, y, 208, 60,
                                     READER_SURFACE, READER_BORDER);
         reader_block(s_cards[i], 0, 12, 4, 36, READER_ACCENT);
@@ -246,9 +247,9 @@ static void reader_build(void)
     lv_obj_t *title = reader_label(s_content, book->title, book->font, READER_TEXT);
     lv_label_set_long_mode(title, LV_LABEL_LONG_CLIP);
     lv_obj_set_width(title, 208);
-    lv_obj_set_pos(title, 16, 50);
+    lv_obj_set_pos(title, 16, 72);
 
-    lv_obj_t *panel = reader_surface(s_content, 16, 78, 208, 184,
+    lv_obj_t *panel = reader_surface(s_content, 16, 96, 208, 166,
                                      READER_SURFACE, READER_BORDER);
     s_text = lv_label_create(panel);
     lv_label_set_long_mode(s_text, LV_LABEL_LONG_WRAP);
@@ -279,10 +280,12 @@ void demo_reader_enter(void)
     s_scr = reader_screen_create();
     library_build();
     lv_screen_load(s_scr);
+    ui_status_set_visible(true);
 }
 
 void demo_reader_exit(void)
 {
+    ui_status_set_visible(false);
     if (s_scr) {
         lv_obj_delete(s_scr);
         s_scr = NULL;

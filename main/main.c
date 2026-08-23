@@ -1,4 +1,4 @@
-// main/main.c —— FoloToy-Card BSP 驱动参考示例:初始化 + 菜单 + 按键分发。
+// main/main.c - FoloToy-Card BSP 驱动参考示例:初始化 + 菜单 + 按键分发。
 //
 // 按键语义(全局统一):
 //   上/下 短按   菜单中=移动选中项;演示页中=该页自定义
@@ -9,106 +9,132 @@
 #include "bsp_button.h"
 #include "bsp_audio.h"
 #include "bsp_battery.h"
-#include "bsp_pins.h"      // 错误日志里要打印 BSP_LCD_* 引脚号
+#include "bsp_pins.h"
 #include "demo.h"
-#include "ui_pixel.h"
+#include "ui_font_noto_sc_14.h"
+#include "ui_font_noto_sc_20.h"
+#include "ui_status.h"
+#include "ui_system.h"
 #include "lvgl.h"
 #include "esp_log.h"
 
 static const char *TAG = "main";
 
 static const demo_entry_t DEMOS[] = {
-    { "Display", demo_display_enter, demo_display_exit, demo_display_key },
-    { "Button",  demo_button_enter,  demo_button_exit,  demo_button_key  },
-    { "Audio",   demo_audio_enter,   demo_audio_exit,   demo_audio_key   },
-    { "Battery", demo_battery_enter, demo_battery_exit, demo_battery_key },
-    { "Reader",  demo_reader_enter,  demo_reader_exit,  demo_reader_key  },
+    { "显示", demo_display_enter, demo_display_exit, demo_display_key },
+    { "按键", demo_button_enter, demo_button_exit, demo_button_key },
+    { "音频", demo_audio_enter, demo_audio_exit, demo_audio_key },
+    { "电量", demo_battery_enter, demo_battery_exit, demo_battery_key },
+    { "阅读", demo_reader_enter, demo_reader_exit, demo_reader_key },
+    { "设置", demo_settings_enter, demo_settings_exit, demo_settings_key },
 };
 #define DEMO_COUNT (sizeof(DEMOS) / sizeof(DEMOS[0]))
 
-// 各外设初始化结果:失败的项在菜单里标 [FAIL] 且不允许进入。
 static bool s_ok[DEMO_COUNT];
-
 static lv_obj_t *s_menu_scr;
 static lv_obj_t *s_cards[DEMO_COUNT];
 static lv_obj_t *s_rows[DEMO_COUNT];
-static lv_obj_t *s_mascot;
-static int  s_sel;                 // 当前选中项
-static int  s_active = -1;         // 当前所在演示页;-1 = 在菜单
+static lv_obj_t *s_status[DEMO_COUNT];
+static lv_obj_t *s_indicators[DEMO_COUNT];
+static int s_sel;
+static int s_active = -1;
 
-static void menu_refresh(void) {
+static void menu_refresh(void)
+{
     for (size_t i = 0; i < DEMO_COUNT; i++) {
-        lv_label_set_text_fmt(s_rows[i], "%s%s",
-                              DEMOS[i].name,
-                              s_ok[i] ? "" : "  [FAIL]");
-        ui_pixel_set_selected(s_cards[i], (int)i == s_sel, s_ok[i]);
-        lv_obj_set_style_text_color(s_rows[i],
-            s_ok[i] ? lv_color_hex(UI_INK) : lv_color_hex(0x7A2020), 0);
+        lv_label_set_text(s_status[i], s_ok[i] ? "" : "不可用");
+        ui_system_set_item_state(s_cards[i], s_rows[i], s_status[i],
+                                 s_indicators[i], (int)i == s_sel, s_ok[i]);
     }
 }
 
-static void menu_build(void) {
-    s_menu_scr = ui_pixel_screen_create("FoloToy");
+static void menu_build(void)
+{
+    s_menu_scr = ui_system_screen_create();
+
+    lv_obj_t *heading = ui_system_label(s_menu_scr, "主菜单", &ui_font_noto_sc_20,
+                                        UI_SYSTEM_TEXT);
+    lv_obj_set_width(heading, 208);
+    lv_obj_set_style_text_align(heading, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_pos(heading, 16, 35);
+    ui_system_divider(s_menu_scr, 16, 66, 208);
 
     for (size_t i = 0; i < DEMO_COUNT; i++) {
-        // 两列三行的紧凑布局，最多容纳六个 Demo，同时给底部吉祥物留出空间。
-        int x = 11 + (int)(i % 2) * 112;
-        int y = 55 + (int)(i / 2) * 60;
-        s_cards[i] = ui_pixel_panel_create(s_menu_scr, x, y, 102, 54, UI_PAPER);
-        s_rows[i] = lv_label_create(s_cards[i]);
-        lv_obj_set_style_text_font(s_rows[i], &lv_font_montserrat_20, 0);
-        lv_obj_set_style_text_align(s_rows[i], LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_center(s_rows[i]);
-    }
+        int y = 73 + (int)i * 39;
+        s_cards[i] = ui_system_item_create(s_menu_scr, 16, y, 208, 36);
 
-    s_mascot = ui_pixel_mascot_create(s_menu_scr, 101, 238);
+        s_rows[i] = ui_system_label(s_cards[i], DEMOS[i].name,
+                                    &ui_font_noto_sc_14, UI_SYSTEM_TEXT);
+        lv_obj_set_pos(s_rows[i], 16, 10);
+
+        s_status[i] = ui_system_label(s_cards[i], "", &ui_font_noto_sc_14,
+                                      UI_SYSTEM_MUTED);
+        lv_obj_set_width(s_status[i], 56);
+        lv_obj_set_style_text_align(s_status[i], LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_pos(s_status[i], 108, 10);
+
+        s_indicators[i] = ui_system_label(s_cards[i], ">", &lv_font_montserrat_20,
+                                           UI_SYSTEM_MUTED);
+        lv_obj_set_pos(s_indicators[i], 180, 7);
+    }
 
     menu_refresh();
     lv_screen_load(s_menu_scr);
 }
 
-static void enter_menu(void) {
+static void enter_menu(void)
+{
     s_active = -1;
     menu_build();
+    ui_status_set_visible(true);
 }
 
 // 按键回调运行在 button 组件的任务里,操作 LVGL 必须加锁。
-static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user) {
+static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user)
+{
     (void)user;
     if (!bsp_lvgl_lock(500)) return;
 
     if (s_active >= 0) {
-        if (btn == BSP_BTN_OK && ev == BSP_BTN_LONG) {     // 统一返回
+        if (btn == BSP_BTN_OK && ev == BSP_BTN_LONG) {
             DEMOS[s_active].exit();
             enter_menu();
         } else {
             DEMOS[s_active].key(btn, ev);
         }
     } else if (ev == BSP_BTN_CLICK) {
-        if (btn == BSP_BTN_UP)   { s_sel = (s_sel + DEMO_COUNT - 1) % DEMO_COUNT; menu_refresh(); }
-        if (btn == BSP_BTN_DOWN) { s_sel = (s_sel + 1) % DEMO_COUNT;              menu_refresh(); }
+        if (btn == BSP_BTN_UP) {
+            s_sel = (s_sel + DEMO_COUNT - 1) % DEMO_COUNT;
+            menu_refresh();
+        }
+        if (btn == BSP_BTN_DOWN) {
+            s_sel = (s_sel + 1) % DEMO_COUNT;
+            menu_refresh();
+        }
         if (btn == BSP_BTN_OK && s_ok[s_sel]) {
             s_active = s_sel;
-            ui_pixel_mascot_jump(s_mascot);
+            ui_status_set_visible(false);
             lv_obj_delete(s_menu_scr);
             s_menu_scr = NULL;
-            s_mascot = NULL;
+            for (size_t i = 0; i < DEMO_COUNT; i++) {
+                s_cards[i] = NULL;
+                s_rows[i] = NULL;
+                s_status[i] = NULL;
+                s_indicators[i] = NULL;
+            }
             DEMOS[s_active].enter();
-        } else if (btn == BSP_BTN_UP || btn == BSP_BTN_DOWN) {
-            ui_pixel_mascot_jump(s_mascot);
         }
     }
     bsp_lvgl_unlock();
 }
 
-void app_main(void) {
+void app_main(void)
+{
     ESP_LOGI(TAG, "FoloToy-Card BSP demo 启动");
 
     bsp_i2c_init();
     bsp_i2c_scan();
 
-    // 屏幕是本 demo 的 UI 载体,失败就没有菜单可言 —— 打清楚日志后退出,
-    // 不做"串口菜单"降级(那会让本文件复杂一倍,违背参考示例的初衷)。
     if (bsp_display_init() != ESP_OK || !bsp_lvgl_init()) {
         ESP_LOGE(TAG, "显示/LVGL 初始化失败,demo 无法继续。"
                       "检查 SPI 接线(MOSI=%d SCLK=%d CS=%d DC=%d BL=%d)",
@@ -117,15 +143,19 @@ void app_main(void) {
     }
     bsp_display_backlight(100);
 
-    // 其余外设单项失败不阻塞:菜单里标 [FAIL],其他项照常可测。
-    s_ok[0] = true;                                   // Display 已确认可用
+    s_ok[0] = true;
     s_ok[1] = (bsp_button_init(on_key, NULL) == ESP_OK);
     s_ok[2] = (bsp_audio_init() == ESP_OK);
     s_ok[3] = (bsp_battery_init() == ESP_OK);
-    s_ok[4] = true;                                   // Reader 使用内置书库，无硬件依赖
+    s_ok[4] = true;
+    s_ok[5] = true;
 
-    if (bsp_lvgl_lock(1000)) { enter_menu(); bsp_lvgl_unlock(); }
+    if (bsp_lvgl_lock(1000)) {
+        ui_status_init();
+        enter_menu();
+        bsp_lvgl_unlock();
+    }
 
-    ESP_LOGI(TAG, "就绪:Display=%d Button=%d Audio=%d Battery=%d Reader=%d",
-             s_ok[0], s_ok[1], s_ok[2], s_ok[3], s_ok[4]);
+    ESP_LOGI(TAG, "就绪:显示=%d 按键=%d 音频=%d 电量=%d 阅读=%d 设置=%d",
+             s_ok[0], s_ok[1], s_ok[2], s_ok[3], s_ok[4], s_ok[5]);
 }
