@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Kiro Passport Approve High Risk",
+      "trigger": "PreToolUse",
+      "description": "Requires a connected AI Passport to approve high-risk Kiro tool calls; bridge, device, and timeout failures deny the call.",
+      "matcher": "^(execute_bash|fs_write|str_replace|fs_append|delete_file|@mcp.*)$",
+      "action": {
+        "type": "command",
+        "command": "python3 tools/kiro_passport_bridge.py hook --kind pretool --timeout 30",
+        "timeout": 35
+      }
+    }
+  ]
+}

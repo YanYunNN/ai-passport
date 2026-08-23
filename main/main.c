@@ -12,6 +12,7 @@
 #include "bsp_pins.h"
 #include "app_settings.h"
 #include "demo.h"
+#include "kiro_passport_ble.h"
 #include "ui_font_noto_sc_14.h"
 #include "ui_font_noto_sc_20.h"
 #include "ui_status.h"
@@ -29,6 +30,7 @@ static const demo_entry_t DEMOS[] = {
     { "电量", demo_battery_enter, demo_battery_exit, demo_battery_key },
     { "阅读", demo_reader_enter, demo_reader_exit, demo_reader_key },
     { "设置", demo_settings_enter, demo_settings_exit, demo_settings_key },
+    { "Kiro", demo_kiro_passport_enter, demo_kiro_passport_exit, demo_kiro_passport_key },
 };
 #define DEMO_COUNT (sizeof(DEMOS) / sizeof(DEMOS[0]))
 
@@ -155,6 +157,7 @@ void app_main(void)
     s_ok[3] = (bsp_battery_init() == ESP_OK);
     s_ok[4] = true;
     s_ok[5] = true;
+    s_ok[6] = (kiro_passport_ble_init() == ESP_OK);
 
     esp_err_t wifi_enable_result = wifi_manager_set_enabled(app_settings_get()->wifi_enabled);
     if (wifi_enable_result != ESP_OK) {
@@ -175,7 +178,7 @@ void app_main(void)
         bsp_lvgl_unlock();
     }
 
-    ESP_LOGI(TAG, "就绪:显示=%d 按键=%d 音频=%d 电量=%d 阅读=%d 设置=%d Wi-Fi=%d",
-             s_ok[0], s_ok[1], s_ok[2], s_ok[3], s_ok[4], s_ok[5],
+    ESP_LOGI(TAG, "就绪:显示=%d 按键=%d 音频=%d 电量=%d 阅读=%d 设置=%d Kiro=%d Wi-Fi=%d",
+             s_ok[0], s_ok[1], s_ok[2], s_ok[3], s_ok[4], s_ok[5], s_ok[6],
              wifi_result == ESP_OK);
 }

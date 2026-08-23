@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Kiro Passport Tool Busy",
+      "trigger": "PostToolUse",
+      "description": "Keeps the AI Passport in busy state while Kiro continues processing a protected tool result.",
+      "matcher": "^(execute_bash|fs_write|str_replace|fs_append|delete_file|@mcp.*)$",
+      "action": {
+        "type": "command",
+        "command": "python3 tools/kiro_passport_bridge.py hook --kind busy",
+        "timeout": 10
+      }
+    }
+  ]
+}

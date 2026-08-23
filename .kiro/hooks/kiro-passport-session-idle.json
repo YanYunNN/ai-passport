@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Kiro Passport Session Idle",
+      "trigger": "Stop",
+      "description": "Returns the AI Passport to idle when the Kiro agent completes a turn.",
+      "action": {
+        "type": "command",
+        "command": "python3 tools/kiro_passport_bridge.py hook --kind idle",
+        "timeout": 10
+      }
+    }
+  ]
+}

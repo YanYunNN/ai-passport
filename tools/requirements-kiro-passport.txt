@@ -1,0 +1,2 @@
+# macOS BLE bridge dependency. Keep this version pinned for reproducible pairing behavior.
+bleak==0.22.3

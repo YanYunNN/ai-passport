@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Kiro Passport Session Busy",
+      "trigger": "UserPromptSubmit",
+      "description": "Notifies the local Passport bridge when a Kiro prompt begins so the device shows busy.",
+      "action": {
+        "type": "command",
+        "command": "python3 tools/kiro_passport_bridge.py hook --kind busy",
+        "timeout": 10
+      }
+    }
+  ]
+}
