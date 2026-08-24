@@ -2,7 +2,7 @@
 
 本目录是独立的 Cloudflare Worker 工程。它实现：每台 Passport 一个 Durable Object、WSS 长连接、D1 中仅保存设备 credential 的带 pepper SHA-256 哈希、管理注册/轮换 API，以及 Hook 的 `POST + polling` 审批 API。
 
-> **安全边界**：Cloudflare API token、`ADMIN_API_KEY`、`HOOK_AUTH_SECRET`、`DEVICE_CREDENTIAL_PEPPER`、`PAIR_CONFIRMATION_SECRET` 和设备 credential 都是秘密。绝不可提交到 Git、写入 `wrangler.toml`，也不可把 Cloudflare 管理凭据写入设备。设备只保存它自己的 WSS credential，且只能写入启用了 NVS encryption 的分区。
+> **安全边界**：Cloudflare API token、`ADMIN_API_KEY`、`HOOK_AUTH_SECRET`、`DEVICE_CREDENTIAL_PEPPER`、`ADMIN_UI_USERNAME`、`ADMIN_UI_PASSWORD` 和设备 credential 都是敏感值。绝不可提交到 Git、写入 `wrangler.toml`，也不可把 Cloudflare 管理凭据写入设备。设备只保存它自己的 WSS credential，且只能写入启用了 NVS encryption 的分区。
 
 ## 0. 部署前条件
 
@@ -51,7 +51,8 @@
 npx wrangler secret put ADMIN_API_KEY
 npx wrangler secret put HOOK_AUTH_SECRET
 npx wrangler secret put DEVICE_CREDENTIAL_PEPPER
-npx wrangler secret put PAIR_CONFIRMATION_SECRET
+npx wrangler secret put ADMIN_UI_USERNAME
+npx wrangler secret put ADMIN_UI_PASSWORD
 ```
 
 用途：
@@ -59,9 +60,9 @@ npx wrangler secret put PAIR_CONFIRMATION_SECRET
 - `ADMIN_API_KEY`：仅工厂/管理端调用设备注册和轮换 API。
 - `HOOK_AUTH_SECRET`：仅本机 Kiro Hook 或受信任的桥接进程调用审批 API。
 - `DEVICE_CREDENTIAL_PEPPER`：只用于 Worker 中对设备 credential 进行哈希；丢失或更改它会令现有设备无法认证。
-- `PAIR_CONFIRMATION_SECRET`：用于签名后台配对页的一次确认令牌；用高熵独立随机值配置，绝不复用 credential pepper 或其他密钥。
+- `ADMIN_UI_USERNAME`、`ADMIN_UI_PASSWORD`：保护后台配对页和兼容审批 API 的 Basic Auth 凭据。密码同时用于签名短时配对确认；更改密码会使尚未确认的配对链接失效。
 
-生产建议通过 CI 的 secret store 注入 Worker secrets。不要用 `wrangler.toml` 的 `[vars]`、`.env`、设备 NVS 或 Kiro Hook 源代码保存它们。
+生产建议通过 CI 的 secret store 注入 Worker secrets。`ADMIN_UI_USERNAME` 和 `ADMIN_UI_PASSWORD` 必须通过 `wrangler secret put` 或等效的 CI secret 注入；**绝不能将明文写入 `wrangler.toml`、Git、`.env`、CI 日志、设备 NVS 或 Kiro Hook 源代码**。
 
 ## 3. 部署、域名和健康检查
 
@@ -217,23 +218,14 @@ The device polls `POST /v1/enrollment/token` with `device_id` and `device_code`.
 
 ### Pairing operator workflow
 
-`/admin/pair` is the only supported human-facing pairing entry point. After signing in through Cloudflare Access, the operator enters the six digits. The first POST only displays the matching pending `device_id`; it does not approve anything. The operator must then choose **Confirm bind** in a second POST. That confirmation is short-lived, signed with `PAIR_CONFIRMATION_SECRET`, and bound to both the Access subject and the selected enrollment. Invalid, expired, unavailable, or malformed entries return a safe, no-store HTML result without echoing raw input.
+`/admin/pair` 是唯一支持的人工配对入口。使用浏览器访问该地址时，浏览器会弹出 HTTP Basic Auth 登录窗口；输入作为 Worker Secrets 设置的 `ADMIN_UI_USERNAME` 和 `ADMIN_UI_PASSWORD`。认证成功后，操作员输入六位码。第一个 POST 只显示匹配的待处理 `device_id`，不会批准任何设备；操作员必须在第二个 POST 中选择 **Confirm bind**。确认令牌短时有效、由 `ADMIN_UI_PASSWORD` 签名，并绑定管理员用户名和选定 enrollment。无效、过期、不可用或格式错误的输入会返回安全的 no-store HTML 页面，且不回显原始输入。
 
-`GET /activate`, `POST /activate`, and JSON `POST /v1/enrollment/approve` remain compatibility APIs. Their POST approval calls still require a valid Access assertion and still approve directly. Do not direct new users to `/activate`.
+`GET /activate` 仍是旧版表单入口；`POST /activate` 和 JSON `POST /v1/enrollment/approve` 是兼容审批 API。它们都要求同一组 HTTP Basic Auth 凭据，并会在一次请求中直接批准。新用户应使用 `/admin/pair`。
 
-### Cloudflare Access protection for pairing
+### Worker Basic Auth 保护
 
-Create a Cloudflare Access Application for the same Worker hostname with this protected path:
+无需创建 Cloudflare Access Application。Worker 对每个 `GET /admin/pair` 和 `POST /admin/pair` 严格解析 `Authorization: Basic`，并以恒定时间比较用户名和密码。缺失或无效的凭据会返回包含 `WWW-Authenticate: Basic` 的 no-store HTML `401`，让浏览器显示登录窗口。兼容 API 缺失或无效凭据时返回 JSON `401`。
 
-- `https://ws.yanyunnnx.cc.cd/admin/pair`
+不要保护 `/v1/enrollment/device-code` 或 `/v1/enrollment/token`：未注册设备必须访问这些公开 API，而 Worker 的状态转换仍会 fail closed。批准审计使用管理员用户名同时写入 `approved_by` 和 `approved_subject`。页面使用限制性 CSP、no-store 缓存、无 referrer policy 和转义输出。
 
-This one path covers the admin pairing page and both of its POST steps. The Worker independently verifies `Cf-Access-Jwt-Assertion` on every `/admin/pair` GET and POST, so a bypassed edge policy fails closed. Apply an allow policy limited to intended operators or an identity-provider group. You may add `https://ws.yanyunnnx.cc.cd/activate` to the same Application only when legacy browser activation remains required. Do **not** protect `/v1/enrollment/device-code` or `/v1/enrollment/token`: unregistered devices must reach those public device APIs, while Worker state transitions remain fail-closed.
-
-Set the following Worker environment variables in the Cloudflare dashboard (or equivalent CI deployment configuration), per environment. They are configuration values, not credentials; do not substitute them with arbitrary user input:
-
-- `ACCESS_TEAM_DOMAIN`: the exact Access team issuer, for example `https://your-team.cloudflareaccess.com` (the Worker accepts the hostname form and constructs HTTPS).
-- `ACCESS_AUD`: the Application Audience (AUD) tag from that Access Application.
-
-The Worker verifies assertions against the team JWKS using `jose`, requiring the configured issuer and audience. A missing or invalid assertion is rejected; approval audit identity stores both its email (`approved_by`) and subject (`approved_subject`). Pages use restrictive CSP, no-store caching, no referrer policy, and escaped output.
-
-Keep `ADMIN_API_KEY`, `HOOK_AUTH_SECRET`, `DEVICE_CREDENTIAL_PEPPER`, `PAIR_CONFIRMATION_SECRET`, and generated device credentials as Worker secrets via `wrangler secret put`; never place them, Access assertions, or device/user codes in `wrangler.toml`, Git, CI logs, or source code. The enrollment schema is migrations `0002_device_enrollments.sql`, `0003_enrollment_approval_subject.sql`, and `0004_short_user_codes.sql`; after `npm run db:migrate:remote`, verify that `device_enrollments` is listed alongside the existing tables.
+将 `ADMIN_API_KEY`、`HOOK_AUTH_SECRET`、`DEVICE_CREDENTIAL_PEPPER`、`ADMIN_UI_USERNAME`、`ADMIN_UI_PASSWORD` 及生成的设备 credential 保持为 Worker secrets，切勿将明文写入 `wrangler.toml` 或 Git。enrollment schema 是 migrations `0002_device_enrollments.sql`、`0003_enrollment_approval_subject.sql` 和 `0004_short_user_codes.sql`；执行 `npm run db:migrate:remote` 后，确认 `device_enrollments` 与现有表一同列出。

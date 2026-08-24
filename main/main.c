@@ -1,9 +1,4 @@
 // main/main.c - FoloToy-Card BSP 驱动参考示例:初始化 + 菜单 + 按键分发。
-//
-// 按键语义(全局统一):
-//   上/下 短按   菜单中=移动选中项;演示页中=该页自定义
-//   确定  短按   菜单中=进入选中项;演示页中=该页自定义
-//   确定  长按   演示页中=返回菜单(由本文件统一拦截)
 #include "bsp_i2c.h"
 #include "bsp_display.h"
 #include "bsp_button.h"
@@ -11,6 +6,7 @@
 #include "bsp_battery.h"
 #include "bsp_pins.h"
 #include "app_settings.h"
+#include "power_manager.h"
 #include "demo.h"
 #include "kiro_passport_network.h"
 #include "ui_font_noto_sc_14.h"
@@ -64,19 +60,16 @@ static void menu_build(void)
     ui_system_divider(s_menu_scr, 16, 66, 208);
 
     for (size_t i = 0; i < DEMO_COUNT; i++) {
-        int y = 73 + (int)i * 39;
+        int y = 68 + (int)i * 36;
         s_cards[i] = ui_system_item_create(s_menu_scr, 16, y, 208, 36);
-
         s_rows[i] = ui_system_label(s_cards[i], DEMOS[i].name,
                                     &ui_font_noto_sc_14, UI_SYSTEM_TEXT);
         lv_obj_set_pos(s_rows[i], 16, 10);
-
         s_status[i] = ui_system_label(s_cards[i], "", &ui_font_noto_sc_14,
                                       UI_SYSTEM_MUTED);
         lv_obj_set_width(s_status[i], 56);
         lv_obj_set_style_text_align(s_status[i], LV_TEXT_ALIGN_RIGHT, 0);
         lv_obj_set_pos(s_status[i], 108, 10);
-
         s_indicators[i] = ui_system_label(s_cards[i], ">", &lv_font_montserrat_20,
                                            UI_SYSTEM_MUTED);
         lv_obj_set_pos(s_indicators[i], 180, 7);
@@ -93,7 +86,7 @@ static void enter_menu(void)
     ui_status_set_visible(true);
 }
 
-// 按键回调运行在 button 组件的任务里,操作 LVGL 必须加锁。
+/* The callback runs in the button task, so all LVGL access is mutex-protected. */
 static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user)
 {
     (void)user;
@@ -145,9 +138,15 @@ void app_main(void)
                  BSP_LCD_MOSI, BSP_LCD_SCLK, BSP_LCD_CS, BSP_LCD_DC, BSP_LCD_BL);
         return;
     }
+
     esp_err_t settings_result = app_settings_init();
     if (settings_result != ESP_OK) {
         ESP_LOGW(TAG, "应用设置初始化失败: %s", esp_err_to_name(settings_result));
+    }
+    const app_settings_t *settings = app_settings_get();
+    esp_err_t power_result = power_manager_init(settings->light_sleep_enabled);
+    if (power_result != ESP_OK) {
+        ESP_LOGW(TAG, "浅睡眠策略未生效: %s", esp_err_to_name(power_result));
     }
     bsp_display_backlight(app_settings_get_brightness_percent());
 
@@ -159,13 +158,19 @@ void app_main(void)
     s_ok[5] = true;
     s_ok[6] = true;
 
-    esp_err_t wifi_enable_result = wifi_manager_set_enabled(app_settings_get()->wifi_enabled);
+    esp_err_t wifi_enable_result = wifi_manager_set_enabled(settings->wifi_enabled);
     if (wifi_enable_result != ESP_OK) {
         ESP_LOGW(TAG, "Wi-Fi 开关设置失败: %s", esp_err_to_name(wifi_enable_result));
     }
     esp_err_t wifi_result = wifi_manager_init();
     if (wifi_result != ESP_OK) {
         ESP_LOGW(TAG, "Wi-Fi 初始化失败: %s", esp_err_to_name(wifi_result));
+    } else {
+        esp_err_t wifi_power_result = wifi_manager_set_power_save(
+            settings->wifi_power_save_enabled);
+        if (wifi_power_result != ESP_OK) {
+            ESP_LOGW(TAG, "Wi-Fi 节能策略未生效: %s", esp_err_to_name(wifi_power_result));
+        }
     }
 
     esp_err_t passport_result = kiro_passport_network_init();
@@ -175,7 +180,6 @@ void app_main(void)
     }
 
     if (bsp_lvgl_lock(1000)) {
-        const app_settings_t *settings = app_settings_get();
         ui_status_init();
         ui_status_set_time(settings->hour, settings->minute, settings->second);
         ui_status_set_time_format(settings->time_format == APP_SETTINGS_TIME_HH_MM_SS

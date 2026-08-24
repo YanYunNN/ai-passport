@@ -12,13 +12,43 @@
 static const char *TAG = "bsp_audio";
 
 static esp_codec_dev_handle_t s_dev;
-static i2s_chan_handle_t      s_tx, s_rx;
-// 记录当前已打开的格式,用于判断"要不要 close 重开"(见头文件里的坑说明)。
+static i2s_chan_handle_t s_tx, s_rx;
+/* Records the open format so a different one can close and reconfigure safely. */
 static uint32_t s_hz;
-static uint8_t  s_bits, s_ch;
-static bool     s_opened;
+static uint8_t s_bits, s_ch;
+static bool s_opened;
+static bool s_channels_enabled;
 
-static esp_err_t i2s_full_duplex_init(void) {
+static esp_err_t audio_channels_set_enabled(bool enabled)
+{
+    if (!s_tx || !s_rx) return ESP_ERR_INVALID_STATE;
+    if (s_channels_enabled == enabled) return ESP_OK;
+
+    esp_err_t result;
+    if (enabled) {
+        result = i2s_channel_enable(s_tx);
+        if (result != ESP_OK) return result;
+        result = i2s_channel_enable(s_rx);
+        if (result != ESP_OK) {
+            i2s_channel_disable(s_tx);
+            return result;
+        }
+    } else {
+        result = i2s_channel_disable(s_tx);
+        if (result != ESP_OK) return result;
+        result = i2s_channel_disable(s_rx);
+        if (result != ESP_OK) {
+            i2s_channel_enable(s_tx);
+            return result;
+        }
+    }
+
+    s_channels_enabled = enabled;
+    return ESP_OK;
+}
+
+static esp_err_t i2s_full_duplex_init(void)
+{
     i2s_chan_config_t chan = {
         .id = BSP_I2S_PORT,
         .role = I2S_ROLE_MASTER,
@@ -28,10 +58,13 @@ static esp_err_t i2s_full_duplex_init(void) {
         .auto_clear_before_cb = false,
         .intr_priority = 0,
     };
-    esp_err_t e = i2s_new_channel(&chan, &s_tx, &s_rx);
-    if (e != ESP_OK) { ESP_LOGE(TAG, "i2s_new_channel 失败: %s", esp_err_to_name(e)); return e; }
+    esp_err_t result = i2s_new_channel(&chan, &s_tx, &s_rx);
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "i2s_new_channel 失败: %s", esp_err_to_name(result));
+        return result;
+    }
 
-    // 这里的采样率只用于建通道;实际速率由 esp_codec_dev_open() 按需重配。
+    /* This rate only creates the channels; esp_codec_dev_open() applies the actual rate. */
     i2s_std_config_t std = {
         .clk_cfg = {
             .sample_rate_hz = 16000,
@@ -57,29 +90,35 @@ static esp_err_t i2s_full_duplex_init(void) {
             .invert_flags = { .mclk_inv = false, .bclk_inv = false, .ws_inv = false },
         },
     };
-    if ((e = i2s_channel_init_std_mode(s_tx, &std)) != ESP_OK) {
-        ESP_LOGE(TAG, "i2s tx 初始化失败: %s", esp_err_to_name(e)); return e;
+    result = i2s_channel_init_std_mode(s_tx, &std);
+    if (result == ESP_OK) result = i2s_channel_init_std_mode(s_rx, &std);
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "I2S 通道初始化失败: %s", esp_err_to_name(result));
+        return result;
     }
-    if ((e = i2s_channel_init_std_mode(s_rx, &std)) != ESP_OK) {
-        ESP_LOGE(TAG, "i2s rx 初始化失败: %s", esp_err_to_name(e)); return e;
+
+    /* esp_codec_dev_open() disables both channels while reconfiguring, which requires
+     * RUNNING state. Enable once here, then put both channels back to READY at idle. */
+    result = i2s_channel_enable(s_tx);
+    if (result == ESP_OK) result = i2s_channel_enable(s_rx);
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "I2S 通道启用失败: %s", esp_err_to_name(result));
+        return result;
     }
-    // esp_codec_dev_open 内部重配前会先 i2s_channel_disable,而 disable 要求通道处于
-    // RUNNING;刚 init 的通道是 READY,会打一条 "channel has not been enabled yet" 错误日志。
-    // 这里先 enable 一次让那次 disable 合法(此时 codec 未配,不出声)。
-    i2s_channel_enable(s_tx);
-    i2s_channel_enable(s_rx);
+    s_channels_enabled = true;
     return ESP_OK;
 }
 
-esp_err_t bsp_audio_init(void) {
+esp_err_t bsp_audio_init(void)
+{
     if (s_dev) return ESP_OK;
 
-    esp_err_t e = bsp_i2c_init();
-    if (e != ESP_OK) return e;
+    esp_err_t result = bsp_i2c_init();
+    if (result != ESP_OK) return result;
 
     const audio_codec_ctrl_if_t *ctrl = audio_codec_new_i2c_ctrl(&(audio_codec_i2c_cfg_t){
         .port = BSP_I2C_PORT,
-        .addr = BSP_I2C_ES8311_ADDR << 1,   // 该接口要 8 位地址形式
+        .addr = BSP_I2C_ES8311_ADDR << 1,
         .bus_handle = bsp_i2c_bus(),
     });
     if (!ctrl) {
@@ -89,82 +128,124 @@ esp_err_t bsp_audio_init(void) {
         return ESP_FAIL;
     }
 
-    if ((e = i2s_full_duplex_init()) != ESP_OK) return e;
+    result = i2s_full_duplex_init();
+    if (result != ESP_OK) return result;
 
     const audio_codec_data_if_t *data = audio_codec_new_i2s_data(&(audio_codec_i2s_cfg_t){
         .port = BSP_I2S_PORT, .tx_handle = s_tx, .rx_handle = s_rx,
     });
-    if (!data) { ESP_LOGE(TAG, "I2S 数据口创建失败"); return ESP_FAIL; }
+    if (!data) {
+        ESP_LOGE(TAG, "I2S 数据口创建失败");
+        return ESP_FAIL;
+    }
 
     const audio_codec_if_t *codec = es8311_codec_new(&(es8311_codec_cfg_t){
-        .ctrl_if     = ctrl,
-        .gpio_if     = audio_codec_new_gpio(),
-        .codec_mode  = ESP_CODEC_DEV_WORK_MODE_BOTH,
-        .pa_pin      = BSP_I2S_PA_CTRL,
+        .ctrl_if = ctrl,
+        .gpio_if = audio_codec_new_gpio(),
+        .codec_mode = ESP_CODEC_DEV_WORK_MODE_BOTH,
+        .pa_pin = BSP_I2S_PA_CTRL,
         .pa_reverted = false,
-        .master_mode = false,          // MCU I2S 为 master,codec 为 slave
-        .use_mclk    = true,
-        .hw_gain     = { .pa_voltage = 5.0f, .codec_dac_voltage = 3.3f },
-        // ⚠ 单声道纯麦克风录音必须为 true。false 会让驱动写 REG44=0x58 进入
-        //   ADCL+DACR 参考模式,单声道读到的那一路是 DAC 参考 → 【录音恒为 0】。
-        .no_dac_ref  = true,
+        .master_mode = false,
+        .use_mclk = true,
+        .hw_gain = { .pa_voltage = 5.0f, .codec_dac_voltage = 3.3f },
+        .no_dac_ref = true,
     });
-    if (!codec) { ESP_LOGE(TAG, "es8311_codec_new 失败"); return ESP_FAIL; }
+    if (!codec) {
+        ESP_LOGE(TAG, "es8311_codec_new 失败");
+        return ESP_FAIL;
+    }
 
     s_dev = esp_codec_dev_new(&(esp_codec_dev_cfg_t){
         .dev_type = ESP_CODEC_DEV_TYPE_IN_OUT,
         .codec_if = codec,
-        .data_if  = data,
+        .data_if = data,
     });
-    if (!s_dev) { ESP_LOGE(TAG, "esp_codec_dev_new 失败"); return ESP_FAIL; }
-
-    ESP_LOGI(TAG, "ES8311 就绪");
-    return ESP_OK;
-}
-
-esp_err_t bsp_audio_set_format(uint32_t hz, uint8_t bits, uint8_t ch) {
-    if (!s_dev) return ESP_ERR_INVALID_STATE;
-    if (s_opened && s_hz == hz && s_bits == bits && s_ch == ch) return ESP_OK;   // 同格式复用
-
-    if (s_opened) {
-        esp_codec_dev_close(s_dev);
-        s_opened = false;
-        // close 把 I2S 通道退回 READY,而接下来的 open 内部又会 disable 一次 →
-        // 会打 "channel has not been enabled yet"。补一次 enable 让它合法。
-        if (s_tx) i2s_channel_enable(s_tx);
-        if (s_rx) i2s_channel_enable(s_rx);
+    if (!s_dev) {
+        ESP_LOGE(TAG, "esp_codec_dev_new 失败");
+        return ESP_FAIL;
     }
 
-    esp_codec_dev_sample_info_t fs = {
+    /* A permanently enabled I2S channel holds an APB PM lock. Keep codec handles,
+     * but leave the transport in READY state until an actual record/playback window. */
+    result = audio_channels_set_enabled(false);
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "I2S 空闲关闭失败: %s", esp_err_to_name(result));
+    }
+    ESP_LOGI(TAG, "ES8311 就绪；I2S 在空闲时关闭");
+    return result;
+}
+
+esp_err_t bsp_audio_close(void)
+{
+    if (!s_dev) return ESP_OK;
+
+    if (s_opened) {
+        /* esp_codec_dev_close() owns the data interface and returns both I2S
+         * channels to READY. Keep the BSP state in sync; do not disable twice. */
+        esp_codec_dev_close(s_dev);
+        s_opened = false;
+        s_channels_enabled = false;
+    }
+    s_hz = 0;
+    s_bits = 0;
+    s_ch = 0;
+
+    esp_err_t result = audio_channels_set_enabled(false);
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "I2S 空闲关闭失败: %s", esp_err_to_name(result));
+    }
+    return result;
+}
+
+esp_err_t bsp_audio_set_format(uint32_t hz, uint8_t bits, uint8_t ch)
+{
+    if (!s_dev) return ESP_ERR_INVALID_STATE;
+    if (s_opened && s_hz == hz && s_bits == bits && s_ch == ch) return ESP_OK;
+
+    esp_err_t result = bsp_audio_close();
+    if (result != ESP_OK) return result;
+
+    /* open() disables running channels to reconfigure them, so enable this active
+     * window immediately before the call; bsp_audio_close() releases the PM lock. */
+    result = audio_channels_set_enabled(true);
+    if (result != ESP_OK) return result;
+
+    esp_codec_dev_sample_info_t format = {
         .bits_per_sample = bits,
         .channel = ch,
         .channel_mask = ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0),
         .sample_rate = hz,
-        .mclk_multiple = 0,          // 0 → 驱动按默认 256xfs 取 MCLK
+        .mclk_multiple = 0,
     };
-    int r = esp_codec_dev_open(s_dev, &fs);
-    if (r != 0) { ESP_LOGE(TAG, "esp_codec_dev_open 失败: %d", r); return ESP_FAIL; }
+    int open_result = esp_codec_dev_open(s_dev, &format);
+    if (open_result != 0) {
+        ESP_LOGE(TAG, "esp_codec_dev_open 失败: %d", open_result);
+        bsp_audio_close();
+        return ESP_FAIL;
+    }
 
-    // ⚠ open 之后【不要】手动覆写 ES8311 的时钟分频寄存器(REG01~06):
-    //   驱动已按采样率与 MCLK 精确算好,覆写会导致 ADC/DAC 时序错乱、录音回放全是杂音。
-    //   这里只设麦克风模拟 PGA 增益。
     esp_codec_dev_set_in_gain(s_dev, 30.0f);
-
-    s_opened = true; s_hz = hz; s_bits = bits; s_ch = ch;
+    s_opened = true;
+    s_hz = hz;
+    s_bits = bits;
+    s_ch = ch;
     ESP_LOGI(TAG, "codec 打开 %luHz/%ubit/%uch", (unsigned long)hz, bits, ch);
     return ESP_OK;
 }
 
-esp_err_t bsp_audio_write(const void *pcm, size_t bytes) {
-    if (!s_dev) return ESP_ERR_INVALID_STATE;
+esp_err_t bsp_audio_write(const void *pcm, size_t bytes)
+{
+    if (!s_dev || !s_opened) return ESP_ERR_INVALID_STATE;
     return esp_codec_dev_write(s_dev, (void *)pcm, bytes) == 0 ? ESP_OK : ESP_FAIL;
 }
 
-esp_err_t bsp_audio_read(void *pcm, size_t bytes) {
-    if (!s_dev) return ESP_ERR_INVALID_STATE;
+esp_err_t bsp_audio_read(void *pcm, size_t bytes)
+{
+    if (!s_dev || !s_opened) return ESP_ERR_INVALID_STATE;
     return esp_codec_dev_read(s_dev, pcm, bytes) == 0 ? ESP_OK : ESP_FAIL;
 }
 
-void bsp_audio_set_volume(uint8_t percent) {
-    if (s_dev) esp_codec_dev_set_out_vol(s_dev, percent);
+void bsp_audio_set_volume(uint8_t percent)
+{
+    if (s_dev && s_opened) esp_codec_dev_set_out_vol(s_dev, percent);
 }

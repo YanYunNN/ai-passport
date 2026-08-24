@@ -7,6 +7,7 @@ idf_component_register(
          "ui_system.c"
          "ui_status.c"
          "app_settings.c"
+         "power_manager.c"
          "wifi_manager.c"
          "time_sync.c"
          "demo_display.c"
@@ -19,5 +20,5 @@ idf_component_register(
          "kiro_passport.c"
          "kiro_passport_network.c"
     INCLUDE_DIRS "."
-    REQUIRES bsp esp_event esp_http_server esp_netif esp_wifi lwip nvs_flash esp-tls
+    REQUIRES bsp esp_event esp_http_client esp_http_server esp_netif esp_wifi esp_websocket_client json lwip nvs_flash esp-tls esp_pm
 )

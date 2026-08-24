@@ -16,6 +16,8 @@ typedef struct {
     uint8_t second;
     app_settings_time_format_t time_format;
     bool wifi_enabled;
+    bool light_sleep_enabled;
+    bool wifi_power_save_enabled;
 } app_settings_t;
 
 /* Initializes default NVS and loads the app-owned appcfg/cfg record. */

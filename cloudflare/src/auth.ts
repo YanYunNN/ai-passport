@@ -51,7 +51,7 @@ function strictBasicCredentials(request: Request): { username: string; password:
         const binary = atob(match[1]);
         // Only accept canonical padded base64, not the permissive variants atob may decode.
         if (btoa(binary) !== match[1]) return null;
-        const decoded = new TextDecoder("utf-8", { fatal: true }).decode(
+        const decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(
             Uint8Array.from(binary, (character) => character.charCodeAt(0)),
         );
         const separator = decoded.indexOf(":");

@@ -16,7 +16,10 @@ lv_display_t *bsp_lvgl_init(void) {
         return NULL;
     }
 
-    const lvgl_port_cfg_t pc = ESP_LVGL_PORT_INIT_CONFIG();
+    lvgl_port_cfg_t pc = ESP_LVGL_PORT_INIT_CONFIG();
+    /* Static screens do not need a 5 ms UI tick; 20 ms preserves interaction and
+     * leaves materially longer tickless-idle windows for automatic light sleep. */
+    pc.timer_period_ms = 20;
     if (lvgl_port_init(&pc) != ESP_OK) {
         ESP_LOGE(TAG, "lvgl_port_init 失败");
         return NULL;

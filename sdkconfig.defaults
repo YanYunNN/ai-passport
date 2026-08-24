@@ -26,8 +26,17 @@ CONFIG_LV_USE_FONT_COMPRESSED=y
 # 本 demo UI 简单,24KB 足够;若自建复杂界面出现绘制卡死/看门狗,调大此值。
 CONFIG_LV_MEM_SIZE_KILOBYTES=24
 
-# --- 系统 ---
+# --- 系统 / 低功耗 ---
 CONFIG_FREERTOS_HZ=1000
+# 自动浅睡眠需要运行时 esp_pm_configure() 配合；见 main/power_manager.c。
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+CONFIG_FREERTOS_IDLE_TIME_BEFORE_SLEEP=3
+# 使 Wi-Fi modem sleep 时关闭 PHY 的 MAC/BB 域，RAM 开销约 2KB。
+CONFIG_ESP_PHY_MAC_BB_PD=y
+# 降低按键轮询的唤醒频率；仍可满足短按/长按交互。
+CONFIG_BUTTON_PERIOD_TIME_MS=20
+# 不启用 CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION：悬空 D+/D- 噪声会持续阻止浅睡眠。
 
 # --- Kiro Passport Wi-Fi relay ---
 # Passport uses a TLS-verified WSS client; the server certificate must validate

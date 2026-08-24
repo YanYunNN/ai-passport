@@ -18,6 +18,10 @@ typedef enum {
 esp_err_t wifi_manager_set_enabled(bool enabled);
 bool wifi_manager_is_enabled(void);
 
+/* Requests modem sleep for STA operation. The selection is retained while the radio is off. */
+esp_err_t wifi_manager_set_power_save(bool enabled);
+bool wifi_manager_is_power_save_enabled(void);
+
 /* Initializes NVS, the network stack and STA; saved credentials reconnect when enabled. */
 esp_err_t wifi_manager_init(void);
 wifi_manager_state_t wifi_manager_get_state(void);

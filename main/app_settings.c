@@ -7,7 +7,8 @@
 #define APP_SETTINGS_NAMESPACE "appcfg"
 #define APP_SETTINGS_KEY "cfg"
 #define APP_SETTINGS_VERSION_V1 1
-#define APP_SETTINGS_VERSION 2
+#define APP_SETTINGS_VERSION_V2 2
+#define APP_SETTINGS_VERSION 3
 
 static const char *TAG = "app_settings";
 
@@ -28,10 +29,23 @@ typedef struct __attribute__((packed)) {
     uint8_t second;
     uint8_t time_format;
     uint8_t wifi_enabled;
+} app_settings_record_v2_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t version;
+    uint8_t brightness_index;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+    uint8_t time_format;
+    uint8_t wifi_enabled;
+    uint8_t light_sleep_enabled;
+    uint8_t wifi_power_save_enabled;
 } app_settings_record_t;
 
 _Static_assert(sizeof(app_settings_record_v1_t) == 6, "v1 settings layout changed");
-_Static_assert(sizeof(app_settings_record_t) == 7, "v2 settings layout changed");
+_Static_assert(sizeof(app_settings_record_v2_t) == 7, "v2 settings layout changed");
+_Static_assert(sizeof(app_settings_record_t) == 9, "v3 settings layout changed");
 
 static const app_settings_t s_defaults = {
     .brightness_index = 2,
@@ -40,6 +54,8 @@ static const app_settings_t s_defaults = {
     .second = 0,
     .time_format = APP_SETTINGS_TIME_HH_MM,
     .wifi_enabled = true,
+    .light_sleep_enabled = true,
+    .wifi_power_save_enabled = true,
 };
 
 static app_settings_t s_settings;
@@ -63,6 +79,8 @@ static app_settings_record_t record_from_settings(const app_settings_t *settings
         .second = settings->second,
         .time_format = (uint8_t)settings->time_format,
         .wifi_enabled = settings->wifi_enabled ? 1u : 0u,
+        .light_sleep_enabled = settings->light_sleep_enabled ? 1u : 0u,
+        .wifi_power_save_enabled = settings->wifi_power_save_enabled ? 1u : 0u,
     };
 }
 
@@ -78,14 +96,16 @@ static bool settings_from_v1_record(const app_settings_record_v1_t *record,
         .second = record->second,
         .time_format = (app_settings_time_format_t)record->time_format,
         .wifi_enabled = true,
+        .light_sleep_enabled = true,
+        .wifi_power_save_enabled = true,
     };
     return settings_valid(settings);
 }
 
-static bool settings_from_record(const app_settings_record_t *record,
-                                 app_settings_t *settings)
+static bool settings_from_v2_record(const app_settings_record_v2_t *record,
+                                    app_settings_t *settings)
 {
-    if (!record || !settings || record->version != APP_SETTINGS_VERSION ||
+    if (!record || !settings || record->version != APP_SETTINGS_VERSION_V2 ||
         record->wifi_enabled > 1u) {
         return false;
     }
@@ -97,6 +117,30 @@ static bool settings_from_record(const app_settings_record_t *record,
         .second = record->second,
         .time_format = (app_settings_time_format_t)record->time_format,
         .wifi_enabled = record->wifi_enabled != 0u,
+        .light_sleep_enabled = true,
+        .wifi_power_save_enabled = true,
+    };
+    return settings_valid(settings);
+}
+
+static bool settings_from_record(const app_settings_record_t *record,
+                                 app_settings_t *settings)
+{
+    if (!record || !settings || record->version != APP_SETTINGS_VERSION ||
+        record->wifi_enabled > 1u || record->light_sleep_enabled > 1u ||
+        record->wifi_power_save_enabled > 1u) {
+        return false;
+    }
+
+    *settings = (app_settings_t){
+        .brightness_index = record->brightness_index,
+        .hour = record->hour,
+        .minute = record->minute,
+        .second = record->second,
+        .time_format = (app_settings_time_format_t)record->time_format,
+        .wifi_enabled = record->wifi_enabled != 0u,
+        .light_sleep_enabled = record->light_sleep_enabled != 0u,
+        .wifi_power_save_enabled = record->wifi_power_save_enabled != 0u,
     };
     return settings_valid(settings);
 }
@@ -134,12 +178,20 @@ static esp_err_t load_settings(void)
         return result;
     }
 
-    bool migrated = false;
+    uint8_t migrated_from = 0;
     if (size == sizeof(app_settings_record_v1_t)) {
         app_settings_record_v1_t record;
         result = nvs_get_blob(handle, APP_SETTINGS_KEY, &record, &size);
         if (result == ESP_OK && settings_from_v1_record(&record, &s_settings)) {
-            migrated = true;
+            migrated_from = APP_SETTINGS_VERSION_V1;
+        } else {
+            s_settings = s_defaults;
+        }
+    } else if (size == sizeof(app_settings_record_v2_t)) {
+        app_settings_record_v2_t record;
+        result = nvs_get_blob(handle, APP_SETTINGS_KEY, &record, &size);
+        if (result == ESP_OK && settings_from_v2_record(&record, &s_settings)) {
+            migrated_from = APP_SETTINGS_VERSION_V2;
         } else {
             s_settings = s_defaults;
         }
@@ -155,15 +207,17 @@ static esp_err_t load_settings(void)
     nvs_close(handle);
 
     if (result != ESP_OK) return result;
-    if (!migrated) return ESP_OK;
+    if (migrated_from == 0) return ESP_OK;
 
     result = save_settings_record(&s_settings);
     if (result == ESP_OK) {
-        ESP_LOGI(TAG, "已从 v1 迁移应用设置到 v2");
+        ESP_LOGI(TAG, "已从 v%u 迁移应用设置到 v%u", migrated_from,
+                 APP_SETTINGS_VERSION);
     } else {
-        ESP_LOGW(TAG, "v1 设置已载入，但迁移尚未保存: %s", esp_err_to_name(result));
+        ESP_LOGW(TAG, "v%u 设置已载入，但迁移尚未保存: %s", migrated_from,
+                 esp_err_to_name(result));
     }
-    /* Valid v1 settings remain usable even if the one-time rewrite failed. */
+    /* Valid older settings remain usable even if the one-time rewrite failed. */
     return ESP_OK;
 }
 

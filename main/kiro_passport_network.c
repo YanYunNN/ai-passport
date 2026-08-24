@@ -1,7 +1,9 @@
 #include "kiro_passport_network.h"
 
+#include "cJSON.h"
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
+#include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_random.h"
@@ -24,8 +26,22 @@
 #define KIRO_NETWORK_HEADER_MAX 224
 #define KIRO_NETWORK_RECONNECT_MS 5000
 #define KIRO_NETWORK_MIN_VALID_EPOCH 1704067200 /* 2024-01-01 UTC */
+#define KIRO_ENROLLMENT_DEVICE_CODE_MAX 44
+#define KIRO_ENROLLMENT_RESPONSE_MAX 512
+#define KIRO_ENROLLMENT_URL "https://ws.yanyunnnx.cc.cd/v1/enrollment"
+#define KIRO_ENROLLMENT_RELAY_URL "wss://ws.yanyunnnx.cc.cd"
+#define KIRO_ENROLLMENT_VERIFICATION_URI "https://ws.yanyunnnx.cc.cd/admin/pair"
+#define KIRO_ENROLLMENT_MAX_LIFETIME_SECONDS 600
+#define KIRO_ENROLLMENT_MIN_INTERVAL_SECONDS 5
+#define KIRO_ENROLLMENT_MAX_INTERVAL_SECONDS 60
 
 static const char *TAG = "passport_wss";
+
+typedef struct {
+    char data[KIRO_ENROLLMENT_RESPONSE_MAX];
+    size_t length;
+    bool overflow;
+} http_response_t;
 
 typedef struct {
     kiro_passport_network_config_t config;
@@ -33,6 +49,10 @@ typedef struct {
     SemaphoreHandle_t lock;
     QueueHandle_t rejections;
     kiro_passport_network_state_t state;
+    kiro_passport_enrollment_snapshot_t enrollment;
+    char device_code[KIRO_ENROLLMENT_DEVICE_CODE_MAX];
+    TickType_t enrollment_expires_at;
+    TickType_t enrollment_next_poll_at;
     char session_id[KIRO_PASSPORT_SESSION_ID_MAX];
     char message[KIRO_NETWORK_MESSAGE_MAX];
     size_t message_length;
@@ -40,6 +60,12 @@ typedef struct {
 } network_context_t;
 
 static network_context_t s_network;
+
+static void clear_secret(void *data, size_t length)
+{
+    volatile uint8_t *cursor = data;
+    while (length--) *cursor++ = 0;
+}
 
 static bool safe_value(const char *value, size_t max_length)
 {
@@ -56,6 +82,39 @@ static bool valid_relay_url(const char *relay_url)
 {
     if (!safe_value(relay_url, KIRO_PASSPORT_RELAY_URL_MAX)) return false;
     return strncmp(relay_url, "wss://", 6) == 0 && strchr(relay_url + 6, '/') == NULL;
+}
+
+static bool valid_device_code(const char *value)
+{
+    if (!value || strlen(value) != KIRO_ENROLLMENT_DEVICE_CODE_MAX - 1) return false;
+    for (const char *cursor = value; *cursor; cursor++) {
+        if (!((*cursor >= 'A' && *cursor <= 'Z') || (*cursor >= 'a' && *cursor <= 'z') ||
+              (*cursor >= '0' && *cursor <= '9') || *cursor == '-' || *cursor == '_')) return false;
+    }
+    return true;
+}
+
+static bool valid_user_code(const char *value)
+{
+    if (!value || strlen(value) != KIRO_PASSPORT_USER_CODE_MAX - 1) return false;
+    for (const char *cursor = value; *cursor; cursor++) {
+        if (*cursor < '0' || *cursor > '9') return false;
+    }
+    return true;
+}
+
+static bool valid_interval(const cJSON *value, uint32_t *interval)
+{
+    if (!cJSON_IsNumber(value) || value->valuedouble != (double)value->valueint ||
+        value->valueint < KIRO_ENROLLMENT_MIN_INTERVAL_SECONDS ||
+        value->valueint > KIRO_ENROLLMENT_MAX_INTERVAL_SECONDS) return false;
+    *interval = (uint32_t)value->valueint;
+    return true;
+}
+
+static bool ticks_reached(TickType_t deadline)
+{
+    return (int32_t)(xTaskGetTickCount() - deadline) >= 0;
 }
 
 static void set_state(kiro_passport_network_state_t state)
@@ -208,6 +267,270 @@ static esp_err_t start_client(void)
     return result;
 }
 
+static esp_err_t http_response_event(esp_http_client_event_t *event)
+{
+    if (event->event_id != HTTP_EVENT_ON_DATA || !event->user_data || event->data_len <= 0) {
+        return ESP_OK;
+    }
+    http_response_t *response = event->user_data;
+    if (response->length + (size_t)event->data_len >= sizeof(response->data)) {
+        response->overflow = true;
+        return ESP_FAIL;
+    }
+    memcpy(response->data + response->length, event->data, event->data_len);
+    response->length += (size_t)event->data_len;
+    response->data[response->length] = '\0';
+    return ESP_OK;
+}
+
+static esp_err_t post_enrollment(const char *path, const char *body, http_response_t *response,
+                                 int *status)
+{
+    char url[sizeof(KIRO_ENROLLMENT_URL) + 16];
+    int length = snprintf(url, sizeof(url), "%s/%s", KIRO_ENROLLMENT_URL, path);
+    if (length <= 0 || length >= (int)sizeof(url)) return ESP_ERR_INVALID_SIZE;
+    memset(response, 0, sizeof(*response));
+    const esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = 10000,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .event_handler = http_response_event,
+        .user_data = response,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) return ESP_ERR_NO_MEM;
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_post_field(client, body, strlen(body));
+    esp_err_t result = esp_http_client_perform(client);
+    if (result == ESP_OK) *status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    return result == ESP_OK && !response->overflow ? ESP_OK :
+        (result == ESP_OK ? ESP_ERR_INVALID_RESPONSE : result);
+}
+
+static cJSON *parse_json(const char *body)
+{
+    const char *end = NULL;
+    return cJSON_ParseWithOpts(body, &end, 1);
+}
+
+static bool exact_object(const cJSON *root, int expected_members)
+{
+    return cJSON_IsObject(root) && cJSON_GetArraySize(root) == expected_members;
+}
+
+static bool parse_device_code_response(const char *body, char *device_code, char *user_code,
+                                       uint32_t *expires_in, uint32_t *interval)
+{
+    cJSON *root = parse_json(body);
+    cJSON *device = root ? cJSON_GetObjectItemCaseSensitive(root, "device_code") : NULL;
+    cJSON *user = root ? cJSON_GetObjectItemCaseSensitive(root, "user_code") : NULL;
+    cJSON *verification = root ? cJSON_GetObjectItemCaseSensitive(root, "verification_uri") : NULL;
+    cJSON *expires = root ? cJSON_GetObjectItemCaseSensitive(root, "expires_in") : NULL;
+    cJSON *poll_interval = root ? cJSON_GetObjectItemCaseSensitive(root, "interval") : NULL;
+    cJSON *device_id = root ? cJSON_GetObjectItemCaseSensitive(root, "device_id") : NULL;
+    bool valid = exact_object(root, 6) && cJSON_IsString(device) && valid_device_code(device->valuestring) &&
+                 cJSON_IsString(user) && valid_user_code(user->valuestring) &&
+                 cJSON_IsString(verification) &&
+                 strcmp(verification->valuestring, KIRO_ENROLLMENT_VERIFICATION_URI) == 0 &&
+                 cJSON_IsString(device_id) && strcmp(device_id->valuestring, s_network.config.device_id) == 0 &&
+                 cJSON_IsNumber(expires) && expires->valuedouble == (double)expires->valueint &&
+                 expires->valueint > 0 && expires->valueint <= KIRO_ENROLLMENT_MAX_LIFETIME_SECONDS &&
+                 valid_interval(poll_interval, interval);
+    if (valid) {
+        snprintf(device_code, KIRO_ENROLLMENT_DEVICE_CODE_MAX, "%s", device->valuestring);
+        snprintf(user_code, KIRO_PASSPORT_USER_CODE_MAX, "%s", user->valuestring);
+        *expires_in = (uint32_t)expires->valueint;
+    }
+    cJSON_Delete(root);
+    return valid;
+}
+
+static bool parse_pending_response(const char *body, const char *error_name, uint32_t *interval)
+{
+    cJSON *root = parse_json(body);
+    cJSON *error = root ? cJSON_GetObjectItemCaseSensitive(root, "error") : NULL;
+    cJSON *poll_interval = root ? cJSON_GetObjectItemCaseSensitive(root, "interval") : NULL;
+    bool valid = exact_object(root, 2) && cJSON_IsString(error) &&
+                 strcmp(error->valuestring, error_name) == 0 && valid_interval(poll_interval, interval);
+    cJSON_Delete(root);
+    return valid;
+}
+
+static bool parse_credential_response(const char *body, const char *device_id, char *credential)
+{
+    cJSON *root = parse_json(body);
+    cJSON *response_device_id = root ? cJSON_GetObjectItemCaseSensitive(root, "device_id") : NULL;
+    cJSON *response_credential = root ? cJSON_GetObjectItemCaseSensitive(root, "credential") : NULL;
+    cJSON *version = root ? cJSON_GetObjectItemCaseSensitive(root, "credential_version") : NULL;
+    bool valid = exact_object(root, 3) && cJSON_IsString(response_device_id) &&
+                 strcmp(response_device_id->valuestring, device_id) == 0 &&
+                 cJSON_IsString(response_credential) &&
+                 safe_value(response_credential->valuestring, KIRO_PASSPORT_CREDENTIAL_MAX) &&
+                 cJSON_IsNumber(version) && version->valuedouble == (double)version->valueint &&
+                 version->valueint == 1;
+    if (valid) snprintf(credential, KIRO_PASSPORT_CREDENTIAL_MAX, "%s", response_credential->valuestring);
+    cJSON_Delete(root);
+    return valid;
+}
+
+static void enrollment_fail(esp_err_t error)
+{
+    xSemaphoreTake(s_network.lock, portMAX_DELAY);
+    clear_secret(s_network.device_code, sizeof(s_network.device_code));
+    s_network.enrollment.user_code[0] = '\0';
+    s_network.enrollment.expires_in_seconds = 0;
+    s_network.enrollment.last_error = error;
+    s_network.enrollment.state = KIRO_PASSPORT_ENROLLMENT_ERROR;
+    s_network.enrollment_expires_at = 0;
+    s_network.enrollment_next_poll_at = 0;
+    xSemaphoreGive(s_network.lock);
+}
+
+static void request_device_code(void)
+{
+    char device_id[KIRO_PASSPORT_DEVICE_ID_MAX];
+    xSemaphoreTake(s_network.lock, portMAX_DELAY);
+    if (s_network.enrollment.state != KIRO_PASSPORT_ENROLLMENT_REQUESTING) {
+        xSemaphoreGive(s_network.lock);
+        return;
+    }
+    snprintf(device_id, sizeof(device_id), "%s", s_network.config.device_id);
+    xSemaphoreGive(s_network.lock);
+
+    char request[64];
+    int length = snprintf(request, sizeof(request), "{\"device_id\":\"%s\"}", device_id);
+    http_response_t response;
+    int status = 0;
+    esp_err_t result = length > 0 && length < (int)sizeof(request) ?
+        post_enrollment("device-code", request, &response, &status) : ESP_ERR_INVALID_SIZE;
+    clear_secret(request, sizeof(request));
+    if (result != ESP_OK || status != 201) {
+        clear_secret(&response, sizeof(response));
+        enrollment_fail(result == ESP_OK ? ESP_ERR_INVALID_RESPONSE : result);
+        return;
+    }
+
+    char device_code[KIRO_ENROLLMENT_DEVICE_CODE_MAX] = { 0 };
+    char user_code[KIRO_PASSPORT_USER_CODE_MAX] = { 0 };
+    uint32_t expires_in = 0;
+    uint32_t interval = 0;
+    bool valid = parse_device_code_response(response.data, device_code, user_code, &expires_in, &interval);
+    clear_secret(&response, sizeof(response));
+    xSemaphoreTake(s_network.lock, portMAX_DELAY);
+    if (!valid || s_network.enrollment.state != KIRO_PASSPORT_ENROLLMENT_REQUESTING) {
+        xSemaphoreGive(s_network.lock);
+        clear_secret(device_code, sizeof(device_code));
+        clear_secret(user_code, sizeof(user_code));
+        if (!valid) enrollment_fail(ESP_ERR_INVALID_RESPONSE);
+        return;
+    }
+    snprintf(s_network.device_code, sizeof(s_network.device_code), "%s", device_code);
+    snprintf(s_network.enrollment.user_code, sizeof(s_network.enrollment.user_code), "%s", user_code);
+    s_network.enrollment.expires_in_seconds = expires_in;
+    s_network.enrollment.last_error = ESP_OK;
+    s_network.enrollment.state = KIRO_PASSPORT_ENROLLMENT_WAITING_APPROVAL;
+    s_network.enrollment_expires_at = xTaskGetTickCount() + pdMS_TO_TICKS(expires_in * 1000U);
+    s_network.enrollment_next_poll_at = xTaskGetTickCount() + pdMS_TO_TICKS(interval * 1000U);
+    xSemaphoreGive(s_network.lock);
+    clear_secret(device_code, sizeof(device_code));
+    clear_secret(user_code, sizeof(user_code));
+}
+
+static void poll_device_code(void)
+{
+    char device_id[KIRO_PASSPORT_DEVICE_ID_MAX];
+    char device_code[KIRO_ENROLLMENT_DEVICE_CODE_MAX];
+    xSemaphoreTake(s_network.lock, portMAX_DELAY);
+    if (s_network.enrollment.state != KIRO_PASSPORT_ENROLLMENT_WAITING_APPROVAL ||
+        !ticks_reached(s_network.enrollment_next_poll_at)) {
+        xSemaphoreGive(s_network.lock);
+        return;
+    }
+    if (ticks_reached(s_network.enrollment_expires_at)) {
+        xSemaphoreGive(s_network.lock);
+        enrollment_fail(ESP_ERR_TIMEOUT);
+        return;
+    }
+    snprintf(device_id, sizeof(device_id), "%s", s_network.config.device_id);
+    snprintf(device_code, sizeof(device_code), "%s", s_network.device_code);
+    xSemaphoreGive(s_network.lock);
+
+    char request[128];
+    int length = snprintf(request, sizeof(request),
+                          "{\"device_id\":\"%s\",\"device_code\":\"%s\"}", device_id, device_code);
+    http_response_t response;
+    int status = 0;
+    esp_err_t result = length > 0 && length < (int)sizeof(request) ?
+        post_enrollment("token", request, &response, &status) : ESP_ERR_INVALID_SIZE;
+    clear_secret(request, sizeof(request));
+    clear_secret(device_code, sizeof(device_code));
+    if (result != ESP_OK) {
+        xSemaphoreTake(s_network.lock, portMAX_DELAY);
+        if (s_network.enrollment.state == KIRO_PASSPORT_ENROLLMENT_WAITING_APPROVAL) {
+            s_network.enrollment_next_poll_at = xTaskGetTickCount() +
+                pdMS_TO_TICKS(KIRO_ENROLLMENT_MIN_INTERVAL_SECONDS * 1000U);
+        }
+        xSemaphoreGive(s_network.lock);
+        clear_secret(&response, sizeof(response));
+        return;
+    }
+
+    uint32_t interval = 0;
+    if ((status == 428 && parse_pending_response(response.data, "authorization_pending", &interval)) ||
+        (status == 429 && parse_pending_response(response.data, "slow_down", &interval))) {
+        xSemaphoreTake(s_network.lock, portMAX_DELAY);
+        if (s_network.enrollment.state == KIRO_PASSPORT_ENROLLMENT_WAITING_APPROVAL) {
+            s_network.enrollment_next_poll_at = xTaskGetTickCount() + pdMS_TO_TICKS(interval * 1000U);
+        }
+        xSemaphoreGive(s_network.lock);
+        clear_secret(&response, sizeof(response));
+        return;
+    }
+    if (status != 201) {
+        clear_secret(&response, sizeof(response));
+        enrollment_fail(ESP_ERR_INVALID_RESPONSE);
+        return;
+    }
+
+    char credential[KIRO_PASSPORT_CREDENTIAL_MAX] = { 0 };
+    bool valid = parse_credential_response(response.data, device_id, credential);
+    clear_secret(&response, sizeof(response));
+    esp_err_t save_result = valid ? kiro_passport_network_configure(KIRO_ENROLLMENT_RELAY_URL, credential) :
+                                    ESP_ERR_INVALID_RESPONSE;
+    clear_secret(credential, sizeof(credential));
+    if (save_result != ESP_OK) {
+        enrollment_fail(save_result);
+        return;
+    }
+    xSemaphoreTake(s_network.lock, portMAX_DELAY);
+    clear_secret(s_network.device_code, sizeof(s_network.device_code));
+    s_network.enrollment = (kiro_passport_enrollment_snapshot_t){
+        .state = KIRO_PASSPORT_ENROLLMENT_IDLE,
+        .last_error = ESP_OK,
+    };
+    s_network.enrollment_expires_at = 0;
+    s_network.enrollment_next_poll_at = 0;
+    xSemaphoreGive(s_network.lock);
+}
+
+static void enrollment_step(void)
+{
+    xSemaphoreTake(s_network.lock, portMAX_DELAY);
+    kiro_passport_enrollment_state_t state = s_network.enrollment.state;
+    xSemaphoreGive(s_network.lock);
+    if (state != KIRO_PASSPORT_ENROLLMENT_REQUESTING &&
+        state != KIRO_PASSPORT_ENROLLMENT_WAITING_APPROVAL) return;
+    if (wifi_manager_get_state() != WIFI_MANAGER_CONNECTED) return;
+    if (time(NULL) < KIRO_NETWORK_MIN_VALID_EPOCH || time_sync_get_state() != TIME_SYNC_SUCCESS) {
+        if (time_sync_get_state() != TIME_SYNC_SYNCING) time_sync_request();
+        return;
+    }
+    if (state == KIRO_PASSPORT_ENROLLMENT_REQUESTING) request_device_code();
+    else poll_device_code();
+}
+
 static void send_decision(const kiro_passport_decision_t *decision, const char *reason)
 {
     const char quote = '"';
@@ -257,6 +580,7 @@ static void network_task(void *argument)
             }
         }
 
+        enrollment_step();
         kiro_passport_decision_t decision;
         if (kiro_passport_get_decision(&decision)) send_decision(&decision, "user");
         if (xQueueReceive(s_network.rejections, &decision, 0) == pdTRUE) {
@@ -297,6 +621,7 @@ esp_err_t kiro_passport_network_init(void)
     s_network.rejections = xQueueCreate(4, sizeof(kiro_passport_decision_t));
     if (!s_network.lock || !s_network.rejections) return ESP_ERR_NO_MEM;
     s_network.state = KIRO_PASSPORT_NETWORK_UNCONFIGURED;
+    s_network.enrollment.state = KIRO_PASSPORT_ENROLLMENT_IDLE;
     esp_err_t result = load_config();
     if (result != ESP_OK) return result;
     result = kiro_passport_init(s_network.config.device_id);
@@ -340,6 +665,7 @@ esp_err_t kiro_passport_network_configure(const char *relay_url, const char *cre
         s_network.config = config;
         xSemaphoreGive(s_network.lock);
     }
+    clear_secret(&config, sizeof(config));
     return result;
 #endif
 }
@@ -358,11 +684,74 @@ esp_err_t kiro_passport_network_clear_configuration(void)
         xSemaphoreTake(s_network.lock, portMAX_DELAY);
         generate_device_id(s_network.config.device_id, sizeof(s_network.config.device_id));
         s_network.config.relay_url[0] = '\0';
-        s_network.config.credential[0] = '\0';
+        clear_secret(s_network.config.credential, sizeof(s_network.config.credential));
         xSemaphoreGive(s_network.lock);
     }
     return result;
 #endif
+}
+
+bool kiro_passport_network_enrollment_supported(void)
+{
+#if defined(CONFIG_NVS_ENCRYPTION) && CONFIG_NVS_ENCRYPTION
+    return true;
+#else
+    return false;
+#endif
+}
+
+esp_err_t kiro_passport_network_start_enrollment(void)
+{
+    if (!s_network.lock) return ESP_ERR_INVALID_STATE;
+    if (!kiro_passport_network_enrollment_supported()) return ESP_ERR_NOT_SUPPORTED;
+    xSemaphoreTake(s_network.lock, portMAX_DELAY);
+    if (s_network.config.credential[0] ||
+        (s_network.enrollment.state != KIRO_PASSPORT_ENROLLMENT_IDLE &&
+         s_network.enrollment.state != KIRO_PASSPORT_ENROLLMENT_ERROR)) {
+        xSemaphoreGive(s_network.lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    clear_secret(s_network.device_code, sizeof(s_network.device_code));
+    s_network.enrollment = (kiro_passport_enrollment_snapshot_t){
+        .state = KIRO_PASSPORT_ENROLLMENT_REQUESTING,
+        .last_error = ESP_OK,
+    };
+    s_network.enrollment_expires_at = 0;
+    s_network.enrollment_next_poll_at = 0;
+    xSemaphoreGive(s_network.lock);
+    return ESP_OK;
+}
+
+void kiro_passport_network_cancel_enrollment(void)
+{
+    if (!s_network.lock) return;
+    xSemaphoreTake(s_network.lock, portMAX_DELAY);
+    clear_secret(s_network.device_code, sizeof(s_network.device_code));
+    s_network.enrollment = (kiro_passport_enrollment_snapshot_t){
+        .state = KIRO_PASSPORT_ENROLLMENT_IDLE,
+        .last_error = ESP_OK,
+    };
+    s_network.enrollment_expires_at = 0;
+    s_network.enrollment_next_poll_at = 0;
+    xSemaphoreGive(s_network.lock);
+}
+
+void kiro_passport_network_get_enrollment(kiro_passport_enrollment_snapshot_t *snapshot)
+{
+    if (!snapshot) return;
+    if (!s_network.lock) {
+        memset(snapshot, 0, sizeof(*snapshot));
+        return;
+    }
+    xSemaphoreTake(s_network.lock, portMAX_DELAY);
+    *snapshot = s_network.enrollment;
+    if (snapshot->state == KIRO_PASSPORT_ENROLLMENT_WAITING_APPROVAL) {
+        TickType_t now = xTaskGetTickCount();
+        snapshot->expires_in_seconds = ticks_reached(s_network.enrollment_expires_at) ? 0 :
+            (uint32_t)((s_network.enrollment_expires_at - now + configTICK_RATE_HZ - 1) /
+                       configTICK_RATE_HZ);
+    }
+    xSemaphoreGive(s_network.lock);
 }
 
 kiro_passport_network_state_t kiro_passport_network_get_state(void)

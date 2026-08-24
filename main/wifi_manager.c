@@ -597,3 +597,30 @@ const char *wifi_manager_get_provisioning_password(void)
 {
     return s_portal_active ? s_ap_password : "";
 }
+
+/* The Wi-Fi driver retains this policy across normal STA reconnects. It is applied
+ * after init so an off-at-boot radio can keep the user's choice until enabled. */
+static bool s_power_save_enabled = true;
+
+esp_err_t wifi_manager_set_power_save(bool enabled)
+{
+    bool previous = s_power_save_enabled;
+    s_power_save_enabled = enabled;
+
+    if (!s_initialized || !s_enabled || s_portal_active) return ESP_OK;
+
+    esp_err_t result = esp_wifi_set_ps(enabled ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE);
+    if (result != ESP_OK) {
+        s_power_save_enabled = previous;
+        ESP_LOGW(TAG, "设置 Wi-Fi modem sleep 失败: %s", esp_err_to_name(result));
+        return result;
+    }
+
+    ESP_LOGI(TAG, "Wi-Fi modem sleep %s", enabled ? "已启用" : "已关闭");
+    return ESP_OK;
+}
+
+bool wifi_manager_is_power_save_enabled(void)
+{
+    return s_power_save_enabled;
+}
