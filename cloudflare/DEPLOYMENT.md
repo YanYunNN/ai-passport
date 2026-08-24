@@ -2,7 +2,7 @@
 
 本目录是独立的 Cloudflare Worker 工程。它实现：每台 Passport 一个 Durable Object、WSS 长连接、D1 中仅保存设备 credential 的带 pepper SHA-256 哈希、管理注册/轮换 API，以及 Hook 的 `POST + polling` 审批 API。
 
-> **安全边界**：Cloudflare API token、`ADMIN_API_KEY`、`HOOK_AUTH_SECRET`、`DEVICE_CREDENTIAL_PEPPER` 和设备 credential 都是秘密。绝不可提交到 Git、写入 `wrangler.toml`，也不可把 Cloudflare 管理凭据写入设备。设备只保存它自己的 WSS credential，且只能写入启用了 NVS encryption 的分区。
+> **安全边界**：Cloudflare API token、`ADMIN_API_KEY`、`HOOK_AUTH_SECRET`、`DEVICE_CREDENTIAL_PEPPER`、`PAIR_CONFIRMATION_SECRET` 和设备 credential 都是秘密。绝不可提交到 Git、写入 `wrangler.toml`，也不可把 Cloudflare 管理凭据写入设备。设备只保存它自己的 WSS credential，且只能写入启用了 NVS encryption 的分区。
 
 ## 0. 部署前条件
 
@@ -51,6 +51,7 @@
 npx wrangler secret put ADMIN_API_KEY
 npx wrangler secret put HOOK_AUTH_SECRET
 npx wrangler secret put DEVICE_CREDENTIAL_PEPPER
+npx wrangler secret put PAIR_CONFIRMATION_SECRET
 ```
 
 用途：
@@ -58,6 +59,7 @@ npx wrangler secret put DEVICE_CREDENTIAL_PEPPER
 - `ADMIN_API_KEY`：仅工厂/管理端调用设备注册和轮换 API。
 - `HOOK_AUTH_SECRET`：仅本机 Kiro Hook 或受信任的桥接进程调用审批 API。
 - `DEVICE_CREDENTIAL_PEPPER`：只用于 Worker 中对设备 credential 进行哈希；丢失或更改它会令现有设备无法认证。
+- `PAIR_CONFIRMATION_SECRET`：用于签名后台配对页的一次确认令牌；用高熵独立随机值配置，绝不复用 credential pepper 或其他密钥。
 
 生产建议通过 CI 的 secret store 注入 Worker secrets。不要用 `wrangler.toml` 的 `[vars]`、`.env`、设备 NVS 或 Kiro Hook 源代码保存它们。
 
@@ -209,23 +211,29 @@ Cloudflare 文档相关内容已概述和改写，以遵循许可限制。
 
 ## 9. Secure device-code enrollment
 
-Device-code enrollment is for an unregistered `passport-<12 uppercase hex>` device. The device calls `POST /v1/enrollment/device-code` with `{"device_id":"passport-AABBCCDDEEFF"}`. The Worker returns a high-entropy `device_code`, a displayable `user_code`, the `/activate` URL, a 10-minute lifetime, and a required 5-second poll interval. Only peppered, purpose-separated SHA-256 hashes of both codes are stored in D1.
+Device-code enrollment is for an unregistered `passport-<12 uppercase hex>` device. The device calls `POST /v1/enrollment/device-code` with `{"device_id":"passport-AABBCCDDEEFF"}`. The Worker returns a high-entropy `device_code`, a strict six-digit numeric `user_code` (display it as **6 digits**, with no separators), the `/admin/pair` URL, a 10-minute lifetime, and a required 5-second poll interval. Only peppered, purpose-separated SHA-256 hashes of both codes are stored in D1. The high-entropy device code, expiry, and poll-safety behavior are unchanged.
 
 The device polls `POST /v1/enrollment/token` with `device_id` and `device_code`. While awaiting approval it receives `authorization_pending`; polling faster than the returned interval receives `slow_down`. Expired, denied, invalid, or already-consumed codes never return a credential. Once approved, the successful token exchange atomically creates the active `devices` record, consumes the enrollment, and returns the plaintext credential once. Do not log or persist that response outside encrypted device provisioning.
 
+### Pairing operator workflow
+
+`/admin/pair` is the only supported human-facing pairing entry point. After signing in through Cloudflare Access, the operator enters the six digits. The first POST only displays the matching pending `device_id`; it does not approve anything. The operator must then choose **Confirm bind** in a second POST. That confirmation is short-lived, signed with `PAIR_CONFIRMATION_SECRET`, and bound to both the Access subject and the selected enrollment. Invalid, expired, unavailable, or malformed entries return a safe, no-store HTML result without echoing raw input.
+
+`GET /activate`, `POST /activate`, and JSON `POST /v1/enrollment/approve` remain compatibility APIs. Their POST approval calls still require a valid Access assertion and still approve directly. Do not direct new users to `/activate`.
+
 ### Cloudflare Access protection for pairing
 
-Create a Cloudflare Access Application for the same Worker hostname with protected paths:
+Create a Cloudflare Access Application for the same Worker hostname with this protected path:
 
-- `https://ws.yanyunnnx.cc.cd/activate`
+- `https://ws.yanyunnnx.cc.cd/admin/pair`
 
-This single protected path serves both the activation page (`GET`) and its approval form (`POST`), so one Access Application produces the single AUD required by the Worker. Apply an allow policy limited to the intended operators or identity-provider group. Do **not** protect `/v1/enrollment/device-code` or `/v1/enrollment/token`: an unregistered device must reach those endpoints, and the Worker itself keeps their state transitions fail-closed.
+This one path covers the admin pairing page and both of its POST steps. The Worker independently verifies `Cf-Access-Jwt-Assertion` on every `/admin/pair` GET and POST, so a bypassed edge policy fails closed. Apply an allow policy limited to intended operators or an identity-provider group. You may add `https://ws.yanyunnnx.cc.cd/activate` to the same Application only when legacy browser activation remains required. Do **not** protect `/v1/enrollment/device-code` or `/v1/enrollment/token`: unregistered devices must reach those public device APIs, while Worker state transitions remain fail-closed.
 
 Set the following Worker environment variables in the Cloudflare dashboard (or equivalent CI deployment configuration), per environment. They are configuration values, not credentials; do not substitute them with arbitrary user input:
 
 - `ACCESS_TEAM_DOMAIN`: the exact Access team issuer, for example `https://your-team.cloudflareaccess.com` (the Worker accepts the hostname form and constructs HTTPS).
 - `ACCESS_AUD`: the Application Audience (AUD) tag from that Access Application.
 
-The Worker verifies `Cf-Access-Jwt-Assertion` against the team JWKS using `jose`, requiring the configured issuer and audience. A missing or invalid assertion is `403`; approval audit identity stores both its email (`approved_by`) and subject (`approved_subject`). The static `/activate` page has no embedded secrets and uses a restrictive CSP.
+The Worker verifies assertions against the team JWKS using `jose`, requiring the configured issuer and audience. A missing or invalid assertion is rejected; approval audit identity stores both its email (`approved_by`) and subject (`approved_subject`). Pages use restrictive CSP, no-store caching, no referrer policy, and escaped output.
 
-Keep `ADMIN_API_KEY`, `HOOK_AUTH_SECRET`, and `DEVICE_CREDENTIAL_PEPPER` as Worker secrets via `wrangler secret put`; never place them, generated device credentials, Access assertions, or device/user codes in `wrangler.toml`, Git, CI logs, or source code. The enrollment schema is migrations `0002_device_enrollments.sql` and `0003_enrollment_approval_subject.sql`; after `npm run db:migrate:remote`, verify that `device_enrollments` is listed alongside the existing tables.
+Keep `ADMIN_API_KEY`, `HOOK_AUTH_SECRET`, `DEVICE_CREDENTIAL_PEPPER`, `PAIR_CONFIRMATION_SECRET`, and generated device credentials as Worker secrets via `wrangler secret put`; never place them, Access assertions, or device/user codes in `wrangler.toml`, Git, CI logs, or source code. The enrollment schema is migrations `0002_device_enrollments.sql`, `0003_enrollment_approval_subject.sql`, and `0004_short_user_codes.sql`; after `npm run db:migrate:remote`, verify that `device_enrollments` is listed alongside the existing tables.

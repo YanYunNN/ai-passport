@@ -13,7 +13,10 @@ static const char *TAG = "bsp_batt";
 #define CW_REG_VERSION   0x00   // 版本号,上电应答即代表芯片在位
 #define CW_REG_VCELL_H   0x02   // 14bit 电压,V(uV) = raw * 312.5
 #define CW_REG_SOC_H     0x04   // 高字节 = 整数百分比;低字节(0x05)= 1/256 %
-#define CW_REG_CONFIG    0x08   // 0xF0=睡眠 / 0x30=复位态 / 0x00=正常
+#define CW_REG_MODE      0x08   // 0xF0=睡眠 / 0x30=复位态 / 0x00=正常
+
+#define CW_MODE_RESTART  0x30
+#define CW_MODE_NORMAL   0x00
 
 static i2c_master_dev_handle_t s_dev;
 
@@ -52,10 +55,19 @@ esp_err_t bsp_battery_init(void) {
     }
     ESP_LOGI(TAG, "检测到 CW2017 VERSION=0x%02X", ver);
 
-    // 确保处于正常工作模式(非睡眠/复位态)。用芯片自带 Li-Poly profile,不写自定义 profile。
-    cw_write(CW_REG_CONFIG, 0x00);
-    vTaskDelay(pdMS_TO_TICKS(100));   // 等首次 SOC 计算完成
+    // CW2017 上电默认进入睡眠态。必须完整执行官方的 0x30 -> 0x00
+    // 模式切换，单独写 0x00 无法可靠唤醒经历过掉电的电量计。
+    // 保持芯片内置 Li-Poly profile，不写 UFG、0x0A 或自定义 profile，避免扰动算法状态。
+    if (cw_write(CW_REG_MODE, CW_MODE_RESTART) != 0 ||
+        cw_write(CW_REG_MODE, CW_MODE_NORMAL) != 0) {
+        ESP_LOGE(TAG, "CW2017 模式唤醒失败");
+        i2c_master_bus_rm_device(s_dev);
+        s_dev = NULL;
+        return ESP_FAIL;
+    }
 
+    vTaskDelay(pdMS_TO_TICKS(100));   // 等首次 SOC 计算完成
+    ESP_LOGI(TAG, "CW2017 已从上电睡眠态切换至正常工作态");
     return ESP_OK;
 }
 

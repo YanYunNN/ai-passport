@@ -6,9 +6,9 @@ import {
     issueDeviceCredential,
     issueUserCode,
     normalizeUserCode,
+    verifyAdminBasicAuth,
     verifyDeviceCredential,
 } from "./auth";
-import { verifyAccessAssertion } from "./access";
 import { createRequestIndex, getRequestIndex } from "./db";
 import type { Env } from "./env";
 import { PassportRelay } from "./passport-relay";
@@ -47,6 +47,8 @@ export default {
 
             if (request.method === "GET" && url.pathname === "/activate") return activationPage();
             if (request.method === "POST" && url.pathname === "/activate") return approveEnrollment(request, env);
+            if (request.method === "GET" && url.pathname === "/admin/pair") return adminPairPage(request, env);
+            if (request.method === "POST" && url.pathname === "/admin/pair") return adminPair(request, env);
             if (request.method === "POST" && url.pathname === "/v1/enrollment/device-code") {
                 return createDeviceCode(request, env);
             }
@@ -77,19 +79,179 @@ export default {
 };
 
 function activationPage(): Response {
+    return pairingPage(
+        "Pair Passport device",
+        "Enter the 6-digit code shown by your device. This legacy page approves immediately after submission.",
+        "/activate",
+        "Approve device",
+    );
+}
+
+function pairingPage(title: string, message: string, action: string, button: string): Response {
+    return htmlPage(title, `<p>${message}</p><form method="post" action="${action}"><label for="user_code">Pairing code</label><input id="user_code" name="user_code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" spellcheck="false" maxlength="6" required><button type="submit">${button}</button></form>`);
+}
+
+function htmlPage(title: string, content: string, status = 200, additionalHeaders?: HeadersInit): Response {
     const body = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Passport device pairing</title><style>body{font:16px system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;color:#172033}label,input,button{display:block;width:100%;box-sizing:border-box}input{font:1.2rem ui-monospace,monospace;letter-spacing:.08em;margin:.5rem 0 1rem;padding:.7rem}button{padding:.75rem;background:#163b70;color:#fff;border:0;border-radius:.3rem}p{line-height:1.5;color:#43506a}</style></head>
-<body><main><h1>Pair Passport device</h1><p>Enter the code shown by your device. Only approve a code you initiated.</p><form method="post" action="/activate"><label for="user_code">Pairing code</label><input id="user_code" name="user_code" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="12" required><button type="submit">Approve device</button></form></main></body></html>`;
-    return new Response(body, {
-        headers: {
-            "Content-Type": "text/html; charset=utf-8",
-            "Cache-Control": "no-store",
-            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-            "Referrer-Policy": "no-referrer",
-            "X-Content-Type-Options": "nosniff",
-        },
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title><style>body{font:16px system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;color:#172033}label,input,button{display:block;width:100%;box-sizing:border-box}input{font:1.2rem ui-monospace,monospace;letter-spacing:.08em;margin:.5rem 0 1rem;padding:.7rem}button{padding:.75rem;background:#163b70;color:#fff;border:0;border-radius:.3rem}p{line-height:1.5;color:#43506a}.notice{padding:.75rem;background:#f5f7fb;border-radius:.3rem}</style></head>
+<body><main><h1>${escapeHtml(title)}</h1>${content}</main></body></html>`;
+    const headers = new Headers({
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
     });
+    for (const [name, value] of new Headers(additionalHeaders)) headers.set(name, value);
+    return new Response(body, { status, headers });
+}
+
+function escapeHtml(value: string): string {
+    return value.replaceAll(/[&<>"']/gu, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] ?? character);
+}
+
+async function adminPairPage(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return adminUnauthorizedPage();
+    return pairingPage("设备配对", "输入设备上显示的 6 位配对码。下一步会先显示待绑定设备，再确认绑定。", "/admin/pair", "Continue");
+}
+
+async function adminPair(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return adminUnauthorizedPage();
+
+    const form = await pairForm(request);
+    if (!form) return pairUnavailablePage("Unsupported pairing request.", 400);
+    if (form.action === "preview") return previewAdminPair(env, username, form.userCode);
+    if (form.action === "confirm") return confirmAdminPair(env, username, form.confirmation);
+    return pairUnavailablePage("Invalid pairing request.", 400);
+}
+
+async function pairForm(request: Request): Promise<{ action: string; userCode: string | null; confirmation: string | null } | null> {
+    if (!request.headers.get("Content-Type")?.toLowerCase().startsWith("application/x-www-form-urlencoded")) return null;
+    const body = await request.formData().catch(() => null);
+    if (!body) return null;
+    const action = body.get("action");
+    const userCode = body.get("user_code");
+    const confirmation = body.get("confirmation");
+    return {
+        action: typeof action === "string" ? action : "preview",
+        userCode: typeof userCode === "string" ? normalizeUserCode(userCode) : null,
+        confirmation: typeof confirmation === "string" ? confirmation : null,
+    };
+}
+
+async function previewAdminPair(env: Env, subject: string, userCode: string | null): Promise<Response> {
+    if (!userCode) return pairingPage("设备配对", "请输入严格的 6 位数字配对码。", "/admin/pair", "Continue");
+    const enrollment = await enrollmentForUserCode(env, userCode);
+    if (!enrollment || !await isPendingEnrollment(env, enrollment)) {
+        return pairUnavailablePage("This pairing code is invalid, expired, or no longer available.", 400);
+    }
+    const confirmation = await issuePairConfirmation(env, enrollment, subject);
+    const deviceId = escapeHtml(enrollment.device_id);
+    return htmlPage("确认绑定", `<p class="notice">找到待绑定设备：<strong>${deviceId}</strong></p><p>请确认这是您要绑定的设备。</p><form method="post" action="/admin/pair"><input type="hidden" name="action" value="confirm"><input type="hidden" name="confirmation" value="${escapeHtml(confirmation)}"><button type="submit">Confirm bind</button></form>`);
+}
+
+async function confirmAdminPair(
+    env: Env,
+    username: string,
+    rawConfirmation: string | null,
+): Promise<Response> {
+    const confirmation = rawConfirmation ? await verifyPairConfirmation(env, rawConfirmation, username) : null;
+    if (!confirmation) return pairUnavailablePage("This confirmation is invalid or has expired.", 400);
+    const enrollment = await enrollmentForConfirmation(env, confirmation);
+    if (!enrollment) return pairUnavailablePage("This pairing is no longer available.", 400);
+    const result = await completeEnrollmentApproval(env, username, enrollment);
+    if (result.kind !== "approved") return pairUnavailablePage("This pairing is no longer available.", 400);
+    return htmlPage("绑定完成", `<p class="notice">设备 <strong>${escapeHtml(result.deviceId)}</strong> 已获批准。</p><p>设备正在完成安全注册。</p>`);
+}
+
+function adminUnauthorizedPage(): Response {
+    return htmlPage(
+        "Authentication required",
+        "<p class=\"notice\">Administrator credentials are required.</p>",
+        401,
+        { "WWW-Authenticate": 'Basic realm="Passport admin", charset="UTF-8"' },
+    );
+}
+
+function pairUnavailablePage(message: string, status: number): Response {
+    return htmlPage("设备配对", `<p class="notice">${escapeHtml(message)}</p><p><a href="/admin/pair">Try another code</a></p>`, status);
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+}
+
+function base64UrlDecode(value: string): Uint8Array | null {
+    if (!/^[A-Za-z0-9_-]+$/u.test(value)) return null;
+    try {
+        const binary = atob(value.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - value.length % 4) % 4));
+        return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    } catch {
+        return null;
+    }
+}
+
+interface PairConfirmation {
+    enrollmentId: string;
+    userCodeHash: string;
+    subject: string;
+    expiresAt: number;
+}
+
+async function pairConfirmationKey(env: Env, usages: Array<"sign" | "verify">): Promise<CryptoKey> {
+    return crypto.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(env.ADMIN_UI_PASSWORD),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        usages,
+    );
+}
+
+async function issuePairConfirmation(env: Env, enrollment: EnrollmentRecord, subject: string): Promise<string> {
+    const payload: PairConfirmation = {
+        enrollmentId: enrollment.enrollment_id,
+        userCodeHash: enrollment.user_code_hash,
+        subject,
+        expiresAt: nowSeconds() + 5 * 60,
+    };
+    const encoded = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
+    const signature = await crypto.subtle.sign("HMAC", await pairConfirmationKey(env, ["sign"]), new TextEncoder().encode(encoded));
+    return `${encoded}.${base64UrlEncode(new Uint8Array(signature))}`;
+}
+
+async function verifyPairConfirmation(env: Env, raw: string, subject: string): Promise<PairConfirmation | null> {
+    if (raw.length > 2048) return null;
+    const parts = raw.split(".");
+    if (parts.length !== 2) return null;
+    const [encoded, signature] = parts;
+    const signatureBytes = base64UrlDecode(signature);
+    if (!signatureBytes) return null;
+    const verified = await crypto.subtle.verify(
+        "HMAC",
+        await pairConfirmationKey(env, ["verify"]),
+        signatureBytes,
+        new TextEncoder().encode(encoded),
+    );
+    if (!verified) return null;
+    const payloadBytes = base64UrlDecode(encoded);
+    if (!payloadBytes) return null;
+    try {
+        const payload = JSON.parse(new TextDecoder().decode(payloadBytes)) as Partial<PairConfirmation>;
+        const expiresAt = payload.expiresAt;
+        if (typeof payload.enrollmentId !== "string" || !/^[0-9a-f-]{36}$/u.test(payload.enrollmentId) ||
+            typeof payload.userCodeHash !== "string" || !/^[A-Za-z0-9_-]{43}$/u.test(payload.userCodeHash) ||
+            typeof payload.subject !== "string" || payload.subject !== subject ||
+            typeof expiresAt !== "number" || !Number.isInteger(expiresAt) || expiresAt <= nowSeconds()) return null;
+        return payload as PairConfirmation;
+    } catch {
+        return null;
+    }
 }
 
 async function createDeviceCode(request: Request, env: Env): Promise<Response> {
@@ -99,64 +261,114 @@ async function createDeviceCode(request: Request, env: Env): Promise<Response> {
     const registered = await env.DB.prepare("SELECT 1 FROM devices WHERE device_id = ?1").bind(deviceId).first();
     if (registered) return json({ error: "device already registered" }, 409);
 
+    const pending = await env.DB.prepare(
+        "SELECT 1 FROM device_enrollments WHERE device_id = ?1 AND status = 'pending'",
+    ).bind(deviceId).first();
+    if (pending) return json({ error: "enrollment already pending" }, 409);
+
     const deviceCode = issueDeviceCredential();
-    const rawUserCode = issueUserCode();
+    const deviceCodeHash = await hashEnrollmentCode(deviceCode, "device-code", env.DEVICE_CREDENTIAL_PEPPER);
     const now = nowSeconds();
-    const enrollmentId = crypto.randomUUID();
-    try {
-        await env.DB.prepare(
-            "INSERT INTO device_enrollments (enrollment_id, device_id, device_code_hash, user_code_hash, expires_at, poll_interval_seconds, created_at) " +
-            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        ).bind(
-            enrollmentId,
-            deviceId,
-            await hashEnrollmentCode(deviceCode, "device-code", env.DEVICE_CREDENTIAL_PEPPER),
-            await hashEnrollmentCode(rawUserCode, "user-code", env.DEVICE_CREDENTIAL_PEPPER),
-            now + enrollmentLifetimeSeconds,
-            enrollmentPollIntervalSeconds,
-            now,
-        ).run();
-    } catch {
-        // The partial unique index is the concurrency control for each device's live pairing.
-        return json({ error: "enrollment already pending" }, 409);
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const userCode = issueUserCode();
+        try {
+            await env.DB.prepare(
+                "INSERT INTO device_enrollments (enrollment_id, device_id, device_code_hash, user_code_hash, expires_at, poll_interval_seconds, created_at) " +
+                "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            ).bind(
+                crypto.randomUUID(),
+                deviceId,
+                deviceCodeHash,
+                await hashEnrollmentCode(userCode, "user-code", env.DEVICE_CREDENTIAL_PEPPER),
+                now + enrollmentLifetimeSeconds,
+                enrollmentPollIntervalSeconds,
+                now,
+            ).run();
+            return json({
+                device_id: deviceId,
+                device_code: deviceCode,
+                user_code: userCode,
+                verification_uri: new URL("/admin/pair", request.url).toString(),
+                expires_in: enrollmentLifetimeSeconds,
+                interval: enrollmentPollIntervalSeconds,
+            }, 201);
+        } catch {
+            // A unique failure may be a concurrent pending enrollment for this device or
+            // a live six-digit-code collision. Retry only the latter with a fresh code.
+            const existingPending = await env.DB.prepare(
+                "SELECT 1 FROM device_enrollments WHERE device_id = ?1 AND status = 'pending'",
+            ).bind(deviceId).first();
+            if (existingPending) return json({ error: "enrollment already pending" }, 409);
+        }
     }
-    return json({
-        device_id: deviceId,
-        device_code: deviceCode,
-        user_code: formatUserCode(rawUserCode),
-        verification_uri: new URL("/activate", request.url).toString(),
-        expires_in: enrollmentLifetimeSeconds,
-        interval: enrollmentPollIntervalSeconds,
-    }, 201);
+    return json({ error: "enrollment unavailable" }, 503);
 }
 
-async function approveEnrollment(request: Request, env: Env): Promise<Response> {
-    const identity = await verifyAccessAssertion(request, env);
-    if (!identity) return json({ error: "forbidden" }, 403);
-    const userCode = await approvedUserCode(request);
-    if (!userCode) return json({ error: "invalid user_code" }, 400);
+type ApprovalResult =
+    | { kind: "approved"; deviceId: string }
+    | { kind: "expired" }
+    | { kind: "already-approved" }
+    | { kind: "state"; status: Exclude<EnrollmentStatus, "pending" | "approved"> }
+    | { kind: "unavailable" };
 
+async function enrollmentForUserCode(env: Env, userCode: string): Promise<EnrollmentRecord | null> {
     const userCodeHash = await hashEnrollmentCode(userCode, "user-code", env.DEVICE_CREDENTIAL_PEPPER);
-    const enrollment = await env.DB.prepare(
+    return env.DB.prepare(
         "SELECT enrollment_id, device_id, device_code_hash, user_code_hash, status, expires_at, poll_interval_seconds, last_polled_at " +
-        "FROM device_enrollments WHERE user_code_hash = ?1",
+        "FROM device_enrollments WHERE user_code_hash = ?1 " +
+        "ORDER BY CASE WHEN status IN ('pending', 'approved') THEN 0 ELSE 1 END, created_at DESC LIMIT 1",
     ).bind(userCodeHash).first<EnrollmentRecord>();
-    if (!enrollment) return json({ error: "invalid user_code" }, 400);
+}
 
+async function enrollmentForConfirmation(env: Env, confirmation: PairConfirmation): Promise<EnrollmentRecord | null> {
+    return env.DB.prepare(
+        "SELECT enrollment_id, device_id, device_code_hash, user_code_hash, status, expires_at, poll_interval_seconds, last_polled_at " +
+        "FROM device_enrollments WHERE enrollment_id = ?1 AND user_code_hash = ?2",
+    ).bind(confirmation.enrollmentId, confirmation.userCodeHash).first<EnrollmentRecord>();
+}
+
+async function isPendingEnrollment(env: Env, enrollment: EnrollmentRecord): Promise<boolean> {
+    if (enrollment.expires_at <= nowSeconds()) {
+        await expireEnrollment(env, enrollment.enrollment_id, nowSeconds());
+        return false;
+    }
+    return enrollment.status === "pending";
+}
+
+async function completeEnrollmentApproval(
+    env: Env,
+    username: string,
+    enrollment: EnrollmentRecord,
+): Promise<ApprovalResult> {
     const now = nowSeconds();
     if (enrollment.expires_at <= now) {
         await expireEnrollment(env, enrollment.enrollment_id, now);
-        return json({ error: "expired_token" }, 410);
+        return { kind: "expired" };
     }
-    if (enrollment.status === "approved") return json({ error: "enrollment already approved" }, 409);
-    if (enrollment.status !== "pending") return enrollmentStateResponse(enrollment.status);
+    if (enrollment.status === "approved") return { kind: "already-approved" };
+    if (enrollment.status !== "pending") return { kind: "state", status: enrollment.status };
 
     const result = await env.DB.prepare(
         "UPDATE device_enrollments SET status = 'approved', approved_by = ?1, approved_subject = ?2, approved_at = ?3 " +
         "WHERE enrollment_id = ?4 AND status = 'pending' AND expires_at > ?3",
-    ).bind(identity.email, identity.subject, now, enrollment.enrollment_id).run();
-    if (result.meta.changed_db_rows !== 1) return json({ error: "enrollment unavailable" }, 409);
-    return json({ device_id: enrollment.device_id, status: "approved" });
+    ).bind(username, username, now, enrollment.enrollment_id).run();
+    return result.meta.changed_db_rows === 1 ? { kind: "approved", deviceId: enrollment.device_id } : { kind: "unavailable" };
+}
+
+async function approveEnrollment(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const userCode = await approvedUserCode(request);
+    if (!userCode) return json({ error: "invalid user_code" }, 400);
+
+    const enrollment = await enrollmentForUserCode(env, userCode);
+    if (!enrollment) return json({ error: "invalid user_code" }, 400);
+    const result = await completeEnrollmentApproval(env, username, enrollment);
+    if (result.kind === "approved") return json({ device_id: result.deviceId, status: "approved" });
+    if (result.kind === "expired") return json({ error: "expired_token" }, 410);
+    if (result.kind === "already-approved") return json({ error: "enrollment already approved" }, 409);
+    if (result.kind === "state") return enrollmentStateResponse(result.status);
+    return json({ error: "enrollment unavailable" }, 409);
 }
 
 async function exchangeDeviceCode(request: Request, env: Env): Promise<Response> {
@@ -254,10 +466,6 @@ async function approvedUserCode(request: Request): Promise<string | null> {
         return typeof value === "string" ? normalizeUserCode(value) : null;
     }
     return null;
-}
-
-function formatUserCode(code: string): string {
-    return `${code.slice(0, 5)}-${code.slice(5)}`;
 }
 
 async function connectDevice(request: Request, env: Env, deviceId: string): Promise<Response> {

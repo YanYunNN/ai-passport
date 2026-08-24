@@ -33,6 +33,52 @@ function constantTimeEqual(left: string, right: string): boolean {
     return difference === 0;
 }
 
+async function timingSafeSecretEqual(left: string, right: string): Promise<boolean> {
+    const [leftHash, rightHash] = await Promise.all([
+        crypto.subtle.digest("SHA-256", encoder.encode(left)),
+        crypto.subtle.digest("SHA-256", encoder.encode(right)),
+    ]);
+    return crypto.subtle.timingSafeEqual(leftHash, rightHash);
+}
+
+function strictBasicCredentials(request: Request): { username: string; password: string } | null {
+    const authorization = request.headers.get("Authorization");
+    if (!authorization || /[\r\n]/u.test(authorization)) return null;
+    const match = /^Basic ([A-Za-z0-9+/]+={0,2})$/iu.exec(authorization);
+    if (!match || match[1].length % 4 !== 0) return null;
+
+    try {
+        const binary = atob(match[1]);
+        // Only accept canonical padded base64, not the permissive variants atob may decode.
+        if (btoa(binary) !== match[1]) return null;
+        const decoded = new TextDecoder("utf-8", { fatal: true }).decode(
+            Uint8Array.from(binary, (character) => character.charCodeAt(0)),
+        );
+        const separator = decoded.indexOf(":");
+        if (separator <= 0) return null;
+        const username = decoded.slice(0, separator);
+        const password = decoded.slice(separator + 1);
+        if (!password || /[\u0000-\u001f\u007f]/u.test(username) || /[\u0000-\u001f\u007f]/u.test(password)) return null;
+        return { username, password };
+    } catch {
+        return null;
+    }
+}
+
+export async function verifyAdminBasicAuth(request: Request, env: Env): Promise<string | null> {
+    const supplied = strictBasicCredentials(request);
+    const expectedUsername = env.ADMIN_UI_USERNAME;
+    const expectedPassword = env.ADMIN_UI_PASSWORD;
+    if (!supplied || !expectedUsername || !expectedPassword ||
+        /[\u0000-\u001f\u007f:]/u.test(expectedUsername) || /[\u0000-\u001f\u007f]/u.test(expectedPassword)) return null;
+
+    const [usernameMatches, passwordMatches] = await Promise.all([
+        timingSafeSecretEqual(supplied.username, expectedUsername),
+        timingSafeSecretEqual(supplied.password, expectedPassword),
+    ]);
+    return usernameMatches && passwordMatches ? expectedUsername : null;
+}
+
 export function bearerToken(request: Request): string | null {
     const value = request.headers.get("Authorization");
     if (!value?.startsWith("Bearer ")) return null;
@@ -51,14 +97,19 @@ export function issueDeviceCredential(): string {
 }
 
 export function issueUserCode(): string {
-    const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-    const bytes = crypto.getRandomValues(new Uint8Array(10));
-    return Array.from(bytes, (byte) => alphabet[byte & 31]).join("");
+    // Rejection sampling avoids the modulo bias caused by mapping 2^32 values to 1,000,000 codes.
+    const limit = 0x1_0000_0000 - (0x1_0000_0000 % 1_000_000);
+    const bytes = new Uint8Array(4);
+    let value: number;
+    do {
+        crypto.getRandomValues(bytes);
+        value = new DataView(bytes.buffer).getUint32(0);
+    } while (value >= limit);
+    return String(value % 1_000_000).padStart(6, "0");
 }
 
 export function normalizeUserCode(value: string): string | null {
-    const normalized = value.replaceAll(/[-\s]/gu, "").toUpperCase();
-    return /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{10}$/u.test(normalized) ? normalized : null;
+    return /^[0-9]{6}$/u.test(value) ? value : null;
 }
 
 async function hashSecret(value: string, purpose: string, pepper: string): Promise<string> {

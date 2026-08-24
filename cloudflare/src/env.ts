@@ -2,8 +2,8 @@ export interface Env {
     ADMIN_API_KEY: string;
     HOOK_AUTH_SECRET: string;
     DEVICE_CREDENTIAL_PEPPER: string;
-    ACCESS_TEAM_DOMAIN: string;
-    ACCESS_AUD: string;
+    ADMIN_UI_USERNAME: string;
+    ADMIN_UI_PASSWORD: string;
     DB: D1Database;
     PASSPORTS: DurableObjectNamespace<PassportRelay>;
 }
