@@ -50,9 +50,29 @@ export function issueDeviceCredential(): string {
     return base64Url(bytes);
 }
 
-export async function hashDeviceCredential(credential: string, pepper: string): Promise<string> {
-    const digest = await crypto.subtle.digest("SHA-256", encoder.encode(credential + pepper));
+export function issueUserCode(): string {
+    const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    const bytes = crypto.getRandomValues(new Uint8Array(10));
+    return Array.from(bytes, (byte) => alphabet[byte & 31]).join("");
+}
+
+export function normalizeUserCode(value: string): string | null {
+    const normalized = value.replaceAll(/[-\s]/gu, "").toUpperCase();
+    return /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{10}$/u.test(normalized) ? normalized : null;
+}
+
+async function hashSecret(value: string, purpose: string, pepper: string): Promise<string> {
+    const digest = await crypto.subtle.digest("SHA-256", encoder.encode(`${purpose}\u0000${value}\u0000${pepper}`));
     return base64Url(new Uint8Array(digest));
+}
+
+export async function hashDeviceCredential(credential: string, pepper: string): Promise<string> {
+    return hashSecret(credential, "device-credential", pepper);
+}
+
+/** Device and user enrollment codes are domain-separated but both peppered before D1 storage. */
+export async function hashEnrollmentCode(code: string, kind: "device-code" | "user-code", pepper: string): Promise<string> {
+    return hashSecret(code, kind, pepper);
 }
 
 export async function verifyDeviceCredential(

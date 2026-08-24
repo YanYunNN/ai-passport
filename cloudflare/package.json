@@ -15,5 +15,8 @@
   "devDependencies": {
     "typescript": "5.9.3",
     "wrangler": "4.125.0"
+  },
+  "dependencies": {
+    "jose": "6.2.10"
   }
 }
