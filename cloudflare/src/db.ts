@@ -61,6 +61,33 @@ export async function claimTerminalState(
     return result.meta.changed_db_rows === 1;
 }
 
+export async function forceDenyAfterUncertainAllow(
+    env: Env,
+    request: Pick<RequestIndex, "request_id" | "device_id">,
+    decidedAt: number,
+): Promise<boolean> {
+    // If the allow update committed but its response was lost, this compensates only
+    // that exact decision timestamp. A pending row is also safely transitioned to deny.
+    const result = await env.DB.prepare(
+        "UPDATE approval_requests SET status = 'deny', reason = 'policy', decided_at = ?1 " +
+        "WHERE request_id = ?2 AND device_id = ?3 AND " +
+        "(status = 'pending' OR (status = 'allow' AND decided_at = ?1))",
+    ).bind(decidedAt, request.request_id, request.device_id).run();
+    return result.meta.changed_db_rows === 1;
+}
+
+export async function terminalStateMatches(
+    env: Env,
+    requestId: string,
+    status: Exclude<ApprovalStatus, "pending">,
+    reason: DenyReason | "user",
+): Promise<boolean> {
+    const record = await env.DB.prepare(
+        "SELECT status, reason FROM approval_requests WHERE request_id = ?1",
+    ).bind(requestId).first<{ status: ApprovalStatus; reason: DenyReason | "user" | null }>();
+    return record?.status === status && record.reason === reason;
+}
+
 /** Inserts an immutable audit row after the terminal state was successfully claimed. */
 export async function writeTerminalAudit(
     env: Env,

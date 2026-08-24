@@ -206,3 +206,26 @@ Cloudflare 官方参考：
 - [Durable Objects 概览](https://developers.cloudflare.com/durable-objects/)
 
 Cloudflare 文档相关内容已概述和改写，以遵循许可限制。
+
+## 9. Secure device-code enrollment
+
+Device-code enrollment is for an unregistered `passport-<12 uppercase hex>` device. The device calls `POST /v1/enrollment/device-code` with `{"device_id":"passport-AABBCCDDEEFF"}`. The Worker returns a high-entropy `device_code`, a displayable `user_code`, the `/activate` URL, a 10-minute lifetime, and a required 5-second poll interval. Only peppered, purpose-separated SHA-256 hashes of both codes are stored in D1.
+
+The device polls `POST /v1/enrollment/token` with `device_id` and `device_code`. While awaiting approval it receives `authorization_pending`; polling faster than the returned interval receives `slow_down`. Expired, denied, invalid, or already-consumed codes never return a credential. Once approved, the successful token exchange atomically creates the active `devices` record, consumes the enrollment, and returns the plaintext credential once. Do not log or persist that response outside encrypted device provisioning.
+
+### Cloudflare Access protection for pairing
+
+Create a Cloudflare Access Application for the same Worker hostname with protected paths:
+
+- `https://ws.yanyunnnx.cc.cd/activate`
+
+This single protected path serves both the activation page (`GET`) and its approval form (`POST`), so one Access Application produces the single AUD required by the Worker. Apply an allow policy limited to the intended operators or identity-provider group. Do **not** protect `/v1/enrollment/device-code` or `/v1/enrollment/token`: an unregistered device must reach those endpoints, and the Worker itself keeps their state transitions fail-closed.
+
+Set the following Worker environment variables in the Cloudflare dashboard (or equivalent CI deployment configuration), per environment. They are configuration values, not credentials; do not substitute them with arbitrary user input:
+
+- `ACCESS_TEAM_DOMAIN`: the exact Access team issuer, for example `https://your-team.cloudflareaccess.com` (the Worker accepts the hostname form and constructs HTTPS).
+- `ACCESS_AUD`: the Application Audience (AUD) tag from that Access Application.
+
+The Worker verifies `Cf-Access-Jwt-Assertion` against the team JWKS using `jose`, requiring the configured issuer and audience. A missing or invalid assertion is `403`; approval audit identity stores both its email (`approved_by`) and subject (`approved_subject`). The static `/activate` page has no embedded secrets and uses a restrictive CSP.
+
+Keep `ADMIN_API_KEY`, `HOOK_AUTH_SECRET`, and `DEVICE_CREDENTIAL_PEPPER` as Worker secrets via `wrangler secret put`; never place them, generated device credentials, Access assertions, or device/user codes in `wrangler.toml`, Git, CI logs, or source code. The enrollment schema is migrations `0002_device_enrollments.sql` and `0003_enrollment_approval_subject.sql`; after `npm run db:migrate:remote`, verify that `device_enrollments` is listed alongside the existing tables.

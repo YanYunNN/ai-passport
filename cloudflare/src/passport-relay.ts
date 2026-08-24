@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { type ApprovalStatus, type DenyReason, writeTerminalAudit } from "./db";
+import { claimTerminalState, forceDenyAfterUncertainAllow, terminalStateMatches, type ApprovalStatus, type DenyReason, writeTerminalAudit } from "./db";
 import type { Env } from "./env";
 import {
     isDeviceId,
@@ -28,6 +28,12 @@ interface Projection {
     pending: PendingRequest;
     outcome: Outcome;
     decidedAt: number;
+    /** The D1 terminal claim was already made before this projection is audited. */
+    claimed?: boolean;
+    /** Retry a conditional compensation when an allow D1 response was uncertain. */
+    forceDeny?: boolean;
+    /** Present only for a user allow from a revalidated socket. */
+    credentialHash?: string;
 }
 
 interface RelayState {
@@ -119,7 +125,7 @@ export class PassportRelay extends DurableObject<Env> {
             await this.denyCurrentForProtocolError();
             return;
         }
-        await this.finishPending(state.pending, decision.decision, decision.reason);
+        await this.finishPending(state.pending, decision.decision, decision.reason, attachment.credentialHash);
         socket.send(`{"v":1,"type":"decision_ack","request_id":"${decision.request_id}",` +
             `"session_id":"${decision.session_id}","accepted":true}`);
     }
@@ -292,14 +298,33 @@ export class PassportRelay extends DurableObject<Env> {
         pending: PendingRequest,
         status: Exclude<ApprovalStatus, "pending">,
         reason: DenyReason | "user",
+        credentialHash?: string,
     ): Promise<void> {
         const state = await this.loadState();
         if (!state.pending || state.pending.requestId !== pending.requestId) return;
-        const projection: Projection = {
-            pending,
-            outcome: { requestId: pending.requestId, status, reason },
-            decidedAt: nowSeconds(),
-        };
+
+        const decidedAt = nowSeconds();
+        let outcome: Outcome = { requestId: pending.requestId, status, reason };
+        let claimed = false;
+        let forceDeny = false;
+        if (status === "allow" && credentialHash) {
+            try {
+                // Claim D1 before publishing an allow in DO storage. The conditional SQL
+                // rechecks pending status, expiry, device state, and this socket's credential.
+                claimed = await claimTerminalState(this.env, requestIndex(pending), "allow", reason, decidedAt, credentialHash);
+            } catch (error) {
+                // The D1 operation may have committed even though this execution did not
+                // receive a result; persist a conditional deny compensation for retry.
+                forceDeny = true;
+                console.error("Unable to claim Passport allow in D1", error);
+            }
+        }
+        if (status === "allow" && !claimed) {
+            // A lost race, invalid/revoked credential, expiry, or D1 failure must never allow.
+            outcome = { requestId: pending.requestId, status: "deny", reason: "policy" };
+        }
+
+        const projection: Projection = { pending, outcome, decidedAt, claimed, forceDeny, credentialHash };
         const next: RelayState = { ...state, pending: undefined, outbox: [...(state.outbox ?? []), projection] };
         await this.ctx.storage.put({ [STATE_KEY]: next, [requestKey(pending.requestId)]: projection.outcome });
         await this.flushOutbox();
@@ -318,13 +343,43 @@ export class PassportRelay extends DurableObject<Env> {
         const remaining: Projection[] = [];
         for (const projection of state.outbox ?? []) {
             try {
-                await writeTerminalAudit(this.env, {
-                    request_id: projection.pending.requestId,
-                    device_id: projection.pending.deviceId,
-                    tool: projection.pending.tool,
-                    summary: projection.pending.summary,
-                    expires_at: projection.pending.expiresAt,
-                }, projection.pending.sessionId, projection.outcome.status, projection.outcome.reason, projection.decidedAt);
+                if (!projection.claimed) {
+                    const claimed = await claimTerminalState(
+                        this.env,
+                        requestIndex(projection.pending),
+                        projection.outcome.status,
+                        projection.outcome.reason,
+                        projection.decidedAt,
+                        projection.credentialHash,
+                    );
+                    if (!claimed) {
+                        if (projection.forceDeny) {
+                            const denied = await forceDenyAfterUncertainAllow(
+                                this.env,
+                                requestIndex(projection.pending),
+                                projection.decidedAt,
+                            );
+                            if (!denied && !await terminalStateMatches(
+                                this.env,
+                                projection.pending.requestId,
+                                "deny",
+                                "policy",
+                            )) continue;
+                        } else if (!await terminalStateMatches(
+                            this.env,
+                            projection.pending.requestId,
+                            projection.outcome.status,
+                            projection.outcome.reason,
+                        )) {
+                            // A non-pending/unknown request was handled elsewhere; never
+                            // create an audit record that conflicts with D1's terminal state.
+                            continue;
+                        }
+                    }
+                    projection.claimed = true;
+                }
+                await writeTerminalAudit(this.env, requestIndex(projection.pending), projection.pending.sessionId,
+                    projection.outcome.status, projection.outcome.reason, projection.decidedAt);
             } catch (error) {
                 console.error("Unable to project Passport terminal state to D1", error);
                 remaining.push(projection);
@@ -351,6 +406,22 @@ export class PassportRelay extends DurableObject<Env> {
         if (Number.isFinite(alarmAt)) await this.ctx.storage.setAlarm(alarmAt);
         else await this.ctx.storage.deleteAlarm();
     }
+}
+
+function requestIndex(pending: PendingRequest): {
+    request_id: string;
+    device_id: string;
+    tool: string;
+    summary: string;
+    expires_at: number;
+} {
+    return {
+        request_id: pending.requestId,
+        device_id: pending.deviceId,
+        tool: pending.tool,
+        summary: pending.summary,
+        expires_at: pending.expiresAt,
+    };
 }
 
 function toResponse(outcome: Outcome): { status: "allow" | "deny"; reason: DenyReason | "user" } {
