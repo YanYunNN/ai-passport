@@ -48,7 +48,7 @@ _Static_assert(sizeof(app_settings_record_v2_t) == 7, "v2 settings layout change
 _Static_assert(sizeof(app_settings_record_t) == 9, "v3 settings layout changed");
 
 static const app_settings_t s_defaults = {
-    .brightness_index = 2,
+    .brightness_index = 9,
     .hour = 0,
     .minute = 0,
     .second = 0,
@@ -63,7 +63,7 @@ static bool s_initialized;
 
 static bool settings_valid(const app_settings_t *settings)
 {
-    return settings && settings->brightness_index <= 2 && settings->hour < 24 &&
+    return settings && settings->brightness_index <= 9 && settings->hour < 24 &&
            settings->minute < 60 && settings->second < 60 &&
            (settings->time_format == APP_SETTINGS_TIME_HH_MM ||
             settings->time_format == APP_SETTINGS_TIME_HH_MM_SS);
@@ -247,7 +247,10 @@ const app_settings_t *app_settings_get(void)
 
 uint8_t app_settings_get_brightness_percent(void)
 {
-    static const uint8_t levels[] = { 30, 60, 100 };
+    static const uint8_t levels[] = { 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
+    if (s_settings.brightness_index >= sizeof(levels) / sizeof(levels[0])) {
+        return 100;
+    }
     return levels[s_settings.brightness_index];
 }
 

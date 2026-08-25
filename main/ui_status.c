@@ -153,7 +153,6 @@ static void status_refresh(lv_timer_t *timer)
 
     uint32_t tick = lv_tick_get();
     if (s_last_battery_tick != 0 && tick - s_last_battery_tick < 5000u) return;
-    s_last_battery_tick = tick;
 
     int soc = bsp_battery_soc();
     if (soc < 0) {
@@ -161,6 +160,7 @@ static void status_refresh(lv_timer_t *timer)
         lv_obj_set_width(s_battery_fill, 0);
         set_battery_color(UI_SYSTEM_DISABLED);
     } else {
+        s_last_battery_tick = tick;
         if (soc > 100) soc = 100;
         snprintf(s_soc_text, sizeof(s_soc_text), "%d%%", soc);
         lv_obj_set_width(s_battery_fill, (soc * 12) / 100);

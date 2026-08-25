@@ -28,9 +28,9 @@
 #define KIRO_NETWORK_MIN_VALID_EPOCH 1704067200 /* 2024-01-01 UTC */
 #define KIRO_ENROLLMENT_DEVICE_CODE_MAX 44
 #define KIRO_ENROLLMENT_RESPONSE_MAX 512
-#define KIRO_ENROLLMENT_URL "https://ws.yanyunnnx.cc.cd/v1/enrollment"
-#define KIRO_ENROLLMENT_RELAY_URL "wss://ws.yanyunnnx.cc.cd"
-#define KIRO_ENROLLMENT_VERIFICATION_URI "https://ws.yanyunnnx.cc.cd/admin/pair"
+#define KIRO_ENROLLMENT_URL "https://ws.yanyun.fun/v1/enrollment"
+#define KIRO_ENROLLMENT_RELAY_URL "wss://ws.yanyun.fun"
+#define KIRO_ENROLLMENT_VERIFICATION_URI "https://ws.yanyun.fun/admin/pair"
 #define KIRO_ENROLLMENT_MAX_LIFETIME_SECONDS 600
 #define KIRO_ENROLLMENT_MIN_INTERVAL_SECONDS 5
 #define KIRO_ENROLLMENT_MAX_INTERVAL_SECONDS 60
@@ -593,7 +593,6 @@ static void network_task(void *argument)
 static esp_err_t load_config(void)
 {
     generate_device_id(s_network.config.device_id, sizeof(s_network.config.device_id));
-#if defined(CONFIG_NVS_ENCRYPTION) && CONFIG_NVS_ENCRYPTION
     nvs_handle_t handle;
     esp_err_t result = nvs_open(KIRO_NETWORK_NAMESPACE, NVS_READONLY, &handle);
     if (result == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
@@ -609,9 +608,6 @@ static esp_err_t load_config(void)
         return ESP_OK;
     }
     return result == ESP_OK ? ESP_ERR_INVALID_RESPONSE : result;
-#else
-    return ESP_OK;
-#endif
 }
 
 esp_err_t kiro_passport_network_init(void)
@@ -647,10 +643,6 @@ esp_err_t kiro_passport_network_configure(const char *relay_url, const char *cre
     if (!s_network.lock || !valid_relay_url(relay_url) || !safe_value(credential, KIRO_PASSPORT_CREDENTIAL_MAX)) {
         return ESP_ERR_INVALID_ARG;
     }
-#if !defined(CONFIG_NVS_ENCRYPTION) || !CONFIG_NVS_ENCRYPTION
-    ESP_LOGE(TAG, "拒绝保存设备凭据：必须先启用 NVS encryption");
-    return ESP_ERR_NOT_SUPPORTED;
-#else
     kiro_passport_network_config_t config = { 0 };
     generate_device_id(config.device_id, sizeof(config.device_id));
     snprintf(config.relay_url, sizeof(config.relay_url), "%s", relay_url);
@@ -667,14 +659,10 @@ esp_err_t kiro_passport_network_configure(const char *relay_url, const char *cre
     }
     clear_secret(&config, sizeof(config));
     return result;
-#endif
 }
 
 esp_err_t kiro_passport_network_clear_configuration(void)
 {
-#if !defined(CONFIG_NVS_ENCRYPTION) || !CONFIG_NVS_ENCRYPTION
-    return ESP_ERR_NOT_SUPPORTED;
-#else
     nvs_handle_t handle = 0;
     esp_err_t result = nvs_open(KIRO_NETWORK_NAMESPACE, NVS_READWRITE, &handle);
     if (result == ESP_OK) result = nvs_erase_key(handle, KIRO_NETWORK_CONFIG_KEY);
@@ -688,22 +676,16 @@ esp_err_t kiro_passport_network_clear_configuration(void)
         xSemaphoreGive(s_network.lock);
     }
     return result;
-#endif
 }
 
 bool kiro_passport_network_enrollment_supported(void)
 {
-#if defined(CONFIG_NVS_ENCRYPTION) && CONFIG_NVS_ENCRYPTION
     return true;
-#else
-    return false;
-#endif
 }
 
 esp_err_t kiro_passport_network_start_enrollment(void)
 {
     if (!s_network.lock) return ESP_ERR_INVALID_STATE;
-    if (!kiro_passport_network_enrollment_supported()) return ESP_ERR_NOT_SUPPORTED;
     xSemaphoreTake(s_network.lock, portMAX_DELAY);
     if (s_network.config.credential[0] ||
         (s_network.enrollment.state != KIRO_PASSPORT_ENROLLMENT_IDLE &&

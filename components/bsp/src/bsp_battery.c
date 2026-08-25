@@ -55,19 +55,39 @@ esp_err_t bsp_battery_init(void) {
     }
     ESP_LOGI(TAG, "检测到 CW2017 VERSION=0x%02X", ver);
 
-    // CW2017 上电默认进入睡眠态。必须完整执行官方的 0x30 -> 0x00
-    // 模式切换，单独写 0x00 无法可靠唤醒经历过掉电的电量计。
-    // 保持芯片内置 Li-Poly profile，不写 UFG、0x0A 或自定义 profile，避免扰动算法状态。
-    if (cw_write(CW_REG_MODE, CW_MODE_RESTART) != 0 ||
-        cw_write(CW_REG_MODE, CW_MODE_NORMAL) != 0) {
-        ESP_LOGE(TAG, "CW2017 模式唤醒失败");
-        i2c_master_bus_rm_device(s_dev);
-        s_dev = NULL;
-        return ESP_FAIL;
+    // 检查芯片当前是否已经在正常运行
+    uint8_t mode = 0;
+    bool need_restart = true;
+    if (cw_read(CW_REG_MODE, &mode, 1) == 0 && mode == CW_MODE_NORMAL) {
+        uint8_t soc_raw[2] = {0};
+        if (cw_read(CW_REG_SOC_H, soc_raw, 2) == 0 && soc_raw[0] > 0 && soc_raw[0] <= 100) {
+            need_restart = false;
+            ESP_LOGI(TAG, "CW2017 已处于正常工作态 (SOC=%d%%), 跳过复位", soc_raw[0]);
+        }
     }
 
-    vTaskDelay(pdMS_TO_TICKS(100));   // 等首次 SOC 计算完成
-    ESP_LOGI(TAG, "CW2017 已从上电睡眠态切换至正常工作态");
+    if (need_restart) {
+        // CW2017 上电默认进入睡眠态。必须完整执行官方的 0x30 -> 0x00
+        // 模式切换，单独写 0x00 无法可靠唤醒经历过掉电的电量计。
+        // 保持芯片内置 Li-Poly profile，不写 UFG、0x0A 或自定义 profile，避免扰动算法状态。
+        if (cw_write(CW_REG_MODE, CW_MODE_RESTART) != 0 ||
+            cw_write(CW_REG_MODE, CW_MODE_NORMAL) != 0) {
+            ESP_LOGE(TAG, "CW2017 模式唤醒失败");
+            i2c_master_bus_rm_device(s_dev);
+            s_dev = NULL;
+            return ESP_FAIL;
+        }
+
+        // 短暂轮询等待首次采样完成(最多等 400ms，每 40ms 检查一次)
+        for (int i = 0; i < 10; i++) {
+            vTaskDelay(pdMS_TO_TICKS(40));
+            uint8_t soc_raw[2] = {0};
+            if (cw_read(CW_REG_SOC_H, soc_raw, 2) == 0 && soc_raw[0] > 0 && soc_raw[0] <= 100) {
+                break;
+            }
+        }
+        ESP_LOGI(TAG, "CW2017 已从上电睡眠态切换至正常工作态");
+    }
     return ESP_OK;
 }
 
@@ -76,6 +96,14 @@ int bsp_battery_soc(void) {
     if (cw_read(CW_REG_SOC_H, b, 2) != 0) return -1;
     int soc = b[0];                       // 高字节即整数百分比
     if (soc > 100) return -1;             // 芯片未就绪时可能读到 0xFF
+
+    // 若读数为 0% 但当前电压正常(>3400mV)，说明 FastCali 初次计算尚未就绪
+    if (soc == 0) {
+        int mv = bsp_battery_mv();
+        if (mv > 3400) {
+            return -1;
+        }
+    }
     return soc;
 }
 

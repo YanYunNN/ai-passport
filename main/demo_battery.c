@@ -19,9 +19,10 @@ static void tick(lv_timer_t *t) {
     if (mv < 0)  lv_label_set_text(s_mv, "-- mV");
     else         lv_label_set_text_fmt(s_mv, "%d mV", mv);
 
-    // 低电量变红,便于一眼判断
+    // 低电量变红,便于一眼判断; 未就绪保持黑字
     lv_obj_set_style_text_color(s_soc,
-        (soc >= 0 && soc < 20) ? lv_color_hex(0xFF5A5A) : lv_color_hex(0x39FF88), 0);
+        (soc < 0) ? lv_color_hex(UI_INK) :
+        (soc < 20) ? lv_color_hex(0xFF5A5A) : lv_color_hex(0x39FF88), 0);
 }
 
 void demo_battery_enter(void) {

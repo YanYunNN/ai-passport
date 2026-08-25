@@ -11,28 +11,34 @@
 #include "wifi_manager.h"
 #include "lvgl.h"
 
-#define SETTING_COUNT 9
+#define SETTING_COUNT 5
+#define TIME_ACTION_COUNT 5
 #define WIFI_ACTION_COUNT 5
 #define RELAY_ACTION_COUNT 3
 
 typedef enum {
     SETTING_BRIGHTNESS,
-    SETTING_HOUR,
-    SETTING_MINUTE,
-    SETTING_SECOND,
-    SETTING_TIME_FORMAT,
+    SETTING_TIME,
     SETTING_LIGHT_SLEEP,
     SETTING_WIFI,
     SETTING_RELAY,
-    SETTING_RESET,
 } setting_id_t;
 
 typedef enum {
     SETTINGS_VIEW_MAIN,
+    SETTINGS_VIEW_TIME,
     SETTINGS_VIEW_WIFI,
     SETTINGS_VIEW_PROVISIONING,
     SETTINGS_VIEW_RELAY,
 } settings_view_t;
+
+typedef enum {
+    TIME_ACTION_HOUR,
+    TIME_ACTION_MINUTE,
+    TIME_ACTION_SECOND,
+    TIME_ACTION_FORMAT,
+    TIME_ACTION_BACK,
+} time_action_t;
 
 typedef enum {
     WIFI_ACTION_TOGGLE,
@@ -48,13 +54,17 @@ typedef enum {
     RELAY_ACTION_BACK,
 } relay_action_t;
 
-static const uint8_t BRIGHTNESS_LEVELS[] = { 30, 60, 100 };
+static const uint8_t BRIGHTNESS_LEVELS[] = { 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
 
 static lv_obj_t *s_scr;
 static lv_obj_t *s_items[SETTING_COUNT];
 static lv_obj_t *s_titles[SETTING_COUNT];
 static lv_obj_t *s_values[SETTING_COUNT];
 static lv_obj_t *s_indicators[SETTING_COUNT];
+static lv_obj_t *s_time_actions[TIME_ACTION_COUNT];
+static lv_obj_t *s_time_action_titles[TIME_ACTION_COUNT];
+static lv_obj_t *s_time_action_values[TIME_ACTION_COUNT];
+static lv_obj_t *s_time_action_indicators[TIME_ACTION_COUNT];
 static lv_obj_t *s_wifi_state_value;
 static lv_obj_t *s_wifi_ssid_value;
 static lv_obj_t *s_wifi_actions[WIFI_ACTION_COUNT];
@@ -69,6 +79,7 @@ static lv_obj_t *s_relay_action_values[RELAY_ACTION_COUNT];
 static lv_obj_t *s_relay_action_indicators[RELAY_ACTION_COUNT];
 static lv_timer_t *s_refresh_timer;
 static uint8_t s_selected;
+static uint8_t s_time_selected;
 static uint8_t s_wifi_selected;
 static uint8_t s_relay_selected;
 static uint8_t s_brightness_index;
@@ -123,6 +134,16 @@ static void clear_main_objects(void)
     }
 }
 
+static void clear_time_objects(void)
+{
+    for (size_t i = 0; i < TIME_ACTION_COUNT; i++) {
+        s_time_actions[i] = NULL;
+        s_time_action_titles[i] = NULL;
+        s_time_action_values[i] = NULL;
+        s_time_action_indicators[i] = NULL;
+    }
+}
+
 static void clear_wifi_objects(void)
 {
     s_wifi_state_value = NULL;
@@ -167,19 +188,43 @@ static void settings_refresh(void)
 
     lv_label_set_text_fmt(s_values[SETTING_BRIGHTNESS], "%u%%",
                           (unsigned)BRIGHTNESS_LEVELS[s_brightness_index]);
-    lv_label_set_text_fmt(s_values[SETTING_HOUR], "%02u", (unsigned)hour);
-    lv_label_set_text_fmt(s_values[SETTING_MINUTE], "%02u", (unsigned)minute);
-    lv_label_set_text_fmt(s_values[SETTING_SECOND], "%02u", (unsigned)second);
-    lv_label_set_text(s_values[SETTING_TIME_FORMAT],
-                      ui_status_get_time_format() == UI_STATUS_TIME_HH_MM_SS
-                          ? "HH:MM:SS" : "HH:MM");
+    if (ui_status_get_time_format() == UI_STATUS_TIME_HH_MM_SS) {
+        lv_label_set_text_fmt(s_values[SETTING_TIME], "%02u:%02u:%02u",
+                              (unsigned)hour, (unsigned)minute, (unsigned)second);
+    } else {
+        lv_label_set_text_fmt(s_values[SETTING_TIME], "%02u:%02u",
+                              (unsigned)hour, (unsigned)minute);
+    }
     lv_label_set_text(s_values[SETTING_LIGHT_SLEEP],
                       power_manager_is_light_sleep_enabled() ? "ON" : "OFF");
     lv_label_set_text(s_values[SETTING_WIFI], wifi_state_text());
     lv_label_set_text(s_values[SETTING_RELAY], relay_config.credential[0] ?
                       kiro_passport_network_state_name(kiro_passport_network_get_state()) :
                       relay_enrollment_text(&enrollment));
-    lv_label_set_text(s_values[SETTING_RESET], "100%");
+}
+
+static void time_details_refresh(void)
+{
+    if (s_view != SETTINGS_VIEW_TIME) return;
+
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+    ui_status_get_time(&hour, &minute, &second);
+
+    for (size_t i = 0; i < TIME_ACTION_COUNT; i++) {
+        ui_system_set_item_state(s_time_actions[i], s_time_action_titles[i],
+                                 s_time_action_values[i], s_time_action_indicators[i],
+                                 i == s_time_selected, true);
+    }
+
+    lv_label_set_text_fmt(s_time_action_values[TIME_ACTION_HOUR], "%02u", (unsigned)hour);
+    lv_label_set_text_fmt(s_time_action_values[TIME_ACTION_MINUTE], "%02u", (unsigned)minute);
+    lv_label_set_text_fmt(s_time_action_values[TIME_ACTION_SECOND], "%02u", (unsigned)second);
+    lv_label_set_text(s_time_action_values[TIME_ACTION_FORMAT],
+                      ui_status_get_time_format() == UI_STATUS_TIME_HH_MM_SS
+                          ? "HH:MM:SS" : "HH:MM");
+    lv_label_set_text(s_time_action_values[TIME_ACTION_BACK], "");
 }
 
 static void wifi_details_refresh(void)
@@ -271,26 +316,13 @@ static esp_err_t persist_settings(void)
     return app_settings_save(&settings);
 }
 
-static void restore_default_settings(void)
-{
-    if (app_settings_reset() != ESP_OK) return;
-
-    const app_settings_t *settings = app_settings_get();
-    s_brightness_index = settings->brightness_index;
-    bsp_display_backlight(BRIGHTNESS_LEVELS[s_brightness_index]);
-    ui_status_set_time(settings->hour, settings->minute, settings->second);
-    ui_status_set_time_format(settings->time_format == APP_SETTINGS_TIME_HH_MM_SS
-                                  ? UI_STATUS_TIME_HH_MM_SS : UI_STATUS_TIME_HH_MM);
-    power_manager_set_light_sleep_enabled(settings->light_sleep_enabled);
-    wifi_manager_set_enabled(settings->wifi_enabled);
-    wifi_manager_set_power_save(settings->wifi_power_save_enabled);
-}
-
 static void refresh_timer(lv_timer_t *timer)
 {
     (void)timer;
     if (s_view == SETTINGS_VIEW_MAIN) {
         settings_refresh();
+    } else if (s_view == SETTINGS_VIEW_TIME) {
+        time_details_refresh();
     } else if (s_view == SETTINGS_VIEW_WIFI) {
         wifi_details_refresh();
     } else if (s_view == SETTINGS_VIEW_RELAY) {
@@ -329,6 +361,38 @@ static void provisioning_build(void)
     lv_obj_set_width(hint, 208);
     lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_pos(hint, 16, 266);
+    lv_screen_load(s_scr);
+}
+
+static void time_details_build(void)
+{
+    s_scr = ui_system_screen_create();
+    lv_obj_t *heading = ui_system_label(s_scr, "时间", &ui_font_noto_sc_20,
+                                        UI_SYSTEM_TEXT);
+    lv_obj_set_width(heading, 208);
+    lv_obj_set_style_text_align(heading, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_pos(heading, 16, 42);
+    ui_system_divider(s_scr, 16, 77, 208);
+
+    static const char * const titles[TIME_ACTION_COUNT] = {
+        "小时", "分钟", "秒钟", "时间格式", "返回",
+    };
+    for (size_t i = 0; i < TIME_ACTION_COUNT; i++) {
+        int y = 92 + (int)i * 32;
+        s_time_actions[i] = ui_system_item_create(s_scr, 16, y, 208, 29);
+        s_time_action_titles[i] = ui_system_label(s_time_actions[i], titles[i],
+                                                  &ui_font_noto_sc_14, UI_SYSTEM_TEXT);
+        lv_obj_set_pos(s_time_action_titles[i], 16, 6);
+        s_time_action_values[i] = ui_system_label(s_time_actions[i], "",
+                                                  &lv_font_montserrat_14, UI_SYSTEM_MUTED);
+        lv_obj_set_width(s_time_action_values[i], 82);
+        lv_obj_set_style_text_align(s_time_action_values[i], LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_pos(s_time_action_values[i], 82, 6);
+        s_time_action_indicators[i] = ui_system_label(s_time_actions[i], ">",
+                                                      &lv_font_montserrat_20, UI_SYSTEM_MUTED);
+        lv_obj_set_pos(s_time_action_indicators[i], 180, 2);
+    }
+    time_details_refresh();
     lv_screen_load(s_scr);
 }
 
@@ -448,6 +512,10 @@ static void relay_details_build(void)
 
 static void settings_build(void)
 {
+    if (s_view == SETTINGS_VIEW_TIME) {
+        time_details_build();
+        return;
+    }
     if (s_view == SETTINGS_VIEW_WIFI) {
         wifi_details_build();
         return;
@@ -471,22 +539,22 @@ static void settings_build(void)
     ui_system_divider(s_scr, 16, 77, 208);
 
     static const char * const titles[SETTING_COUNT] = {
-        "屏幕亮度", "小时", "分钟", "秒钟", "时间格式", "浅睡眠", "网络", "Relay", "恢复默认",
+        "亮度", "时间", "浅睡眠", "网络", "Relay",
     };
     for (size_t i = 0; i < SETTING_COUNT; i++) {
-        int y = 81 + (int)i * 26;
-        s_items[i] = ui_system_item_create(s_scr, 16, y, 208, 25);
+        int y = 92 + (int)i * 32;
+        s_items[i] = ui_system_item_create(s_scr, 16, y, 208, 29);
         s_titles[i] = ui_system_label(s_items[i], titles[i], &ui_font_noto_sc_14,
                                       UI_SYSTEM_TEXT);
-        lv_obj_set_pos(s_titles[i], 16, 5);
+        lv_obj_set_pos(s_titles[i], 16, 6);
         s_values[i] = ui_system_label(s_items[i], "", &lv_font_montserrat_14,
                                       UI_SYSTEM_MUTED);
-        lv_obj_set_width(s_values[i], 72);
+        lv_obj_set_width(s_values[i], 82);
         lv_obj_set_style_text_align(s_values[i], LV_TEXT_ALIGN_RIGHT, 0);
-        lv_obj_set_pos(s_values[i], 96, 5);
+        lv_obj_set_pos(s_values[i], 82, 6);
         s_indicators[i] = ui_system_label(s_items[i], ">", &lv_font_montserrat_20,
                                           UI_SYSTEM_MUTED);
-        lv_obj_set_pos(s_indicators[i], 180, 1);
+        lv_obj_set_pos(s_indicators[i], 180, 2);
     }
     settings_refresh();
     lv_screen_load(s_scr);
@@ -499,6 +567,7 @@ static void show_view(settings_view_t view)
         s_scr = NULL;
     }
     clear_main_objects();
+    clear_time_objects();
     clear_wifi_objects();
     clear_relay_objects();
     s_view = view;
@@ -508,8 +577,12 @@ static void show_view(settings_view_t view)
 void demo_settings_enter(void)
 {
     s_brightness_index = app_settings_get()->brightness_index;
+    if (s_brightness_index >= sizeof(BRIGHTNESS_LEVELS) / sizeof(BRIGHTNESS_LEVELS[0])) {
+        s_brightness_index = (sizeof(BRIGHTNESS_LEVELS) / sizeof(BRIGHTNESS_LEVELS[0])) - 1;
+    }
     bsp_display_backlight(BRIGHTNESS_LEVELS[s_brightness_index]);
     s_selected = 0;
+    s_time_selected = 0;
     s_wifi_selected = 0;
     s_relay_selected = 0;
     s_view = SETTINGS_VIEW_MAIN;
@@ -531,6 +604,7 @@ void demo_settings_exit(void)
         s_scr = NULL;
     }
     clear_main_objects();
+    clear_time_objects();
     clear_wifi_objects();
     clear_relay_objects();
     s_view = SETTINGS_VIEW_MAIN;
@@ -550,11 +624,6 @@ static void main_settings_key(bsp_btn_t btn)
     }
     if (btn != BSP_BTN_OK) return;
 
-    uint8_t hour;
-    uint8_t minute;
-    uint8_t second;
-    ui_status_get_time(&hour, &minute, &second);
-
     switch ((setting_id_t)s_selected) {
     case SETTING_BRIGHTNESS:
         s_brightness_index = (s_brightness_index + 1) %
@@ -562,23 +631,10 @@ static void main_settings_key(bsp_btn_t btn)
         bsp_display_backlight(BRIGHTNESS_LEVELS[s_brightness_index]);
         persist_settings();
         break;
-    case SETTING_HOUR:
-        ui_status_set_time((hour + 1) % 24, minute, second);
-        persist_settings();
-        break;
-    case SETTING_MINUTE:
-        ui_status_set_time(hour, (minute + 1) % 60, second);
-        persist_settings();
-        break;
-    case SETTING_SECOND:
-        ui_status_set_time(hour, minute, (second + 1) % 60);
-        persist_settings();
-        break;
-    case SETTING_TIME_FORMAT:
-        ui_status_set_time_format(ui_status_get_time_format() == UI_STATUS_TIME_HH_MM
-                                      ? UI_STATUS_TIME_HH_MM_SS : UI_STATUS_TIME_HH_MM);
-        persist_settings();
-        break;
+    case SETTING_TIME:
+        s_time_selected = 0;
+        show_view(SETTINGS_VIEW_TIME);
+        return;
     case SETTING_LIGHT_SLEEP: {
         bool previous = power_manager_is_light_sleep_enabled();
         if (power_manager_set_light_sleep_enabled(!previous) == ESP_OK &&
@@ -599,11 +655,53 @@ static void main_settings_key(bsp_btn_t btn)
         s_relay_selected = 0;
         show_view(SETTINGS_VIEW_RELAY);
         return;
-    case SETTING_RESET:
-        restore_default_settings();
-        break;
     }
     settings_refresh();
+}
+
+static void time_settings_key(bsp_btn_t btn)
+{
+    if (btn == BSP_BTN_UP) {
+        s_time_selected = (s_time_selected + TIME_ACTION_COUNT - 1) % TIME_ACTION_COUNT;
+        time_details_refresh();
+        return;
+    }
+    if (btn == BSP_BTN_DOWN) {
+        s_time_selected = (s_time_selected + 1) % TIME_ACTION_COUNT;
+        time_details_refresh();
+        return;
+    }
+    if (btn != BSP_BTN_OK) return;
+
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+    ui_status_get_time(&hour, &minute, &second);
+
+    switch ((time_action_t)s_time_selected) {
+    case TIME_ACTION_HOUR:
+        ui_status_set_time((hour + 1) % 24, minute, second);
+        persist_settings();
+        break;
+    case TIME_ACTION_MINUTE:
+        ui_status_set_time(hour, (minute + 1) % 60, second);
+        persist_settings();
+        break;
+    case TIME_ACTION_SECOND:
+        ui_status_set_time(hour, minute, (second + 1) % 60);
+        persist_settings();
+        break;
+    case TIME_ACTION_FORMAT:
+        ui_status_set_time_format(ui_status_get_time_format() == UI_STATUS_TIME_HH_MM
+                                      ? UI_STATUS_TIME_HH_MM_SS : UI_STATUS_TIME_HH_MM);
+        persist_settings();
+        break;
+    case TIME_ACTION_BACK:
+        s_selected = SETTING_TIME;
+        show_view(SETTINGS_VIEW_MAIN);
+        return;
+    }
+    time_details_refresh();
 }
 
 static void wifi_settings_key(bsp_btn_t btn)
@@ -692,7 +790,9 @@ static void relay_settings_key(bsp_btn_t btn)
 void demo_settings_key(bsp_btn_t btn, bsp_btn_ev_t ev)
 {
     if (ev != BSP_BTN_CLICK || s_view == SETTINGS_VIEW_PROVISIONING) return;
-    if (s_view == SETTINGS_VIEW_WIFI) {
+    if (s_view == SETTINGS_VIEW_TIME) {
+        time_settings_key(btn);
+    } else if (s_view == SETTINGS_VIEW_WIFI) {
         wifi_settings_key(btn);
     } else if (s_view == SETTINGS_VIEW_RELAY) {
         relay_settings_key(btn);

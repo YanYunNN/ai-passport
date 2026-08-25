@@ -40,7 +40,7 @@ CONFIG_BUTTON_PERIOD_TIME_MS=20
 
 # --- Kiro Passport Wi-Fi relay ---
 # Passport uses a TLS-verified WSS client; the server certificate must validate
-# against the ESP-IDF certificate bundle. Device enrollment credentials are only
-# persisted when NVS encryption is explicitly enabled for a production build.
+# against the ESP-IDF certificate bundle. This build persists enrollment
+# credentials in NVS without encryption; production hardware should protect them at rest.
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y

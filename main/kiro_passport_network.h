@@ -40,14 +40,11 @@ typedef struct {
     esp_err_t last_error;
 } kiro_passport_enrollment_snapshot_t;
 
-/* Loads the device identity and (only on encrypted NVS builds) enrollment data. */
+/* Loads the device identity and any persisted enrollment data. */
 esp_err_t kiro_passport_network_init(void);
 void kiro_passport_network_get_config(kiro_passport_network_config_t *config);
 
-/*
- * Stores an enrollment-issued device credential. Persistence is refused unless
- * NVS encryption is enabled; deployment/API tokens are never accepted here.
- */
+/* Stores an enrollment-issued device credential in NVS; deployment/API tokens are never accepted. */
 esp_err_t kiro_passport_network_configure(const char *relay_url, const char *credential);
 esp_err_t kiro_passport_network_clear_configuration(void);
 

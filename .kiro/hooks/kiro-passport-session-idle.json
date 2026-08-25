@@ -9,7 +9,8 @@
         "type": "command",
         "command": "python3 tools/kiro_passport_bridge.py hook --kind idle",
         "timeout": 10
-      }
+      },
+      "enabled": false
     }
   ]
 }

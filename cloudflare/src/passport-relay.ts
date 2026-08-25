@@ -84,6 +84,7 @@ export class PassportRelay extends DurableObject<Env> {
             return this.getRequest(request, url.pathname.slice("/internal/requests/".length));
         }
         if (request.method === "POST" && url.pathname === "/internal/revoke") return this.revoke(request);
+        if (request.method === "GET" && url.pathname === "/internal/status") return json({ online: this.sockets.size > 0 });
         return json({ error: "not found" }, 404);
     }
 

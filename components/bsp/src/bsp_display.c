@@ -10,6 +10,11 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#if CONFIG_PM_ENABLE
+#include "esp_pm.h"
+static esp_pm_lock_handle_t s_pm_lock;
+static bool                 s_pm_locked;
+#endif
 
 static const char *TAG = "bsp_disp";
 
@@ -60,7 +65,7 @@ static void backlight_init(void) {
         .timer_num       = BSP_BL_LEDC_TIMER,
         .duty_resolution = BSP_BL_LEDC_RES,
         .freq_hz         = BSP_BL_LEDC_FREQ_HZ,
-        .clk_cfg         = LEDC_AUTO_CLK,
+        .clk_cfg         = LEDC_USE_XTAL_CLK,
     };
     esp_err_t e = ledc_timer_config(&t);
     if (e != ESP_OK) { ESP_LOGE(TAG, "ledc_timer_config 失败: %s", esp_err_to_name(e)); return; }
@@ -131,6 +136,11 @@ esp_err_t bsp_display_init(void) {
     esp_lcd_panel_disp_on_off(s_panel, true);                    // 0x29 DISPON
 
     backlight_init();
+#if CONFIG_PM_ENABLE
+    if (!s_pm_lock) {
+        esp_pm_lock_create(ESP_PM_APB_FREQ_MAX, 0, "bsp_disp", &s_pm_lock);
+    }
+#endif
     ESP_LOGI(TAG, "显示就绪 %dx%d", BSP_LCD_W, BSP_LCD_H);
     return ESP_OK;
 }
@@ -142,6 +152,21 @@ esp_lcd_panel_io_handle_t bsp_display_io(void) { return s_io; }
 void bsp_display_backlight(uint8_t percent) {
     if (!s_bl_ready) return;
     if (percent > 100) percent = 100;
+
+#if CONFIG_PM_ENABLE
+    if (s_pm_lock) {
+        if (percent > 0 && !s_pm_locked) {
+            if (esp_pm_lock_acquire(s_pm_lock) == ESP_OK) {
+                s_pm_locked = true;
+            }
+        } else if (percent == 0 && s_pm_locked) {
+            if (esp_pm_lock_release(s_pm_lock) == ESP_OK) {
+                s_pm_locked = false;
+            }
+        }
+    }
+#endif
+
     uint32_t max_duty = (1u << BSP_BL_LEDC_RES) - 1u;
     uint32_t duty = (max_duty * percent) / 100u;
     ledc_set_duty(BSP_BL_LEDC_MODE, BSP_BL_LEDC_CHANNEL, duty);

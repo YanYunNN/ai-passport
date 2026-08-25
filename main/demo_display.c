@@ -16,7 +16,7 @@ static const uint32_t COLORS[] = { 0xFF0000, 0x00FF00, 0x0000FF, 0xFFFFFF, 0x000
 static const char    *COLOR_NAME[] = { "RED", "GREEN", "BLUE", "WHITE", "BLACK" };
 #define COLOR_COUNT (sizeof(COLORS) / sizeof(COLORS[0]))
 
-static const uint8_t BL_LEVELS[] = { 100, 50, 10 };
+static const uint8_t BL_LEVELS[] = { 100, 90, 80, 70, 60, 50, 40, 30, 20, 10 };
 #define BL_COUNT (sizeof(BL_LEVELS) / sizeof(BL_LEVELS[0]))
 
 static void refresh(void) {
