@@ -25,6 +25,7 @@ CONFIG_LV_USE_FONT_COMPRESSED=y
 # 启用 LVGL 内置 Tiny JPEG 解码器，用于渲染后台推送的 240x320 JPEG 图片
 CONFIG_LV_USE_TJPGD=y
 CONFIG_LV_USE_FS_MEMFS=y
+CONFIG_LV_FS_MEMFS_LETTER=77
 # LVGL 内置 malloc 池大小(KB)。它是独立静态区、不与系统堆共享,配大了会白白占用 RAM。
 # 本 demo UI 包含图片解码渲染, 48KB 足够。
 CONFIG_LV_MEM_SIZE_KILOBYTES=48

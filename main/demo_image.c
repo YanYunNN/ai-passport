@@ -74,13 +74,8 @@ static void render_current_image(void)
 
         if (s_info_label) {
             char desc[128];
-            if (info.size >= 1024) {
-                snprintf(desc, sizeof(desc), "%s (%u KB)\nOK: 切换信息",
-                         info.title[0] ? info.title : "云端图片", (unsigned int)((info.size + 1023) / 1024));
-            } else {
-                snprintf(desc, sizeof(desc), "%s (%u B)\nOK: 切换信息",
-                         info.title[0] ? info.title : "云端图片", (unsigned int)info.size);
-            }
+            snprintf(desc, sizeof(desc), "%s (%u KB)\nOK: 切换信息栏",
+                     info.title[0] ? info.title : "云端图片", (unsigned int)(info.size / 1024));
             lv_label_set_text(s_info_label, desc);
         }
 
@@ -92,6 +87,7 @@ static void render_current_image(void)
             }
         }
 
+        ESP_LOGI(TAG, "渲染图片完成: size=%zu, title=%s, v=%lu", info.size, info.title, (unsigned long)info.version);
         s_current_version = info.version;
     } else {
         if (s_img_obj) {
@@ -103,15 +99,15 @@ static void render_current_image(void)
 
         if (!s_placeholder) {
             s_placeholder = lv_obj_create(s_scr);
-            lv_obj_set_pos(s_placeholder, 16, 50);
-            lv_obj_set_size(s_placeholder, 208, 240);
+            lv_obj_set_pos(s_placeholder, 16, 60);
+            lv_obj_set_size(s_placeholder, 208, 220);
             lv_obj_set_style_bg_color(s_placeholder, lv_color_hex(0x161B22), 0);
             lv_obj_set_style_border_color(s_placeholder, lv_color_hex(0x30363D), 0);
             lv_obj_set_style_border_width(s_placeholder, 1, 0);
             lv_obj_set_style_radius(s_placeholder, 8, 0);
             lv_obj_clear_flag(s_placeholder, LV_OBJ_FLAG_SCROLLABLE);
 
-            lv_obj_t *title = ui_system_label(s_placeholder, "暂无图片", &ui_font_noto_sc_20, UI_SYSTEM_TEXT);
+            lv_obj_t *title = ui_system_label(s_placeholder, "暂无图片", &ui_font_noto_sc_14, UI_SYSTEM_TEXT);
             lv_obj_set_width(title, 192);
             lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
             lv_obj_set_pos(title, 0, 16);
@@ -121,7 +117,7 @@ static void render_current_image(void)
                 &ui_font_noto_sc_14, UI_SYSTEM_MUTED);
             lv_obj_set_width(hint, 192);
             lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
-            lv_obj_set_pos(hint, 0, 56);
+            lv_obj_set_pos(hint, 0, 60);
         }
         lv_obj_clear_flag(s_placeholder, LV_OBJ_FLAG_HIDDEN);
     }
@@ -142,8 +138,8 @@ static void on_check_timer(lv_timer_t *timer)
 void demo_image_enter(void)
 {
     s_scr = ui_system_screen_create();
-    s_img_obj = NULL;
     s_placeholder = NULL;
+    s_img_obj = NULL;
     s_info_bar = NULL;
     s_info_label = NULL;
     s_show_info = true;
@@ -185,7 +181,6 @@ void demo_image_key(bsp_btn_t btn, bsp_btn_ev_t ev)
             }
         }
     } else if (btn == BSP_BTN_UP || btn == BSP_BTN_DOWN) {
-        // 手动触发一次强制刷新
         render_current_image();
     }
 }
