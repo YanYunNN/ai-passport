@@ -193,75 +193,62 @@ static void queue_rejection(const kiro_passport_decision_t *rejection)
     }
 }
 
+static bool extract_json_string(const char *json, const char *key, char *out, size_t max_out, const char **out_ptr, size_t *out_len)
+{
+    char search_key[32];
+    snprintf(search_key, sizeof(search_key), "\"%s\"", key);
+    const char *k = strstr(json, search_key);
+    if (!k) return false;
+    const char *colon = strchr(k + strlen(search_key), ':');
+    if (!colon) return false;
+    const char *val_start = strchr(colon, '"');
+    if (!val_start) return false;
+    val_start++; // 跳过开头的引号
+    const char *val_end = strchr(val_start, '"');
+    if (!val_end) return false;
+    size_t len = (size_t)(val_end - val_start);
+    if (out_ptr) *out_ptr = val_start;
+    if (out_len) *out_len = len;
+    if (out && max_out > 0) {
+        size_t copy_len = len < max_out - 1 ? len : max_out - 1;
+        memcpy(out, val_start, copy_len);
+        out[copy_len] = '\0';
+    }
+    return true;
+}
+
 static void process_message(const char *message)
 {
     if (!message) return;
 
     // 检查是否为图片推送消息 {"v":1,"type":"image",...}
     if (strstr(message, "\"type\":\"image\"") || strstr(message, "\"type\": \"image\"")) {
-        const char *data_key = strstr(message, "\"data\":");
-        if (data_key) {
-            const char *data_start = strchr(data_key, '"');
-            if (data_start) {
-                data_start++; // 跳过首引号
-                const char *data_end = strchr(data_start, '"');
-                if (data_end && data_end > data_start) {
-                    size_t b64_len = (size_t)(data_end - data_start);
-                    size_t olen = 0;
+        const char *data_start = NULL;
+        size_t b64_len = 0;
+        if (extract_json_string(message, "data", NULL, 0, &data_start, &b64_len) && b64_len > 0) {
+            size_t olen = 0;
+            if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
+            if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
 
-                    if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
-                    if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+            int ret = mbedtls_base64_decode(
+                s_active_image_data, sizeof(s_active_image_data), &olen,
+                (const unsigned char *)data_start, b64_len);
 
-                    int ret = mbedtls_base64_decode(
-                        s_active_image_data, sizeof(s_active_image_data), &olen,
-                        (const unsigned char *)data_start, b64_len);
+            if (ret == 0 && olen > 0) {
+                s_active_image_size = olen;
+                s_active_image_version++;
 
-                    if (ret == 0 && olen > 0) {
-                        s_active_image_size = olen;
-                        s_active_image_version++;
+                extract_json_string(message, "id", s_active_image_id, sizeof(s_active_image_id), NULL, NULL);
+                extract_json_string(message, "title", s_active_image_title, sizeof(s_active_image_title), NULL, NULL);
 
-                        // 提取 id
-                        const char *id_key = strstr(message, "\"id\":");
-                        if (id_key) {
-                            const char *is = strchr(id_key, '"');
-                            if (is) {
-                                is++;
-                                const char *ie = strchr(is, '"');
-                                if (ie && ie > is) {
-                                    size_t l = (size_t)(ie - is);
-                                    if (l >= sizeof(s_active_image_id)) l = sizeof(s_active_image_id) - 1;
-                                    memcpy(s_active_image_id, is, l);
-                                    s_active_image_id[l] = '\0';
-                                }
-                            }
-                        }
-
-                        // 提取 title
-                        const char *title_key = strstr(message, "\"title\":");
-                        if (title_key) {
-                            const char *ts = strchr(title_key, '"');
-                            if (ts) {
-                                ts++;
-                                const char *te = strchr(ts, '"');
-                                if (te && te > ts) {
-                                    size_t l = (size_t)(te - ts);
-                                    if (l >= sizeof(s_active_image_title)) l = sizeof(s_active_image_title) - 1;
-                                    memcpy(s_active_image_title, ts, l);
-                                    s_active_image_title[l] = '\0';
-                                }
-                            }
-                        }
-
-                        ESP_LOGI(TAG, "已成功接收并解码新图片: id=%s, title=%s, size=%zu bytes, v=%lu",
-                                 s_active_image_id, s_active_image_title, s_active_image_size, (unsigned long)s_active_image_version);
-                    } else {
-                        ESP_LOGE(TAG, "图片 Base64 解码失败: ret=%d, b64_len=%zu", ret, b64_len);
-                    }
-
-                    if (s_image_lock) xSemaphoreGive(s_image_lock);
-                    return;
-                }
+                ESP_LOGI(TAG, "已成功接收并解码新图片: id=%s, title=%s, size=%zu bytes, v=%lu",
+                         s_active_image_id, s_active_image_title, s_active_image_size, (unsigned long)s_active_image_version);
+            } else {
+                ESP_LOGE(TAG, "图片 Base64 解码失败: ret=%d, b64_len=%zu", ret, b64_len);
             }
+
+            if (s_image_lock) xSemaphoreGive(s_image_lock);
+            return;
         }
     }
 

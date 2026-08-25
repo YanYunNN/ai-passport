@@ -68,10 +68,19 @@ static void render_current_image(void)
             lv_obj_set_pos(s_info_label, 4, 2);
         }
 
+        if (s_info_bar) {
+            lv_obj_move_foreground(s_info_bar);
+        }
+
         if (s_info_label) {
             char desc[128];
-            snprintf(desc, sizeof(desc), "%s (%u KB)\nOK: 切换信息栏",
-                     info.title[0] ? info.title : "云端图片", (unsigned int)(info.size / 1024));
+            if (info.size >= 1024) {
+                snprintf(desc, sizeof(desc), "%s (%u KB)\nOK: 切换信息",
+                         info.title[0] ? info.title : "云端图片", (unsigned int)((info.size + 1023) / 1024));
+            } else {
+                snprintf(desc, sizeof(desc), "%s (%u B)\nOK: 切换信息",
+                         info.title[0] ? info.title : "云端图片", (unsigned int)info.size);
+            }
             lv_label_set_text(s_info_label, desc);
         }
 
@@ -94,8 +103,8 @@ static void render_current_image(void)
 
         if (!s_placeholder) {
             s_placeholder = lv_obj_create(s_scr);
-            lv_obj_set_pos(s_placeholder, 16, 60);
-            lv_obj_set_size(s_placeholder, 208, 220);
+            lv_obj_set_pos(s_placeholder, 16, 50);
+            lv_obj_set_size(s_placeholder, 208, 240);
             lv_obj_set_style_bg_color(s_placeholder, lv_color_hex(0x161B22), 0);
             lv_obj_set_style_border_color(s_placeholder, lv_color_hex(0x30363D), 0);
             lv_obj_set_style_border_width(s_placeholder, 1, 0);
@@ -112,7 +121,7 @@ static void render_current_image(void)
                 &ui_font_noto_sc_14, UI_SYSTEM_MUTED);
             lv_obj_set_width(hint, 192);
             lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
-            lv_obj_set_pos(hint, 0, 60);
+            lv_obj_set_pos(hint, 0, 56);
         }
         lv_obj_clear_flag(s_placeholder, LV_OBJ_FLAG_HIDDEN);
     }

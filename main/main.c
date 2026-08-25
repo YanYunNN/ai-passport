@@ -58,19 +58,19 @@ static void menu_build(void)
     ui_system_divider(s_menu_scr, 16, 66, 208);
 
     for (size_t i = 0; i < DEMO_COUNT; i++) {
-        int y = 78 + (int)i * 44;
-        s_cards[i] = ui_system_item_create(s_menu_scr, 16, y, 208, 38);
+        int y = 72 + (int)i * 42;
+        s_cards[i] = ui_system_item_create(s_menu_scr, 16, y, 208, 36);
         s_rows[i] = ui_system_label(s_cards[i], DEMOS[i].name,
                                     &ui_font_noto_sc_14, UI_SYSTEM_TEXT);
-        lv_obj_set_pos(s_rows[i], 16, 11);
+        lv_obj_set_pos(s_rows[i], 16, 10);
         s_status[i] = ui_system_label(s_cards[i], "", &ui_font_noto_sc_14,
                                       UI_SYSTEM_MUTED);
         lv_obj_set_width(s_status[i], 56);
         lv_obj_set_style_text_align(s_status[i], LV_TEXT_ALIGN_RIGHT, 0);
-        lv_obj_set_pos(s_status[i], 108, 11);
+        lv_obj_set_pos(s_status[i], 108, 10);
         s_indicators[i] = ui_system_label(s_cards[i], ">", &lv_font_montserrat_20,
                                            UI_SYSTEM_MUTED);
-        lv_obj_set_pos(s_indicators[i], 180, 8);
+        lv_obj_set_pos(s_indicators[i], 180, 7);
     }
 
     menu_refresh();
