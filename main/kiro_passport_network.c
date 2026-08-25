@@ -120,7 +120,12 @@ static bool ticks_reached(TickType_t deadline)
 static void set_state(kiro_passport_network_state_t state)
 {
     xSemaphoreTake(s_network.lock, portMAX_DELAY);
-    s_network.state = state;
+    if (s_network.state != state) {
+        ESP_LOGI(TAG, "Relay 网络状态变迁: %s (%d) -> %s (%d)",
+                 kiro_passport_network_state_name(s_network.state), s_network.state,
+                 kiro_passport_network_state_name(state), state);
+        s_network.state = state;
+    }
     xSemaphoreGive(s_network.lock);
 }
 
@@ -177,6 +182,7 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t event_id, 
     (void)base;
     esp_websocket_event_data_t *event = event_data;
     if (event_id == WEBSOCKET_EVENT_CONNECTED) {
+        ESP_LOGI(TAG, "Relay WebSocket 已连接成功! Session ID: %s", s_network.session_id);
         kiro_passport_set_connection(true, s_network.session_id);
         set_state(KIRO_PASSPORT_NETWORK_CONNECTED);
         const char quote = '"';
@@ -188,16 +194,27 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t event_id, 
                               quote, quote, quote, quote,
                               quote, quote, quote, s_network.config.device_id, quote,
                               quote, quote, quote, s_network.session_id, quote);
-        if (length > 0 && length < (int)sizeof(hello)) send_text(hello);
-    } else if (event_id == WEBSOCKET_EVENT_DISCONNECTED || event_id == WEBSOCKET_EVENT_CLOSED) {
+        if (length > 0 && length < (int)sizeof(hello)) {
+            ESP_LOGI(TAG, "发送 WebSocket Hello 握手: %s", hello);
+            send_text(hello);
+        }
+    } else if (event_id == WEBSOCKET_EVENT_DISCONNECTED) {
+        ESP_LOGW(TAG, "Relay WebSocket 连接断开 (DISCONNECTED)");
+        kiro_passport_set_connection(false, NULL);
+        s_network.transport_failed = true;
+        if (wifi_manager_get_state() == WIFI_MANAGER_CONNECTED) set_state(KIRO_PASSPORT_NETWORK_CONNECTING);
+    } else if (event_id == WEBSOCKET_EVENT_CLOSED) {
+        ESP_LOGW(TAG, "Relay WebSocket 会话关闭 (CLOSED)");
         kiro_passport_set_connection(false, NULL);
         s_network.transport_failed = true;
         if (wifi_manager_get_state() == WIFI_MANAGER_CONNECTED) set_state(KIRO_PASSPORT_NETWORK_CONNECTING);
     } else if (event_id == WEBSOCKET_EVENT_ERROR) {
+        ESP_LOGE(TAG, "Relay WebSocket 发生错误 (ERROR)");
         kiro_passport_set_connection(false, NULL);
         s_network.transport_failed = true;
         set_state(KIRO_PASSPORT_NETWORK_ERROR);
     } else if (event_id == WEBSOCKET_EVENT_DATA) {
+        ESP_LOGI(TAG, "Relay 收到数据 (len=%d, op=%d): %.*s", (int)event->data_len, event->op_code, (int)event->data_len, (char *)event->data_ptr);
         if (event->op_code != WS_TRANSPORT_OPCODES_TEXT || event->payload_len <= 0 ||
             event->payload_len >= KIRO_NETWORK_MESSAGE_MAX || event->payload_offset < 0 ||
             event->data_len < 0 || event->payload_offset + event->data_len > event->payload_len) {
@@ -222,6 +239,7 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t event_id, 
 static void destroy_client(void)
 {
     if (!s_network.client) return;
+    ESP_LOGI(TAG, "销毁 WebSocket 客户端");
     esp_websocket_client_stop(s_network.client);
     esp_websocket_client_destroy(s_network.client);
     s_network.client = NULL;
@@ -234,12 +252,13 @@ static esp_err_t start_client(void)
     char headers[KIRO_NETWORK_HEADER_MAX];
     int uri_length = snprintf(uri, sizeof(uri), "%s/device/%s", s_network.config.relay_url,
                               s_network.config.device_id);
-    int header_length = snprintf(headers, sizeof(headers), "Authorization: Bearer %s%c%c",
-                                 s_network.config.credential, 13, 10);
+    int header_length = snprintf(headers, sizeof(headers), "Authorization: Bearer %s\r\n",
+                                 s_network.config.credential);
     if (uri_length <= 0 || uri_length >= (int)sizeof(uri) || header_length <= 0 ||
         header_length >= (int)sizeof(headers)) return ESP_ERR_INVALID_SIZE;
 
     generate_session_id(s_network.session_id, sizeof(s_network.session_id));
+    ESP_LOGI(TAG, "正在启动 WebSocket 连接: URI=%s", uri);
     const esp_websocket_client_config_t config = {
         .uri = uri,
         .headers = headers,
@@ -259,11 +278,17 @@ static esp_err_t start_client(void)
         .keep_alive_count = 3,
     };
     s_network.client = esp_websocket_client_init(&config);
-    if (!s_network.client) return ESP_ERR_NO_MEM;
+    if (!s_network.client) {
+        ESP_LOGE(TAG, "WebSocket 客户端内存初始化失败");
+        return ESP_ERR_NO_MEM;
+    }
     esp_err_t result = esp_websocket_register_events(s_network.client, WEBSOCKET_EVENT_ANY,
                                                       websocket_event, NULL);
     if (result == ESP_OK) result = esp_websocket_client_start(s_network.client);
-    if (result != ESP_OK) destroy_client();
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "WebSocket 启动失败: %s", esp_err_to_name(result));
+        destroy_client();
+    }
     return result;
 }
 
@@ -377,6 +402,7 @@ static bool parse_credential_response(const char *body, const char *device_id, c
 
 static void enrollment_fail(esp_err_t error)
 {
+    ESP_LOGE(TAG, "Enrollment 失败: %s (%d)", esp_err_to_name(error), error);
     xSemaphoreTake(s_network.lock, portMAX_DELAY);
     clear_secret(s_network.device_code, sizeof(s_network.device_code));
     s_network.enrollment.user_code[0] = '\0';
@@ -403,9 +429,11 @@ static void request_device_code(void)
     int length = snprintf(request, sizeof(request), "{\"device_id\":\"%s\"}", device_id);
     http_response_t response;
     int status = 0;
+    ESP_LOGI(TAG, "发起配对码申请: device_id=%s", device_id);
     esp_err_t result = length > 0 && length < (int)sizeof(request) ?
         post_enrollment("device-code", request, &response, &status) : ESP_ERR_INVALID_SIZE;
     clear_secret(request, sizeof(request));
+    ESP_LOGI(TAG, "配对码申请响应: HTTP %d, err=%s, body=%s", status, esp_err_to_name(result), response.data);
     if (result != ESP_OK || status != 201) {
         clear_secret(&response, sizeof(response));
         enrollment_fail(result == ESP_OK ? ESP_ERR_INVALID_RESPONSE : result);
@@ -433,6 +461,7 @@ static void request_device_code(void)
     s_network.enrollment.state = KIRO_PASSPORT_ENROLLMENT_WAITING_APPROVAL;
     s_network.enrollment_expires_at = xTaskGetTickCount() + pdMS_TO_TICKS(expires_in * 1000U);
     s_network.enrollment_next_poll_at = xTaskGetTickCount() + pdMS_TO_TICKS(interval * 1000U);
+    ESP_LOGI(TAG, "已获得配对码: user_code=%s, 有效期=%lu秒, 轮询间隔=%lu秒", user_code, (unsigned long)expires_in, (unsigned long)interval);
     xSemaphoreGive(s_network.lock);
     clear_secret(device_code, sizeof(device_code));
     clear_secret(user_code, sizeof(user_code));
@@ -450,6 +479,7 @@ static void poll_device_code(void)
     }
     if (ticks_reached(s_network.enrollment_expires_at)) {
         xSemaphoreGive(s_network.lock);
+        ESP_LOGW(TAG, "配对码已超时未完成审批");
         enrollment_fail(ESP_ERR_TIMEOUT);
         return;
     }
@@ -467,6 +497,7 @@ static void poll_device_code(void)
     clear_secret(request, sizeof(request));
     clear_secret(device_code, sizeof(device_code));
     if (result != ESP_OK) {
+        ESP_LOGW(TAG, "轮询 Token 网络请求失败: %s", esp_err_to_name(result));
         xSemaphoreTake(s_network.lock, portMAX_DELAY);
         if (s_network.enrollment.state == KIRO_PASSPORT_ENROLLMENT_WAITING_APPROVAL) {
             s_network.enrollment_next_poll_at = xTaskGetTickCount() +
@@ -478,8 +509,9 @@ static void poll_device_code(void)
     }
 
     uint32_t interval = 0;
-    if ((status == 428 && parse_pending_response(response.data, "authorization_pending", &interval)) ||
+    if (((status == 428 || status == 400) && parse_pending_response(response.data, "authorization_pending", &interval)) ||
         (status == 429 && parse_pending_response(response.data, "slow_down", &interval))) {
+        ESP_LOGI(TAG, "轮询等待中 (status=%d, interval=%lu秒)", status, (unsigned long)interval);
         xSemaphoreTake(s_network.lock, portMAX_DELAY);
         if (s_network.enrollment.state == KIRO_PASSPORT_ENROLLMENT_WAITING_APPROVAL) {
             s_network.enrollment_next_poll_at = xTaskGetTickCount() + pdMS_TO_TICKS(interval * 1000U);
@@ -489,17 +521,20 @@ static void poll_device_code(void)
         return;
     }
     if (status != 201) {
+        ESP_LOGE(TAG, "轮询收到非预期状态: status=%d, body=%s", status, response.data);
         clear_secret(&response, sizeof(response));
         enrollment_fail(ESP_ERR_INVALID_RESPONSE);
         return;
     }
 
+    ESP_LOGI(TAG, "审批通过! 收到 201 凭证响应");
     char credential[KIRO_PASSPORT_CREDENTIAL_MAX] = { 0 };
     bool valid = parse_credential_response(response.data, device_id, credential);
     clear_secret(&response, sizeof(response));
     esp_err_t save_result = valid ? kiro_passport_network_configure(KIRO_ENROLLMENT_RELAY_URL, credential) :
                                     ESP_ERR_INVALID_RESPONSE;
     clear_secret(credential, sizeof(credential));
+    ESP_LOGI(TAG, "配置保存结果: valid=%d, save_result=%s", (int)valid, esp_err_to_name(save_result));
     if (save_result != ESP_OK) {
         enrollment_fail(save_result);
         return;

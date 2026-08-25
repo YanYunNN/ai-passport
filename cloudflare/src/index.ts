@@ -876,7 +876,7 @@ async function exchangeDeviceCode(request: Request, env: Env): Promise<Response>
             "UPDATE device_enrollments SET last_polled_at = ?1 WHERE enrollment_id = ?2 AND status = 'pending' " +
             "AND (last_polled_at IS NULL OR ?1 - last_polled_at >= poll_interval_seconds)",
         ).bind(now, enrollment.enrollment_id).run();
-        return json({ error: "authorization_pending", interval: enrollment.poll_interval_seconds }, 400);
+        return json({ error: "authorization_pending", interval: enrollment.poll_interval_seconds }, 428);
     }
 
     if (enrollment.status === "approved") {

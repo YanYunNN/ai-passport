@@ -80,10 +80,10 @@ export async function verifyAdminBasicAuth(request: Request, env: Env): Promise<
 }
 
 export function bearerToken(request: Request): string | null {
-    const value = request.headers.get("Authorization");
+    const value = request.headers.get("Authorization")?.trim();
     if (!value?.startsWith("Bearer ")) return null;
-    const token = value.slice("Bearer ".length);
-    return token && !/[\r\n]/u.test(token) ? token : null;
+    const token = value.slice("Bearer ".length).trim();
+    return token && !/[\r\n\s]/u.test(token) ? token : null;
 }
 
 export function hasBearerSecret(request: Request, expectedSecret: string): boolean {
