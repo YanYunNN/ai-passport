@@ -56,3 +56,14 @@ void kiro_passport_network_get_enrollment(kiro_passport_enrollment_snapshot_t *s
 
 kiro_passport_network_state_t kiro_passport_network_get_state(void);
 const char *kiro_passport_network_state_name(kiro_passport_network_state_t state);
+
+typedef struct {
+    char id[64];
+    char title[64];
+    const uint8_t *data;
+    size_t size;
+    uint32_t version;
+} kiro_passport_image_info_t;
+
+/* 获取当前接收到的图片信息，若无图片返回 false */
+bool kiro_passport_network_get_image(kiro_passport_image_info_t *out_info);

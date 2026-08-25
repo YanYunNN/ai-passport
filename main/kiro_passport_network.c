@@ -15,9 +15,33 @@
 #include "nvs.h"
 #include "time_sync.h"
 #include "wifi_manager.h"
+#include "mbedtls/base64.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+
+static uint8_t s_active_image_data[32768];
+static size_t s_active_image_size = 0;
+static char s_active_image_id[64] = {0};
+static char s_active_image_title[64] = {0};
+static uint32_t s_active_image_version = 0;
+static SemaphoreHandle_t s_image_lock = NULL;
+static char *s_rx_buffer = NULL;
+static size_t s_rx_len = 0;
+
+bool kiro_passport_network_get_image(kiro_passport_image_info_t *out_info)
+{
+    if (!out_info || s_active_image_size == 0) return false;
+    if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
+    if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+    out_info->size = s_active_image_size;
+    out_info->data = s_active_image_data;
+    out_info->version = s_active_image_version;
+    strlcpy(out_info->id, s_active_image_id, sizeof(out_info->id));
+    strlcpy(out_info->title, s_active_image_title, sizeof(out_info->title));
+    if (s_image_lock) xSemaphoreGive(s_image_lock);
+    return true;
+}
 
 #define KIRO_NETWORK_NAMESPACE "passport"
 #define KIRO_NETWORK_CONFIG_KEY "network"
@@ -171,6 +195,76 @@ static void queue_rejection(const kiro_passport_decision_t *rejection)
 
 static void process_message(const char *message)
 {
+    if (!message) return;
+
+    // 检查是否为图片推送消息 {"v":1,"type":"image",...}
+    if (strstr(message, "\"type\":\"image\"") || strstr(message, "\"type\": \"image\"")) {
+        const char *data_key = strstr(message, "\"data\":");
+        if (data_key) {
+            const char *data_start = strchr(data_key, '"');
+            if (data_start) {
+                data_start++; // 跳过首引号
+                const char *data_end = strchr(data_start, '"');
+                if (data_end && data_end > data_start) {
+                    size_t b64_len = (size_t)(data_end - data_start);
+                    size_t olen = 0;
+
+                    if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
+                    if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+
+                    int ret = mbedtls_base64_decode(
+                        s_active_image_data, sizeof(s_active_image_data), &olen,
+                        (const unsigned char *)data_start, b64_len);
+
+                    if (ret == 0 && olen > 0) {
+                        s_active_image_size = olen;
+                        s_active_image_version++;
+
+                        // 提取 id
+                        const char *id_key = strstr(message, "\"id\":");
+                        if (id_key) {
+                            const char *is = strchr(id_key, '"');
+                            if (is) {
+                                is++;
+                                const char *ie = strchr(is, '"');
+                                if (ie && ie > is) {
+                                    size_t l = (size_t)(ie - is);
+                                    if (l >= sizeof(s_active_image_id)) l = sizeof(s_active_image_id) - 1;
+                                    memcpy(s_active_image_id, is, l);
+                                    s_active_image_id[l] = '\0';
+                                }
+                            }
+                        }
+
+                        // 提取 title
+                        const char *title_key = strstr(message, "\"title\":");
+                        if (title_key) {
+                            const char *ts = strchr(title_key, '"');
+                            if (ts) {
+                                ts++;
+                                const char *te = strchr(ts, '"');
+                                if (te && te > ts) {
+                                    size_t l = (size_t)(te - ts);
+                                    if (l >= sizeof(s_active_image_title)) l = sizeof(s_active_image_title) - 1;
+                                    memcpy(s_active_image_title, ts, l);
+                                    s_active_image_title[l] = '\0';
+                                }
+                            }
+                        }
+
+                        ESP_LOGI(TAG, "已成功接收并解码新图片: id=%s, title=%s, size=%zu bytes, v=%lu",
+                                 s_active_image_id, s_active_image_title, s_active_image_size, (unsigned long)s_active_image_version);
+                    } else {
+                        ESP_LOGE(TAG, "图片 Base64 解码失败: ret=%d, b64_len=%zu", ret, b64_len);
+                    }
+
+                    if (s_image_lock) xSemaphoreGive(s_image_lock);
+                    return;
+                }
+            }
+        }
+    }
+
     kiro_passport_decision_t rejection;
     kiro_passport_request_result_t result = kiro_passport_submit_request(message, time(NULL), &rejection);
     if (result != KIRO_PASSPORT_REQUEST_ACCEPTED) queue_rejection(&rejection);
@@ -214,24 +308,36 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t event_id, 
         s_network.transport_failed = true;
         set_state(KIRO_PASSPORT_NETWORK_ERROR);
     } else if (event_id == WEBSOCKET_EVENT_DATA) {
-        ESP_LOGI(TAG, "Relay 收到数据 (len=%d, op=%d): %.*s", (int)event->data_len, event->op_code, (int)event->data_len, (char *)event->data_ptr);
-        if (event->op_code != WS_TRANSPORT_OPCODES_TEXT || event->payload_len <= 0 ||
-            event->payload_len >= KIRO_NETWORK_MESSAGE_MAX || event->payload_offset < 0 ||
+        ESP_LOGI(TAG, "Relay 收到数据 (len=%d, op=%d, offset=%d, total=%d, fin=%d)",
+                 (int)event->data_len, event->op_code, (int)event->payload_offset, (int)event->payload_len, (int)event->fin);
+
+        if (event->op_code == WS_TRANSPORT_OPCODES_PING || event->op_code == WS_TRANSPORT_OPCODES_PONG) {
+            return;
+        }
+
+        if ((event->op_code != WS_TRANSPORT_OPCODES_TEXT && event->op_code != WS_TRANSPORT_OPCODES_CONT && event->op_code != 0) ||
+            event->payload_len <= 0 || event->payload_len >= 65536 || event->payload_offset < 0 ||
             event->data_len < 0 || event->payload_offset + event->data_len > event->payload_len) {
-            s_network.message_length = 0;
+            if (s_rx_buffer) { free(s_rx_buffer); s_rx_buffer = NULL; }
+            s_rx_len = 0;
             return;
         }
-        if (event->payload_offset == 0) s_network.message_length = 0;
-        if ((size_t)event->payload_offset != s_network.message_length) {
-            s_network.message_length = 0;
-            return;
+        if (event->payload_offset == 0 || !s_rx_buffer) {
+            if (s_rx_buffer) free(s_rx_buffer);
+            s_rx_buffer = malloc(event->payload_len + 1);
+            s_rx_len = 0;
         }
-        memcpy(s_network.message + event->payload_offset, event->data_ptr, event->data_len);
-        s_network.message_length += (size_t)event->data_len;
-        if (event->fin && s_network.message_length == (size_t)event->payload_len) {
-            s_network.message[s_network.message_length] = '\0';
-            process_message(s_network.message);
-            s_network.message_length = 0;
+        if (s_rx_buffer && (size_t)event->payload_offset == s_rx_len) {
+            memcpy(s_rx_buffer + event->payload_offset, event->data_ptr, event->data_len);
+            s_rx_len += (size_t)event->data_len;
+        }
+        if (s_rx_buffer && s_rx_len == (size_t)event->payload_len) {
+            s_rx_buffer[s_rx_len] = '\0';
+            ESP_LOGI(TAG, "Relay 完整消息接收完毕 (total=%zu bytes)，正在处理...", s_rx_len);
+            process_message(s_rx_buffer);
+            free(s_rx_buffer);
+            s_rx_buffer = NULL;
+            s_rx_len = 0;
         }
     }
 }
@@ -267,7 +373,7 @@ static esp_err_t start_client(void)
         .enable_close_reconnect = false,
         .reconnect_timeout_ms = KIRO_NETWORK_RECONNECT_MS,
         .network_timeout_ms = 10000,
-        .buffer_size = KIRO_NETWORK_MESSAGE_MAX,
+        .buffer_size = 4096,
         .task_stack = 6144,
         .task_prio = 5,
         .ping_interval_sec = 20,

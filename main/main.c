@@ -20,13 +20,11 @@
 static const char *TAG = "main";
 
 static const demo_entry_t DEMOS[] = {
-    { "显示", demo_display_enter, demo_display_exit, demo_display_key },
-    { "按键", demo_button_enter, demo_button_exit, demo_button_key },
-    { "音频", demo_audio_enter, demo_audio_exit, demo_audio_key },
-    { "电量", demo_battery_enter, demo_battery_exit, demo_battery_key },
-    { "阅读", demo_reader_enter, demo_reader_exit, demo_reader_key },
-    { "设置", demo_settings_enter, demo_settings_exit, demo_settings_key },
-    { "Kiro", demo_kiro_passport_enter, demo_kiro_passport_exit, demo_kiro_passport_key },
+    { "阅读", demo_reader_enter, demo_reader_exit, demo_reader_key, NULL },
+    { "图片", demo_image_enter, demo_image_exit, demo_image_key, NULL },
+    { "设置", demo_settings_enter, demo_settings_exit, demo_settings_key, NULL },
+    { "Kiro", demo_kiro_passport_enter, demo_kiro_passport_exit, demo_kiro_passport_key, NULL },
+    { "内置", demo_builtin_enter, demo_builtin_exit, demo_builtin_key, demo_builtin_back },
 };
 #define DEMO_COUNT (sizeof(DEMOS) / sizeof(DEMOS[0]))
 
@@ -60,19 +58,19 @@ static void menu_build(void)
     ui_system_divider(s_menu_scr, 16, 66, 208);
 
     for (size_t i = 0; i < DEMO_COUNT; i++) {
-        int y = 68 + (int)i * 36;
-        s_cards[i] = ui_system_item_create(s_menu_scr, 16, y, 208, 36);
+        int y = 78 + (int)i * 44;
+        s_cards[i] = ui_system_item_create(s_menu_scr, 16, y, 208, 38);
         s_rows[i] = ui_system_label(s_cards[i], DEMOS[i].name,
                                     &ui_font_noto_sc_14, UI_SYSTEM_TEXT);
-        lv_obj_set_pos(s_rows[i], 16, 10);
+        lv_obj_set_pos(s_rows[i], 16, 11);
         s_status[i] = ui_system_label(s_cards[i], "", &ui_font_noto_sc_14,
                                       UI_SYSTEM_MUTED);
         lv_obj_set_width(s_status[i], 56);
         lv_obj_set_style_text_align(s_status[i], LV_TEXT_ALIGN_RIGHT, 0);
-        lv_obj_set_pos(s_status[i], 108, 10);
+        lv_obj_set_pos(s_status[i], 108, 11);
         s_indicators[i] = ui_system_label(s_cards[i], ">", &lv_font_montserrat_20,
                                            UI_SYSTEM_MUTED);
-        lv_obj_set_pos(s_indicators[i], 180, 7);
+        lv_obj_set_pos(s_indicators[i], 180, 8);
     }
 
     menu_refresh();
@@ -94,8 +92,12 @@ static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user)
 
     if (s_active >= 0) {
         if (btn == BSP_BTN_OK && ev == BSP_BTN_LONG) {
-            DEMOS[s_active].exit();
-            enter_menu();
+            if (DEMOS[s_active].back && DEMOS[s_active].back()) {
+                // Handled internally by sub-level navigation
+            } else {
+                DEMOS[s_active].exit();
+                enter_menu();
+            }
         } else {
             DEMOS[s_active].key(btn, ev);
         }
@@ -150,13 +152,17 @@ void app_main(void)
     }
     bsp_display_backlight(app_settings_get_brightness_percent());
 
-    s_ok[0] = true;
-    s_ok[1] = (bsp_button_init(on_key, NULL) == ESP_OK);
-    s_ok[2] = (bsp_audio_init() == ESP_OK);
-    s_ok[3] = (bsp_battery_init() == ESP_OK);
-    s_ok[4] = true;
-    s_ok[5] = true;
-    s_ok[6] = true;
+    bool button_ok = (bsp_button_init(on_key, NULL) == ESP_OK);
+    bool audio_ok = (bsp_audio_init() == ESP_OK);
+    bool batt_ok = (bsp_battery_init() == ESP_OK);
+
+    s_ok[0] = true; // 阅读
+    s_ok[1] = true; // 图片
+    s_ok[2] = true; // 设置
+    s_ok[3] = true; // Kiro (will update below)
+    s_ok[4] = true; // 内置
+
+    demo_builtin_set_on_exit(enter_menu);
 
     esp_err_t wifi_enable_result = wifi_manager_set_enabled(settings->wifi_enabled);
     if (wifi_enable_result != ESP_OK) {
@@ -174,7 +180,7 @@ void app_main(void)
     }
 
     esp_err_t passport_result = kiro_passport_network_init();
-    s_ok[6] = (passport_result == ESP_OK);
+    s_ok[3] = (passport_result == ESP_OK);
     if (passport_result != ESP_OK) {
         ESP_LOGW(TAG, "Kiro Passport Wi-Fi 初始化失败: %s", esp_err_to_name(passport_result));
     }
@@ -188,7 +194,7 @@ void app_main(void)
         bsp_lvgl_unlock();
     }
 
-    ESP_LOGI(TAG, "就绪:显示=%d 按键=%d 音频=%d 电量=%d 阅读=%d 设置=%d Kiro=%d Wi-Fi=%d",
-             s_ok[0], s_ok[1], s_ok[2], s_ok[3], s_ok[4], s_ok[5], s_ok[6],
+    ESP_LOGI(TAG, "就绪:按键=%d 音频=%d 电量=%d 阅读=%d 设置=%d Kiro=%d 内置=%d Wi-Fi=%d",
+             button_ok, audio_ok, batt_ok, s_ok[0], s_ok[1], s_ok[2], s_ok[3],
              wifi_result == ESP_OK);
 }

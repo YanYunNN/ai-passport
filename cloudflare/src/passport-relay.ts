@@ -84,11 +84,37 @@ export class PassportRelay extends DurableObject<Env> {
             return this.getRequest(request, url.pathname.slice("/internal/requests/".length));
         }
         if (request.method === "POST" && url.pathname === "/internal/revoke") return this.revoke(request);
+        if (request.method === "POST" && url.pathname === "/internal/send-image") return this.sendImage(request);
         if (request.method === "GET" && url.pathname === "/internal/status") {
             const openSockets = this.ctx.getWebSockets();
             return json({ online: openSockets.length > 0 || this.sockets.size > 0 });
         }
         return json({ error: "not found" }, 404);
+    }
+
+    private async sendImage(request: Request): Promise<Response> {
+        const payload = await request.json<{ imageId: string; title?: string; data: string }>().catch(() => null);
+        if (!payload || typeof payload.data !== "string" || typeof payload.imageId !== "string") {
+            return json({ error: "invalid image payload" }, 400);
+        }
+        const sockets = this.ctx.getWebSockets();
+        const allSockets = new Set([...sockets, ...this.sockets.keys()]);
+        if (allSockets.size === 0) {
+            return json({ sent: false, online: false });
+        }
+        const msg = JSON.stringify({
+            v: 1,
+            type: "image",
+            id: payload.imageId,
+            title: payload.title || "Image",
+            data: payload.data,
+        });
+        for (const socket of allSockets) {
+            try {
+                socket.send(msg);
+            } catch {}
+        }
+        return json({ sent: true, online: true });
     }
 
     async alarm(): Promise<void> {

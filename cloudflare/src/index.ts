@@ -48,6 +48,14 @@ interface PendingEnrollmentRow {
     created_at: number;
 }
 
+interface DeviceImageRow {
+    image_id: string;
+    device_id: string;
+    title: string | null;
+    image_data: string;
+    created_at: number;
+}
+
 const json = (body: unknown, status = 200, additionalHeaders?: HeadersInit): Response => {
     const headers = new Headers({ "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
     if (additionalHeaders) {
@@ -75,6 +83,12 @@ export default {
             }
             if (request.method === "POST" && url.pathname === "/admin/devices/delete") {
                 return adminDeleteDeviceWeb(request, env);
+            }
+            if (request.method === "POST" && url.pathname === "/admin/devices/images/push") {
+                return adminPushImageWeb(request, env);
+            }
+            if (request.method === "POST" && url.pathname === "/admin/devices/images/delete") {
+                return adminDeleteImageWeb(request, env);
             }
 
             if (request.method === "GET" && url.pathname === "/activate") return activationPage();
@@ -186,7 +200,7 @@ body {
     padding: 2rem 1rem;
 }
 .container {
-    max-width: 900px;
+    max-width: 960px;
     margin: 0 auto;
 }
 header {
@@ -293,6 +307,95 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .code-input:focus { outline: none; border-color: var(--accent); }
 .notice { background: rgba(56, 139, 253, 0.1); border: 1px solid rgba(56, 139, 253, 0.3); color: #58a6ff; padding: 1rem; border-radius: 6px; margin-bottom: 1.5rem; }
 .desc { color: var(--text-muted); margin-bottom: 1.5rem; }
+
+/* Image Studio Styles */
+.image-studio {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 1.5rem;
+    padding: 1.25rem;
+}
+@media (max-width: 680px) {
+    .image-studio { grid-template-columns: 1fr; }
+}
+.preview-pane {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+}
+.screen-frame {
+    width: 240px;
+    height: 320px;
+    border-radius: 6px;
+    background: #000;
+    border: 2px solid #30363d;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+.screen-frame canvas {
+    width: 240px;
+    height: 320px;
+    display: block;
+}
+.screen-placeholder {
+    color: #484f58;
+    text-align: center;
+    font-size: 0.85rem;
+    padding: 1rem;
+}
+.upload-pane {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+.form-group { display: flex; flex-direction: column; gap: 0.35rem; }
+.form-input, .form-select {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.6rem 0.75rem;
+    color: var(--text);
+    font-size: 0.9rem;
+}
+.form-input:focus, .form-select:focus { outline: none; border-color: var(--accent); }
+.gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1rem;
+    padding: 1.25rem;
+}
+.gallery-item {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.gallery-thumb {
+    width: 100%;
+    height: 180px;
+    object-fit: cover;
+    background: #000;
+}
+.gallery-info {
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    flex: 1;
+}
+.gallery-title { font-weight: 600; font-size: 0.85rem; word-break: break-all; }
+.gallery-date { font-size: 0.75rem; color: var(--text-muted); }
+.gallery-actions { display: flex; gap: 0.5rem; margin-top: auto; padding-top: 0.5rem; }
 </style>
 </head>
 <body>
@@ -304,7 +407,7 @@ tr:hover td { background: rgba(255,255,255,0.02); }
     const headers = new Headers({
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store",
-        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        "Content-Security-Policy": "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; img-src 'self' data:; script-src 'unsafe-inline'",
         "Referrer-Policy": "no-referrer",
         "X-Content-Type-Options": "nosniff",
     });
@@ -329,6 +432,10 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
         "SELECT enrollment_id, device_id, status, expires_at, created_at FROM device_enrollments WHERE status = 'pending' AND expires_at > ?1 ORDER BY created_at DESC"
     ).bind(now).all<PendingEnrollmentRow>()).results;
 
+    const images = (await env.DB.prepare(
+        "SELECT image_id, device_id, title, image_data, created_at FROM device_images ORDER BY created_at DESC LIMIT 12"
+    ).all<DeviceImageRow>()).results;
+
     const deviceList = await Promise.all(devices.map(async (d) => {
         const online = await checkDeviceOnline(env, d.device_id);
         return { ...d, online };
@@ -340,8 +447,10 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
     const pendingCount = pendings.length;
 
     let devicesRows = "";
+    let deviceOptions = "";
     if (deviceList.length === 0) {
         devicesRows = `<tr><td colspan="6" class="empty-state">暂无已绑定的设备。点击上方「配对新设备」开始添加。</td></tr>`;
+        deviceOptions = `<option value="">请先配对设备</option>`;
     } else {
         for (const d of deviceList) {
             const statusBadge = d.status === "active"
@@ -350,6 +459,8 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             const onlineDot = d.online
                 ? `<span class="badge badge-active"><span class="dot dot-online"></span> 在线</span>`
                 : `<span class="badge" style="color: var(--text-muted);"><span class="dot dot-offline"></span> 离线</span>`;
+
+            deviceOptions += `<option value="${escapeHtml(d.device_id)}">${escapeHtml(d.device_id)} (${d.online ? '🟢 在线' : '⚪ 离线'})</option>`;
 
             devicesRows += `
             <tr>
@@ -375,36 +486,26 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
         }
     }
 
-    let pendingSection = "";
-    if (pendings.length > 0) {
-        let pendingRows = "";
-        for (const p of pendings) {
-            const timeLeft = Math.max(0, p.expires_at - now);
-            pendingRows += `
-            <tr>
-                <td><span class="code-mono">${escapeHtml(p.device_id)}</span></td>
-                <td>${formatDate(p.created_at)}</td>
-                <td>剩余 ${timeLeft} 秒</td>
-                <td><a href="/admin/pair" class="btn btn-sm btn-primary">输入配对码绑定</a></td>
-            </tr>`;
+    let galleryHtml = "";
+    if (images.length === 0) {
+        galleryHtml = `<div class="empty-state" style="grid-column: 1/-1;">暂无已推送的图片历史。请在上方选择图片并发送。</div>`;
+    } else {
+        for (const img of images) {
+            const dataUrl = `data:image/jpeg;base64,${img.image_data}`;
+            galleryHtml += `
+            <div class="gallery-item">
+                <img src="${dataUrl}" class="gallery-thumb" alt="${escapeHtml(img.title || 'Image')}">
+                <div class="gallery-info">
+                    <div class="gallery-title">${escapeHtml(img.title || '未命名图片')}</div>
+                    <div class="gallery-date"><span class="code-mono" style="font-size:0.75rem;">${escapeHtml(img.device_id)}</span></div>
+                    <div class="gallery-date">${formatDate(img.created_at)}</div>
+                    <div class="gallery-actions">
+                        <button type="button" class="btn btn-sm btn-primary" onclick="repushImage('${escapeHtml(img.device_id)}', '${escapeHtml(img.title || 'Image')}', '${img.image_data}')">🚀 重新推送</button>
+                        <button type="button" class="btn btn-sm btn-danger" onclick="deleteImage('${img.image_id}')">删除</button>
+                    </div>
+                </div>
+            </div>`;
         }
-        pendingSection = `
-        <div class="card" style="border-color: rgba(56, 139, 253, 0.4);">
-            <div class="card-header" style="background: rgba(56, 139, 253, 0.08);">
-                <div class="card-title" style="color: #58a6ff;">⏳ 待配对申请 (${pendingCount})</div>
-            </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>申请设备 ID</th>
-                        <th>申请时间</th>
-                        <th>有效倒计时</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>${pendingRows}</tbody>
-            </table>
-        </div>`;
     }
 
     const content = `
@@ -438,7 +539,50 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             </div>
         </div>
 
-        ${pendingSection}
+        <!-- 📸 图片工作台 (Image Studio) -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">📸 图片推送工作台 (Image Studio - 240×320)</div>
+            </div>
+            <div class="image-studio">
+                <div class="preview-pane">
+                    <div class="screen-frame" id="screenFrame">
+                        <div class="screen-placeholder" id="placeholder">
+                            📱 240 × 320 预览<br><span style="font-size:0.75rem; color:#6e7681;">请选择要推送的图片</span>
+                        </div>
+                        <canvas id="previewCanvas" width="240" height="320" style="display:none;"></canvas>
+                    </div>
+                    <div id="sizeBadge" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.75rem;">大小: 0 KB</div>
+                </div>
+                <div class="upload-pane">
+                    <div class="form-group">
+                        <label class="form-label">目标设备</label>
+                        <select id="targetDevice" class="form-select">${deviceOptions}</select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">图片标题 / 描述</label>
+                        <input id="imageTitle" type="text" class="form-input" placeholder="例如：今日封面、日程安排" maxlength="32" value="壁纸封面">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">选择本地图片 (自动缩放裁剪至 240×320)</label>
+                        <input id="filePicker" type="file" accept="image/*" class="form-input">
+                    </div>
+                    <button type="button" id="pushBtn" class="btn btn-primary" style="padding: 0.75rem; font-size: 1rem;" onclick="pushCurrentCanvas()">
+                        🚀 立即推送到设备屏幕
+                    </button>
+                    <div id="statusAlert" style="display:none; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem;"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">🖼️ 历史图片库</div>
+            </div>
+            <div class="gallery-grid">
+                ${galleryHtml}
+            </div>
+        </div>
 
         <div class="card">
             <div class="card-header">
@@ -458,9 +602,190 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 <tbody>${devicesRows}</tbody>
             </table>
         </div>
+
+        <script>
+        let currentBase64 = "";
+
+        const filePicker = document.getElementById("filePicker");
+        const canvas = document.getElementById("previewCanvas");
+        const ctx = canvas.getContext("2d");
+        const placeholder = document.getElementById("placeholder");
+        const sizeBadge = document.getElementById("sizeBadge");
+
+        filePicker.addEventListener("change", function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    // 居中等比例缩放并裁剪为 240 x 320
+                    const targetW = 240;
+                    const targetH = 320;
+                    const targetRatio = targetW / targetH;
+                    const imgRatio = img.width / img.height;
+
+                    let sw, sh, sx, sy;
+                    if (imgRatio > targetRatio) {
+                        sh = img.height;
+                        sw = img.height * targetRatio;
+                        sx = (img.width - sw) / 2;
+                        sy = 0;
+                    } else {
+                        sw = img.width;
+                        sh = img.width / targetRatio;
+                        sx = 0;
+                        sy = (img.height - sh) / 2;
+                    }
+
+                    canvas.width = targetW;
+                    canvas.height = targetH;
+                    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetW, targetH);
+
+                    // 转为高质量 JPEG
+                    currentBase64 = canvas.toDataURL("image/jpeg", 0.85);
+                    placeholder.style.display = "none";
+                    canvas.style.display = "block";
+
+                    const rawLength = currentBase64.length * 3 / 4;
+                    sizeBadge.innerText = "压缩大小: " + (rawLength / 1024).toFixed(1) + " KB (240×320 JPEG)";
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        async function pushCurrentCanvas() {
+            if (!currentBase64) {
+                alert("请先选择一张图片！");
+                return;
+            }
+            const deviceId = document.getElementById("targetDevice").value;
+            if (!deviceId) {
+                alert("请选择目标设备！");
+                return;
+            }
+            const title = document.getElementById("imageTitle").value || "Image";
+            await sendPushRequest(deviceId, title, currentBase64);
+        }
+
+        async function repushImage(deviceId, title, rawBase64) {
+            await sendPushRequest(deviceId, title, rawBase64);
+        }
+
+        async function sendPushRequest(deviceId, title, imageData) {
+            const btn = document.getElementById("pushBtn");
+            const alertBox = document.getElementById("statusAlert");
+            btn.disabled = true;
+            btn.innerText = "正在推送中...";
+            alertBox.style.display = "none";
+
+            try {
+                const res = await fetch("/admin/devices/images/push", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ device_id: deviceId, title, image_data: imageData })
+                });
+                const result = await res.json();
+                alertBox.style.display = "block";
+                if (result.ok) {
+                    if (result.online && result.sent) {
+                        alertBox.style.background = "rgba(46, 160, 67, 0.15)";
+                        alertBox.style.border = "1px solid rgba(46, 160, 67, 0.3)";
+                        alertBox.style.color = "#3fb950";
+                        alertBox.innerHTML = "✅ <strong>推送成功！</strong> 图片已通过 WebSocket 实时推送到设备屏幕并存入历史。";
+                    } else {
+                        alertBox.style.background = "rgba(235, 179, 56, 0.15)";
+                        alertBox.style.border = "1px solid rgba(235, 179, 56, 0.3)";
+                        alertBox.style.color = "#d29922";
+                        alertBox.innerHTML = "💾 <strong>图片已保存！</strong> 设备当前处于离线态，开机连接后可查看。";
+                    }
+                } else {
+                    alertBox.style.background = "rgba(248, 81, 73, 0.15)";
+                    alertBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
+                    alertBox.style.color = "#f85149";
+                    alertBox.innerHTML = "❌ 推送失败: " + (result.error || "未知错误");
+                }
+            } catch (err) {
+                alert("网络请求失败: " + err);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "🚀 立即推送到设备屏幕";
+            }
+        }
+
+        async function deleteImage(imageId) {
+            if (!confirm("确定要删除此图片吗？")) return;
+            try {
+                const res = await fetch("/admin/devices/images/delete", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ image_id: imageId })
+                });
+                const result = await res.json();
+                if (result.ok) {
+                    location.reload();
+                } else {
+                    alert("删除失败: " + result.error);
+                }
+            } catch (err) {
+                alert("网络请求失败: " + err);
+            }
+        }
+        </script>
     `;
 
     return htmlPage("管理控制台", content);
+}
+
+async function adminPushImageWeb(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const body = await request.json<{ device_id: string; title?: string; image_data: string }>().catch(() => null);
+    if (!body || !isDeviceId(body.device_id) || typeof body.image_data !== "string" || !body.image_data) {
+        return json({ error: "invalid image data" }, 400);
+    }
+    const imageId = crypto.randomUUID();
+    const now = nowSeconds();
+    const title = (body.title || "Image").slice(0, 64);
+
+    let rawBase64 = body.image_data;
+    if (rawBase64.includes(",")) {
+        rawBase64 = rawBase64.split(",")[1];
+    }
+
+    await env.DB.prepare(
+        "INSERT INTO device_images (image_id, device_id, title, image_data, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+    ).bind(imageId, body.device_id, title, rawBase64, now).run();
+
+    let sent = false;
+    let online = false;
+    try {
+        const relay = env.PASSPORTS.get(env.PASSPORTS.idFromName(body.device_id));
+        const res = await relay.fetch("https://passport.internal/internal/send-image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ imageId, title, data: rawBase64 }),
+        });
+        if (res.ok) {
+            const data = await res.json<{ sent?: boolean; online?: boolean }>();
+            sent = Boolean(data?.sent);
+            online = Boolean(data?.online);
+        }
+    } catch (err) {
+        console.error("Relay send-image failed", err);
+    }
+
+    return json({ ok: true, image_id: imageId, sent, online });
+}
+
+async function adminDeleteImageWeb(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const body = await request.json<{ image_id: string }>().catch(() => null);
+    if (!body || typeof body.image_id !== "string") return json({ error: "invalid image_id" }, 400);
+    await env.DB.prepare("DELETE FROM device_images WHERE image_id = ?1").bind(body.image_id).run();
+    return json({ ok: true });
 }
 
 async function adminRevokeDeviceWeb(request: Request, env: Env): Promise<Response> {
@@ -508,6 +833,7 @@ async function adminDeleteDeviceWeb(request: Request, env: Env): Promise<Respons
     if (typeof deviceId === "string" && isDeviceId(deviceId)) {
         await env.DB.prepare("DELETE FROM devices WHERE device_id = ?1").bind(deviceId).run();
         await env.DB.prepare("DELETE FROM device_enrollments WHERE device_id = ?1").bind(deviceId).run();
+        await env.DB.prepare("DELETE FROM device_images WHERE device_id = ?1").bind(deviceId).run();
         try {
             await env.PASSPORTS.get(env.PASSPORTS.idFromName(deviceId)).fetch("https://passport.internal/internal/revoke", {
                 method: "POST",
@@ -524,7 +850,7 @@ async function listDevicesApi(request: Request, env: Env): Promise<Response> {
     if (!hasAdminKey && !basicAuthUser) return json({ error: "unauthorized" }, 401);
 
     const devices = (await env.DB.prepare(
-        "SELECT device_id, status, credential_version, created_at, rotated_at FROM devices ORDER BY created_at DESC"
+        "SELECT device_id, status, credential_version, created_at, rotated_at FROM devices ORDER BY created_at DESC",
     ).all<DeviceRow>()).results;
 
     const list = await Promise.all(devices.map(async (d) => {
@@ -717,8 +1043,6 @@ async function createDeviceCode(request: Request, env: Env): Promise<Response> {
     const body = await request.json<unknown>().catch(() => null);
     if (!isExactDeviceIdBody(body)) return json({ error: "invalid device_id" }, 400);
     const deviceId = body.device_id;
-    const registered = await env.DB.prepare("SELECT 1 FROM devices WHERE device_id = ?1").bind(deviceId).first();
-    if (registered) return json({ error: "device already registered" }, 409);
 
     // 将该设备先前的未完成 pending 配对全部设为 expired，以便允许重新配对
     await env.DB.prepare(
@@ -811,7 +1135,9 @@ async function completeEnrollmentApproval(
         "UPDATE device_enrollments SET status = 'approved', approved_by = ?1, approved_subject = ?2, approved_at = ?3 " +
         "WHERE enrollment_id = ?4 AND status = 'pending' AND expires_at > ?3",
     ).bind(subject, subject, now, enrollment.enrollment_id).run();
-    if (!result.meta.changed_db_rows) {
+    const changes = (result.meta as { changed_db_rows?: number; changes?: number }).changed_db_rows ??
+                    (result.meta as { changed_db_rows?: number; changes?: number }).changes ?? 0;
+    if (!changes) {
         const latest = await env.DB.prepare(
             "SELECT status FROM device_enrollments WHERE enrollment_id = ?1",
         ).bind(enrollment.enrollment_id).first<{ status: EnrollmentStatus }>();
@@ -888,21 +1214,33 @@ async function exchangeDeviceCode(request: Request, env: Env): Promise<Response>
         }
         const credential = issueDeviceCredential();
         const credentialHash = await hashDeviceCredential(credential, env.DEVICE_CREDENTIAL_PEPPER);
-        const batch = await env.DB.batch([
-            env.DB.prepare(
-                "INSERT INTO devices (device_id, credential_hash, credential_version, status, created_at) " +
-                "SELECT device_id, ?1, 1, 'active', ?2 FROM device_enrollments e " +
-                "WHERE e.enrollment_id = ?3 AND e.status = 'approved' AND e.consumed = 0 AND e.expires_at > ?2",
-            ).bind(credentialHash, now, enrollment.enrollment_id),
-            env.DB.prepare(
-                "UPDATE device_enrollments SET status = 'consumed', consumed = 1, consumed_at = ?1 " +
-                "WHERE enrollment_id = ?2 AND status = 'approved' AND consumed = 0 AND expires_at > ?1 " +
-                "AND EXISTS (SELECT 1 FROM devices d WHERE d.device_id = device_enrollments.device_id AND d.credential_hash = ?3)",
-            ).bind(now, enrollment.enrollment_id, credentialHash),
-        ]);
-        const created = batch[0].meta.changed_db_rows === 1;
-        const consumed = batch[1].meta.changed_db_rows === 1;
-        if (!created || !consumed) return json({ error: "credential already issued" }, 409);
+
+        // 1. 原子标记已消费
+        const updateEnrollment = await env.DB.prepare(
+            "UPDATE device_enrollments SET status = 'consumed', consumed = 1, consumed_at = ?1 " +
+            "WHERE enrollment_id = ?2 AND status = 'approved' AND consumed = 0 AND expires_at > ?1",
+        ).bind(now, enrollment.enrollment_id).run();
+
+        const changes = (updateEnrollment.meta as { changed_db_rows?: number; changes?: number }).changed_db_rows ??
+                        (updateEnrollment.meta as { changed_db_rows?: number; changes?: number }).changes ?? 0;
+
+        if (changes === 0) {
+            return json({ error: "credential already issued" }, 409);
+        }
+
+        // 2. 插入或覆盖写入 devices
+        await env.DB.prepare(
+            "INSERT INTO devices (device_id, credential_hash, credential_version, status, created_at) " +
+            "VALUES (?1, ?2, 1, 'active', ?3) " +
+            "ON CONFLICT(device_id) DO UPDATE SET " +
+            "credential_hash = excluded.credential_hash, " +
+            "previous_credential_hash = NULL, " +
+            "previous_credential_expires_at = NULL, " +
+            "credential_version = devices.credential_version + 1, " +
+            "status = 'active', " +
+            "rotated_at = excluded.created_at",
+        ).bind(deviceId, credentialHash, now).run();
+
         return json({ device_id: deviceId, credential, credential_version: 1 }, 201);
     }
 
