@@ -10,6 +10,7 @@ idf_component_register(
          "debug_log.c"
          "power_manager.c"
          "wifi_manager.c"
+         "wifi_nvs.c"
          "time_sync.c"
          "demo_display.c"
          "demo_button.c"

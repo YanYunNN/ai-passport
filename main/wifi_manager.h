@@ -1,8 +1,20 @@
 #pragma once
 
 #include "esp_err.h"
+#include "wifi_nvs.h"
 #include <stdbool.h>
 #include <stddef.h>
+
+// Multi-profile management API
+//
+// Profiles are stored persistently in NVS (up to MAX_WIFI_PROFILES). On boot
+// the device fast-connects to the last used network from the Wi-Fi driver
+// flash config; when that fails, wifi_manager_select_best_profile() is invoked
+// automatically to scan and switch to the best visible profile.
+esp_err_t wifi_manager_add_profile(const wifi_profile_t *profile);
+esp_err_t wifi_manager_remove_profile(const char *ssid);
+esp_err_t wifi_manager_set_active_profile(const char *ssid);
+esp_err_t wifi_manager_select_best_profile(void);
 
 typedef enum {
     WIFI_MANAGER_UNAVAILABLE,

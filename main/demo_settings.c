@@ -12,10 +12,12 @@
 #include "wifi_manager.h"
 #include <string.h>
 #include "lvgl.h"
+#include <string.h>
 
 #define SETTING_COUNT 6
 #define TIME_ACTION_COUNT 5
-#define WIFI_ACTION_COUNT 5
+#define WIFI_ACTION_COUNT 6
+#define NET_ROW_MAX (MAX_WIFI_PROFILES + 1)
 #define RELAY_ACTION_COUNT 3
 #define DEBUG_ACTION_COUNT 4
 
@@ -32,6 +34,7 @@ typedef enum {
     SETTINGS_VIEW_MAIN,
     SETTINGS_VIEW_TIME,
     SETTINGS_VIEW_WIFI,
+    SETTINGS_VIEW_NETWORKS,
     SETTINGS_VIEW_PROVISIONING,
     SETTINGS_VIEW_RELAY,
     SETTINGS_VIEW_DEBUG,
@@ -49,6 +52,7 @@ typedef enum {
 typedef enum {
     WIFI_ACTION_TOGGLE,
     WIFI_ACTION_POWER_SAVE,
+    WIFI_ACTION_NETWORKS,
     WIFI_ACTION_SETUP,
     WIFI_ACTION_SYNC_TIME,
     WIFI_ACTION_BACK,
@@ -90,6 +94,11 @@ static lv_obj_t *s_relay_actions[RELAY_ACTION_COUNT];
 static lv_obj_t *s_relay_action_titles[RELAY_ACTION_COUNT];
 static lv_obj_t *s_relay_action_values[RELAY_ACTION_COUNT];
 static lv_obj_t *s_relay_action_indicators[RELAY_ACTION_COUNT];
+static lv_obj_t *s_net_items[NET_ROW_MAX];
+static lv_obj_t *s_net_titles[NET_ROW_MAX];
+static lv_obj_t *s_net_values[NET_ROW_MAX];
+static lv_obj_t *s_net_indicators[NET_ROW_MAX];
+static lv_obj_t *s_net_hint;
 static lv_obj_t *s_debug_actions[DEBUG_ACTION_COUNT];
 static lv_obj_t *s_debug_action_titles[DEBUG_ACTION_COUNT];
 static lv_obj_t *s_debug_action_values[DEBUG_ACTION_COUNT];
@@ -100,6 +109,7 @@ static lv_timer_t *s_refresh_timer;
 static uint8_t s_selected;
 static uint8_t s_time_selected;
 static uint8_t s_wifi_selected;
+static uint8_t s_net_selected;
 static uint8_t s_relay_selected;
 static uint8_t s_debug_selected;
 static debug_log_type_t s_current_log_type = DEBUG_LOG_TYPE_DEVICE;
@@ -174,6 +184,17 @@ static void clear_wifi_objects(void)
         s_wifi_action_titles[i] = NULL;
         s_wifi_action_values[i] = NULL;
         s_wifi_action_indicators[i] = NULL;
+    }
+}
+
+static void clear_net_objects(void)
+{
+    s_net_hint = NULL;
+    for (size_t i = 0; i < NET_ROW_MAX; i++) {
+        s_net_items[i] = NULL;
+        s_net_titles[i] = NULL;
+        s_net_values[i] = NULL;
+        s_net_indicators[i] = NULL;
     }
 }
 
@@ -283,10 +304,54 @@ static void wifi_details_refresh(void)
     lv_label_set_text(s_wifi_action_values[WIFI_ACTION_TOGGLE], enabled ? "ON" : "OFF");
     lv_label_set_text(s_wifi_action_values[WIFI_ACTION_POWER_SAVE],
                       wifi_manager_is_power_save_enabled() ? "ON" : "OFF");
+    lv_label_set_text_fmt(s_wifi_action_values[WIFI_ACTION_NETWORKS], "%u/%d",
+                          (unsigned)wifi_nvs_count_profiles(), MAX_WIFI_PROFILES);
     lv_label_set_text(s_wifi_action_values[WIFI_ACTION_SETUP], "");
     lv_label_set_text(s_wifi_action_values[WIFI_ACTION_SYNC_TIME],
                       enabled ? time_sync_state_text() : "OFF");
     lv_label_set_text(s_wifi_action_values[WIFI_ACTION_BACK], "");
+}
+
+static void networks_refresh(void)
+{
+    if (s_view != SETTINGS_VIEW_NETWORKS) return;
+
+    wifi_profile_t profiles[MAX_WIFI_PROFILES];
+    size_t count = wifi_nvs_get_all_profiles(profiles, MAX_WIFI_PROFILES);
+    size_t rows = count + 1;
+    if (s_net_selected >= rows) s_net_selected = 0;
+
+    char connected[33];
+    bool is_connected = wifi_manager_get_connected_ssid(connected, sizeof(connected)) == ESP_OK &&
+                        connected[0];
+
+    for (size_t i = 0; i < NET_ROW_MAX; i++) {
+        const char *title;
+        const char *value;
+        bool enabled;
+        if (i < count) {
+            title = profiles[i].ssid;
+            value = (is_connected && strcmp(connected, profiles[i].ssid) == 0)
+                        ? "ONLINE" : "";
+            enabled = wifi_manager_is_enabled();
+        } else if (i == count) {
+            title = "返回";
+            value = "";
+            enabled = true;
+        } else {
+            title = "";
+            value = "";
+            enabled = false;
+        }
+        lv_label_set_text(s_net_titles[i], title);
+        lv_label_set_text(s_net_values[i], value);
+        ui_system_set_item_state(s_net_items[i], s_net_titles[i], s_net_values[i],
+                                 s_net_indicators[i], i == s_net_selected, enabled);
+    }
+    if (s_net_hint) {
+        lv_label_set_text(s_net_hint, count ? "OK CONNECT  /  DOUBLE DELETE"
+                                            : "NO SAVED NETWORKS");
+    }
 }
 
 static void relay_details_refresh(void)
@@ -362,6 +427,8 @@ static void refresh_timer(lv_timer_t *timer)
         time_details_refresh();
     } else if (s_view == SETTINGS_VIEW_WIFI) {
         wifi_details_refresh();
+    } else if (s_view == SETTINGS_VIEW_NETWORKS) {
+        networks_refresh();
     } else if (s_view == SETTINGS_VIEW_RELAY) {
         relay_details_refresh();
     } else if (s_view == SETTINGS_VIEW_DEBUG) {
@@ -467,10 +534,10 @@ static void wifi_details_build(void)
     lv_obj_set_pos(s_wifi_ssid_value, 64, 111);
 
     static const char * const titles[WIFI_ACTION_COUNT] = {
-        "Wi-Fi 开关", "网络节能", "重新配网", "同步时间", "返回",
+        "Wi-Fi 开关", "网络节能", "网络列表", "重新配网", "同步时间", "返回",
     };
     for (size_t i = 0; i < WIFI_ACTION_COUNT; i++) {
-        int y = 139 + (int)i * 32;
+        int y = 139 + (int)i * 30;
         s_wifi_actions[i] = ui_system_item_create(s_scr, 16, y, 208, 29);
         s_wifi_action_titles[i] = ui_system_label(s_wifi_actions[i], titles[i],
                                                    &ui_font_noto_sc_14, UI_SYSTEM_TEXT);
@@ -548,6 +615,42 @@ static void relay_details_build(void)
         lv_obj_set_pos(s_relay_action_indicators[i], 180, 2);
     }
     relay_details_refresh();
+    lv_screen_load(s_scr);
+}
+
+static void networks_build(void)
+{
+    s_scr = ui_system_screen_create();
+    lv_obj_t *heading = ui_system_label(s_scr, "网络", &ui_font_noto_sc_20,
+                                        UI_SYSTEM_TEXT);
+    lv_obj_set_width(heading, 208);
+    lv_obj_set_style_text_align(heading, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_pos(heading, 16, 42);
+    ui_system_divider(s_scr, 16, 77, 208);
+
+    for (size_t i = 0; i < NET_ROW_MAX; i++) {
+        int y = 92 + (int)i * 30;
+        s_net_items[i] = ui_system_item_create(s_scr, 16, y, 208, 29);
+        s_net_titles[i] = ui_system_label(s_net_items[i], "", &ui_font_noto_sc_14,
+                                          UI_SYSTEM_TEXT);
+        lv_obj_set_width(s_net_titles[i], 88);
+        lv_label_set_long_mode(s_net_titles[i], LV_LABEL_LONG_DOT);
+        lv_obj_set_pos(s_net_titles[i], 16, 6);
+        s_net_values[i] = ui_system_label(s_net_items[i], "", &lv_font_montserrat_14,
+                                          UI_SYSTEM_MUTED);
+        lv_obj_set_width(s_net_values[i], 62);
+        lv_obj_set_style_text_align(s_net_values[i], LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_pos(s_net_values[i], 110, 6);
+        s_net_indicators[i] = ui_system_label(s_net_items[i], ">",
+                                              &lv_font_montserrat_20, UI_SYSTEM_MUTED);
+        lv_obj_set_pos(s_net_indicators[i], 180, 2);
+    }
+
+    s_net_hint = ui_system_label(s_scr, "", &lv_font_montserrat_14, UI_SYSTEM_MUTED);
+    lv_obj_set_width(s_net_hint, 208);
+    lv_obj_set_style_text_align(s_net_hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_pos(s_net_hint, 16, 286);
+    networks_refresh();
     lv_screen_load(s_scr);
 }
 
@@ -675,6 +778,10 @@ static void settings_build(void)
         wifi_details_build();
         return;
     }
+    if (s_view == SETTINGS_VIEW_NETWORKS) {
+        networks_build();
+        return;
+    }
     if (s_view == SETTINGS_VIEW_PROVISIONING) {
         provisioning_build();
         return;
@@ -732,6 +839,7 @@ static void show_view(settings_view_t view)
     clear_main_objects();
     clear_time_objects();
     clear_wifi_objects();
+    clear_net_objects();
     clear_relay_objects();
     clear_debug_objects();
     s_view = view;
@@ -748,6 +856,7 @@ void demo_settings_enter(void)
     s_selected = 0;
     s_time_selected = 0;
     s_wifi_selected = 0;
+    s_net_selected = 0;
     s_relay_selected = 0;
     s_debug_selected = 0;
     s_view = SETTINGS_VIEW_MAIN;
@@ -771,6 +880,7 @@ void demo_settings_exit(void)
     clear_main_objects();
     clear_time_objects();
     clear_wifi_objects();
+    clear_net_objects();
     clear_relay_objects();
     clear_debug_objects();
     s_view = SETTINGS_VIEW_MAIN;
@@ -904,6 +1014,10 @@ static void wifi_settings_key(bsp_btn_t btn)
         wifi_details_refresh();
         break;
     }
+    case WIFI_ACTION_NETWORKS:
+        s_net_selected = 0;
+        show_view(SETTINGS_VIEW_NETWORKS);
+        break;
     case WIFI_ACTION_SETUP:
         if (wifi_manager_is_enabled() && wifi_manager_start_provisioning() == ESP_OK) {
             show_view(SETTINGS_VIEW_PROVISIONING);
@@ -918,6 +1032,43 @@ static void wifi_settings_key(bsp_btn_t btn)
         show_view(SETTINGS_VIEW_MAIN);
         break;
     }
+}
+
+static void networks_settings_key(bsp_btn_t btn, bsp_btn_ev_t ev)
+{
+    wifi_profile_t profiles[MAX_WIFI_PROFILES];
+    size_t count = wifi_nvs_get_all_profiles(profiles, MAX_WIFI_PROFILES);
+    size_t rows = count + 1;
+
+    if (ev == BSP_BTN_DOUBLE) {
+        if (btn == BSP_BTN_OK && s_net_selected < count) {
+            if (wifi_manager_remove_profile(profiles[s_net_selected].ssid) == ESP_OK) {
+                s_net_selected = 0;
+                show_view(SETTINGS_VIEW_NETWORKS);
+            }
+        }
+        return;
+    }
+
+    if (btn == BSP_BTN_UP) {
+        s_net_selected = (s_net_selected + rows - 1) % rows;
+        networks_refresh();
+        return;
+    }
+    if (btn == BSP_BTN_DOWN) {
+        s_net_selected = (s_net_selected + 1) % rows;
+        networks_refresh();
+        return;
+    }
+    if (btn != BSP_BTN_OK) return;
+
+    if (s_net_selected < count) {
+        wifi_manager_set_active_profile(profiles[s_net_selected].ssid);
+    } else {
+        s_wifi_selected = WIFI_ACTION_NETWORKS;
+        show_view(SETTINGS_VIEW_WIFI);
+    }
+    networks_refresh();
 }
 
 static void relay_settings_key(bsp_btn_t btn)
@@ -1014,7 +1165,14 @@ static void log_viewer_key(bsp_btn_t btn)
 
 void demo_settings_key(bsp_btn_t btn, bsp_btn_ev_t ev)
 {
-    if (ev != BSP_BTN_CLICK || s_view == SETTINGS_VIEW_PROVISIONING) return;
+    if (s_view == SETTINGS_VIEW_PROVISIONING) return;
+    if (s_view == SETTINGS_VIEW_NETWORKS) {
+        if (ev == BSP_BTN_CLICK || ev == BSP_BTN_DOUBLE) {
+            networks_settings_key(btn, ev);
+        }
+        return;
+    }
+    if (ev != BSP_BTN_CLICK) return;
     if (s_view == SETTINGS_VIEW_TIME) {
         time_settings_key(btn);
     } else if (s_view == SETTINGS_VIEW_WIFI) {
