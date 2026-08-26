@@ -785,16 +785,17 @@ void demo_game_suika_key(bsp_btn_t btn, bsp_btn_ev_t ev)
     int r = FRUIT_TIERS[s_current_tier].radius;
     int min_x = CONTAINER_LEFT + r;
     int max_x = CONTAINER_RIGHT - r;
+    float step = (ev == BSP_BTN_HOLD) ? 6.0f : 8.0f;
 
     if (btn == BSP_BTN_UP) {
         // Move Left
-        s_dropper_x -= 12.0f;
+        s_dropper_x -= step;
         if (s_dropper_x < min_x) s_dropper_x = (float)min_x;
         game_audio_play(GAME_SFX_MOVE);
         update_dropper_visual();
     } else if (btn == BSP_BTN_DOWN) {
         // Move Right
-        s_dropper_x += 12.0f;
+        s_dropper_x += step;
         if (s_dropper_x > max_x) s_dropper_x = (float)max_x;
         game_audio_play(GAME_SFX_MOVE);
         update_dropper_visual();

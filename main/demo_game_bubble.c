@@ -852,15 +852,17 @@ void demo_game_bubble_key(bsp_btn_t btn, bsp_btn_ev_t ev)
     // UP/DOWN 按键支持单击、长按开始、以及长按连续连发 (HOLD)
     if (ev != BSP_BTN_CLICK && ev != BSP_BTN_LONG && ev != BSP_BTN_HOLD) return;
 
+    float step = (ev == BSP_BTN_HOLD) ? 2.5f : 3.5f;
+
     if (btn == BSP_BTN_UP) {
         // Rotate Counter-Clockwise (Left)
-        s_aim_angle -= 5.0f;
+        s_aim_angle -= step;
         if (s_aim_angle < -66.0f) s_aim_angle = -66.0f;
         game_audio_play(GAME_SFX_MOVE);
         update_aim_guide();
     } else if (btn == BSP_BTN_DOWN) {
         // Rotate Clockwise (Right)
-        s_aim_angle += 5.0f;
+        s_aim_angle += step;
         if (s_aim_angle > 66.0f) s_aim_angle = 66.0f;
         game_audio_play(GAME_SFX_MOVE);
         update_aim_guide();

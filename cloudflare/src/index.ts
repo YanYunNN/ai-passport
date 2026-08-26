@@ -548,10 +548,10 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             </div>
         </div>
 
-        <!-- 📺 实时投屏与远程截屏 (Live Screencast Studio) -->
+        <!-- 📸 远程屏幕快照与截屏 (Remote Screen Capture Studio) -->
         <div class="card">
             <div class="card-header">
-                <div class="card-title">📺 实时投屏与远程截屏 (Live Screencast - 240×320)</div>
+                <div class="card-title">📸 远程屏幕快照与截屏 (Remote Snapshot - 240×320)</div>
                 <div id="castStatusBadge" class="badge" style="background: rgba(110, 118, 129, 0.2); color: var(--text-muted);">
                     <span id="castStatusDot" class="dot dot-offline"></span> <span id="castStatusText">未连接</span>
                 </div>
@@ -561,36 +561,39 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     <div class="screen-frame" id="castFrame">
                         <canvas id="castCanvas" width="240" height="320" style="image-rendering: pixelated;"></canvas>
                         <div id="castPlaceholder" class="screen-placeholder" style="position: absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; background: rgba(13,17,23,0.85);">
-                            📺 板子屏幕实时镜像<br><span style="font-size:0.75rem; color:#6e7681; margin-top:0.5rem;">点击「开启实时投屏」或「远程截屏」</span>
+                            📱 板子屏幕快照<br><span style="font-size:0.75rem; color:#6e7681; margin-top:0.5rem;">点击「立即抓取屏幕快照」</span>
                         </div>
                     </div>
                     <div id="castMetrics" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.75rem; display: flex; gap: 0.75rem;">
-                        <span id="castFps">0 FPS</span>
-                        <span>•</span>
-                        <span id="castSliceCount">0 片/帧</span>
+                        <span id="castSliceCount">0/64 片</span>
                         <span>•</span>
                         <span id="castSeq">帧 #0</span>
+                        <span>•</span>
+                        <span id="castTime">未获取</span>
                     </div>
                 </div>
                 <div class="upload-pane">
                     <div class="form-group">
-                        <label class="form-label">选择投屏设备</label>
+                        <label class="form-label">选择目标设备</label>
                         <select id="castTargetDevice" class="form-select">${deviceOptions}</select>
                     </div>
                     <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                        <button type="button" id="castToggleBtn" class="btn btn-primary" style="flex: 1; padding: 0.75rem; font-size: 0.95rem;" onclick="toggleScreencast()">
-                            ▶️ 开启实时投屏
+                        <button type="button" id="castCaptureBtn" class="btn btn-primary" style="flex: 1; padding: 0.85rem; font-size: 1rem; font-weight: 600;" onclick="requestCapture()">
+                            📸 立即抓取屏幕快照
                         </button>
-                        <button type="button" id="castCaptureBtn" class="btn btn-accent" style="flex: 1; padding: 0.75rem; font-size: 0.95rem;" onclick="requestCapture()">
-                            📸 远程单帧截屏
-                        </button>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.5rem; margin: 0.25rem 0;">
+                        <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--text-muted); cursor: pointer;">
+                            <input type="checkbox" id="autoSnapshotCheck" onchange="toggleAutoSnapshot()">
+                            <span>⏱️ 自动轮询快照 (每 5 秒刷新一次)</span>
+                        </label>
                     </div>
                     <div style="display: flex; gap: 0.5rem;">
                         <button type="button" class="btn" style="background: #21262d; border: 1px solid var(--border); color: var(--text); flex: 1;" onclick="downloadScreenshot()">
-                            💾 保存截图 (PNG)
+                            💾 保存高清截图 (PNG)
                         </button>
                         <button type="button" class="btn" style="background: #21262d; border: 1px solid var(--border); color: var(--text-muted);" onclick="reconnectCastWs()">
-                            🔄 重连 WS
+                            🔄 刷新连接
                         </button>
                     </div>
                     <div id="castAlert" style="display:none; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem;"></div>
@@ -663,11 +666,9 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
         </div>
 
         <script>
-        // ----------------- 实时投屏与远程截屏 (Screencast Studio) -----------------
+        // ----------------- 远程屏幕快照与截屏 (Remote Snapshot Studio) -----------------
         let castWs = null;
-        let castStreaming = false;
-        let castFrameCount = 0;
-        let castLastTime = Date.now();
+        let castAutoTimer = null;
         let castCurrentSeq = 0;
 
         const castCanvas = document.getElementById("castCanvas");
@@ -676,12 +677,12 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
         const castStatusBadge = document.getElementById("castStatusBadge");
         const castStatusDot = document.getElementById("castStatusDot");
         const castStatusText = document.getElementById("castStatusText");
-        const castFps = document.getElementById("castFps");
         const castSliceCount = document.getElementById("castSliceCount");
         const castSeq = document.getElementById("castSeq");
+        const castTime = document.getElementById("castTime");
         const castTargetDevice = document.getElementById("castTargetDevice");
-        const castToggleBtn = document.getElementById("castToggleBtn");
         const castAlert = document.getElementById("castAlert");
+        const autoSnapshotCheck = document.getElementById("autoSnapshotCheck");
 
         castCtx.fillStyle = "#000000";
         castCtx.fillRect(0, 0, 240, 320);
@@ -691,12 +692,12 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 castStatusBadge.style.background = "rgba(46, 160, 67, 0.15)";
                 castStatusBadge.style.color = "#3fb950";
                 castStatusDot.className = "dot dot-online";
-                castStatusText.innerText = text || "已连接";
+                castStatusText.innerText = text || "已就绪";
             } else if (status === "receiving") {
                 castStatusBadge.style.background = "rgba(31, 111, 235, 0.15)";
                 castStatusBadge.style.color = "#58a6ff";
                 castStatusDot.className = "dot dot-online";
-                castStatusText.innerText = text || "正在接收画面";
+                castStatusText.innerText = text || "正在传输快照...";
             } else {
                 castStatusBadge.style.background = "rgba(110, 118, 129, 0.2)";
                 castStatusBadge.style.color = "var(--text-muted)";
@@ -749,7 +750,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
 
         function renderSlice(msg) {
             castPlaceholder.style.display = "none";
-            updateCastStatus("receiving", "同步中...");
+            updateCastStatus("receiving", "同步画面中...");
 
             const binaryString = atob(msg.data);
             const len = binaryString.length;
@@ -758,7 +759,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 bytes[i] = binaryString.charCodeAt(i);
             }
 
-            const lines = msg.lines || 20;
+            const lines = msg.lines || 5;
             const width = msg.w || 240;
             const y = msg.y !== undefined ? msg.y : (msg.slice * lines);
             const pixelCount = width * lines;
@@ -785,31 +786,16 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
 
             if (msg.seq !== castCurrentSeq) {
                 castCurrentSeq = msg.seq;
-                castFrameCount++;
                 castSeq.innerText = "帧 #" + msg.seq;
             }
-            castSliceCount.innerText = (msg.slice + 1) + "/" + (msg.total || 16) + " 片";
+            const total = msg.total || 64;
+            castSliceCount.innerText = (msg.slice + 1) + "/" + total + " 片";
 
-            const now = Date.now();
-            if (now - castLastTime >= 1000) {
-                const fps = (castFrameCount * 1000 / (now - castLastTime)).toFixed(1);
-                castFps.innerText = fps + " FPS";
-                castFrameCount = 0;
-                castLastTime = now;
+            if (msg.slice + 1 >= total) {
+                const timeStr = new Date().toLocaleTimeString();
+                castTime.innerText = timeStr;
+                updateCastStatus("connected", "快照就绪 (" + timeStr + ")");
             }
-        }
-
-        async function toggleScreencast() {
-            const deviceId = castTargetDevice.value;
-            if (!deviceId) {
-                alert("请先选择设备！");
-                return;
-            }
-            castStreaming = !castStreaming;
-            castToggleBtn.innerText = castStreaming ? "⏹️ 停止实时投屏" : "▶️ 开启实时投屏";
-            castToggleBtn.className = castStreaming ? "btn btn-danger" : "btn btn-primary";
-
-            await sendScreencastCommand(deviceId, castStreaming ? "screencast_start" : "screencast_stop");
         }
 
         async function requestCapture() {
@@ -821,7 +807,22 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             if (!castWs || castWs.readyState !== WebSocket.OPEN) {
                 initCastWebSocket();
             }
+            updateCastStatus("receiving", "请求截屏中...");
             await sendScreencastCommand(deviceId, "capture");
+        }
+
+        function toggleAutoSnapshot() {
+            if (autoSnapshotCheck.checked) {
+                requestCapture();
+                castAutoTimer = setInterval(() => {
+                    requestCapture();
+                }, 5000);
+            } else {
+                if (castAutoTimer) {
+                    clearInterval(castAutoTimer);
+                    castAutoTimer = null;
+                }
+            }
         }
 
         async function sendScreencastCommand(deviceId, action) {

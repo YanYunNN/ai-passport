@@ -336,19 +336,12 @@ static void process_message(const char *message)
 {
     if (!message) return;
 
-    if (strstr(message, "\"screencast_start\"")) {
-        ESP_LOGI(TAG, "收到云端指令: 开启实时投屏");
-        screencast_set_enabled(true);
+    if (strstr(message, "\"capture\"") || strstr(message, "\"screenshot\"") || strstr(message, "\"screencast_start\"")) {
+        ESP_LOGI(TAG, "收到云端指令: 远程截屏");
+        screencast_request_capture();
         return;
     }
     if (strstr(message, "\"screencast_stop\"")) {
-        ESP_LOGI(TAG, "收到云端指令: 停止实时投屏");
-        screencast_set_enabled(false);
-        return;
-    }
-    if (strstr(message, "\"capture\"") || strstr(message, "\"screenshot\"")) {
-        ESP_LOGI(TAG, "收到云端指令: 远程截屏");
-        screencast_request_capture();
         return;
     }
 

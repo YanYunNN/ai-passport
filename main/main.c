@@ -197,7 +197,6 @@ void app_main(void)
     }
 
     screencast_init();
-    screencast_set_enabled(settings->screencast_enabled);
 
     if (bsp_lvgl_lock(1000)) {
         ui_status_init();
