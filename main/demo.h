@@ -46,3 +46,9 @@ void demo_builtin_key(bsp_btn_t btn, bsp_btn_ev_t ev);
 bool demo_builtin_back(void);
 void demo_builtin_set_on_exit(void (*on_exit)(void));
 
+void demo_games_enter(void);   void demo_games_exit(void);
+void demo_games_key(bsp_btn_t btn, bsp_btn_ev_t ev);
+bool demo_games_back(void);
+void demo_games_set_on_exit(void (*on_exit)(void));
+
+

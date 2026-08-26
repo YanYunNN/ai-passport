@@ -17,10 +17,11 @@ static const char *TAG = "screencast";
 
 #define SCREENCAST_WIDTH        240
 #define SCREENCAST_HEIGHT       320
-#define SCREENCAST_SLICE_LINES  20
-#define SCREENCAST_TOTAL_SLICES (SCREENCAST_HEIGHT / SCREENCAST_SLICE_LINES) // 16
-#define SCREENCAST_RAW_SIZE     (SCREENCAST_WIDTH * SCREENCAST_SLICE_LINES * 2) // 9600 bytes
-#define SCREENCAST_B64_SIZE     (((SCREENCAST_RAW_SIZE + 2) / 3) * 4 + 4) // ~12804 bytes
+#define SCREENCAST_SLICE_LINES  5
+#define SCREENCAST_TOTAL_SLICES (SCREENCAST_HEIGHT / SCREENCAST_SLICE_LINES) // 64
+#define SCREENCAST_RAW_SIZE     (SCREENCAST_WIDTH * SCREENCAST_SLICE_LINES * 2) // 2400 bytes
+#define SCREENCAST_B64_SIZE     (((SCREENCAST_RAW_SIZE + 2) / 3) * 4 + 4) // 3204 bytes
+#define SCREENCAST_MSG_SIZE     (SCREENCAST_B64_SIZE + 256) // ~3460 bytes
 
 static bool s_enabled = false;
 static uint32_t s_interval_ms = 1000;
@@ -29,9 +30,9 @@ static SemaphoreHandle_t s_lock = NULL;
 static TaskHandle_t s_task_handle = NULL;
 static uint32_t s_frame_seq = 0;
 
-static uint8_t *s_raw_buf = NULL;
-static char *s_b64_buf = NULL;
-static char *s_msg_buf = NULL;
+static uint8_t s_raw_buf[SCREENCAST_RAW_SIZE];
+static char s_b64_buf[SCREENCAST_B64_SIZE];
+static char s_msg_buf[SCREENCAST_MSG_SIZE];
 
 static bool capture_slice(lv_display_t *disp, uint8_t slice_idx, uint8_t *out_buf, size_t buf_size)
 {
@@ -52,6 +53,7 @@ static bool capture_slice(lv_display_t *disp, uint8_t slice_idx, uint8_t *out_bu
     lv_draw_buf_t draw_buf;
     lv_draw_buf_init(&draw_buf, SCREENCAST_WIDTH, SCREENCAST_SLICE_LINES,
                      LV_COLOR_FORMAT_RGB565, SCREENCAST_WIDTH * 2, out_buf, buf_size);
+    lv_draw_buf_clear(&draw_buf, NULL);
 
     int32_t y_start = (int32_t)slice_idx * SCREENCAST_SLICE_LINES;
     int32_t y_end = y_start + SCREENCAST_SLICE_LINES - 1;
@@ -67,6 +69,8 @@ static bool capture_slice(lv_display_t *disp, uint8_t slice_idx, uint8_t *out_bu
     layer._clip_area = layer.buf_area;
     layer.phy_clip_area = layer.buf_area;
 
+    lv_draw_unit_send_event(NULL, LV_EVENT_CHILD_CREATED, &layer);
+
     lv_display_t *disp_old = lv_refr_get_disp_refreshing();
     lv_layer_t *layer_old = disp->layer_head;
     disp->layer_head = &layer;
@@ -81,7 +85,7 @@ static bool capture_slice(lv_display_t *disp, uint8_t slice_idx, uint8_t *out_bu
         lv_obj_redraw(&layer, top_layer);
     }
 
-    // 3. 渲染 Sys Layer（如全局提示）
+    // 3. 渲染 Sys Layer
     lv_obj_t *sys_layer = lv_display_get_layer_sys(disp);
     if (sys_layer && lv_obj_get_child_count(sys_layer) > 0) {
         lv_obj_redraw(&layer, sys_layer);
@@ -96,6 +100,9 @@ static bool capture_slice(lv_display_t *disp, uint8_t slice_idx, uint8_t *out_bu
     disp->layer_head = layer_old;
     lv_refr_set_disp_refreshing(disp_old);
 
+    lv_draw_unit_send_event(NULL, LV_EVENT_SCREEN_LOAD_START, &layer);
+    lv_draw_unit_send_event(NULL, LV_EVENT_CHILD_DELETED, &layer);
+
     bsp_lvgl_unlock();
     return true;
 }
@@ -107,18 +114,12 @@ static void send_full_frame(void)
     }
 
     lv_display_t *disp = lv_display_get_default();
-    if (!disp) return;
-
-    if (!s_raw_buf) s_raw_buf = (uint8_t *)malloc(SCREENCAST_RAW_SIZE);
-    if (!s_b64_buf) s_b64_buf = (char *)malloc(SCREENCAST_B64_SIZE);
-    if (!s_msg_buf) s_msg_buf = (char *)malloc(SCREENCAST_B64_SIZE + 256);
-
-    if (!s_raw_buf || !s_b64_buf || !s_msg_buf) {
-        ESP_LOGE(TAG, "投屏缓冲区内存不足");
+    if (!disp) {
         return;
     }
 
     uint32_t seq = ++s_frame_seq;
+    ESP_LOGI(TAG, "正在采集并发送全屏帧 seq=%lu (共 %d 片)", (unsigned long)seq, SCREENCAST_TOTAL_SLICES);
 
     for (uint8_t slice = 0; slice < SCREENCAST_TOTAL_SLICES; slice++) {
         if (!kiro_passport_network_is_connected()) break;
@@ -131,24 +132,27 @@ static void send_full_frame(void)
         int ret = mbedtls_base64_encode((unsigned char *)s_b64_buf, SCREENCAST_B64_SIZE - 1,
                                         &b64_len, s_raw_buf, SCREENCAST_RAW_SIZE);
         if (ret != 0) {
-            ESP_LOGE(TAG, "切片 %u Base64 编码失败: %d", slice, ret);
             continue;
         }
         s_b64_buf[b64_len] = '\0';
 
-        int len = snprintf(s_msg_buf, SCREENCAST_B64_SIZE + 256,
+        int len = snprintf(s_msg_buf, SCREENCAST_MSG_SIZE,
             "{\"v\":1,\"type\":\"screencast\",\"seq\":%lu,\"slice\":%u,\"total\":%u,\"y\":%u,\"lines\":%u,\"data\":\"%s\"}",
             (unsigned long)seq, (unsigned int)slice, (unsigned int)SCREENCAST_TOTAL_SLICES,
             (unsigned int)(slice * SCREENCAST_SLICE_LINES), (unsigned int)SCREENCAST_SLICE_LINES,
             s_b64_buf);
 
         if (len > 0) {
-            kiro_passport_network_send_text(s_msg_buf);
+            int sent = kiro_passport_network_send_text(s_msg_buf);
+            if (sent < 0) {
+                ESP_LOGW(TAG, "切片 %u 发送受阻，中止本帧投屏以保护连接", slice);
+                break;
+            }
         }
 
-        // 短暂让出 CPU，避免阻塞网络栈
         vTaskDelay(pdMS_TO_TICKS(15));
     }
+    ESP_LOGD(TAG, "全屏帧 seq=%lu 发送完成", (unsigned long)seq);
 }
 
 static void screencast_task(void *pvParameters)
@@ -169,12 +173,16 @@ static void screencast_task(void *pvParameters)
             xSemaphoreGive(s_lock);
         }
 
-        if (should_run && kiro_passport_network_is_connected()) {
-            send_full_frame();
+        if (should_run) {
+            if (kiro_passport_network_is_connected()) {
+                send_full_frame();
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            }
         }
 
         uint32_t delay_ms = s_interval_ms;
-        if (delay_ms < 200) delay_ms = 200;
+        if (delay_ms < 1500) delay_ms = 1500;
         vTaskDelay(pdMS_TO_TICKS(delay_ms));
     }
 }
@@ -189,7 +197,7 @@ esp_err_t screencast_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    BaseType_t ret = xTaskCreate(screencast_task, "screencast", 4096, NULL, 4, &s_task_handle);
+    BaseType_t ret = xTaskCreate(screencast_task, "screencast", 3072, NULL, 4, &s_task_handle);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "创建投屏任务失败");
         vSemaphoreDelete(s_lock);

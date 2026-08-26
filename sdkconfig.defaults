@@ -48,3 +48,5 @@ CONFIG_BUTTON_PERIOD_TIME_MS=20
 # credentials in NVS without encryption; production hardware should protect them at rest.
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+CONFIG_MBEDTLS_HARDWARE_MPI=n
+

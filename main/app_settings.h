@@ -11,6 +11,7 @@ typedef enum {
 
 typedef struct {
     uint8_t brightness_index;
+    uint8_t volume_index;
     uint8_t hour;
     uint8_t minute;
     uint8_t second;
@@ -31,6 +32,7 @@ typedef struct {
 esp_err_t app_settings_init(void);
 const app_settings_t *app_settings_get(void);
 uint8_t app_settings_get_brightness_percent(void);
+uint8_t app_settings_get_volume_percent(void);
 uint16_t app_settings_get_screen_timeout_seconds(void);
 uint16_t app_settings_get_auto_sleep_timeout_seconds(void);
 const char *app_settings_get_screen_timeout_text(uint8_t index);

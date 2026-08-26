@@ -11,7 +11,8 @@
 #define APP_SETTINGS_VERSION_V3 3
 #define APP_SETTINGS_VERSION_V4 4
 #define APP_SETTINGS_VERSION_V5 5
-#define APP_SETTINGS_VERSION 6
+#define APP_SETTINGS_VERSION_V6 6
+#define APP_SETTINGS_VERSION 7
 
 static const char *TAG = "app_settings";
 
@@ -88,6 +89,23 @@ typedef struct __attribute__((packed)) {
     uint8_t screencast_enabled;
     uint8_t screen_timeout_index;
     uint8_t auto_sleep_timeout_index;
+} app_settings_record_v6_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t version;
+    uint8_t brightness_index;
+    uint8_t volume_index;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+    uint8_t time_format;
+    uint8_t wifi_enabled;
+    uint8_t light_sleep_enabled;
+    uint8_t wifi_power_save_enabled;
+    uint8_t debug_enabled;
+    uint8_t screencast_enabled;
+    uint8_t screen_timeout_index;
+    uint8_t auto_sleep_timeout_index;
 } app_settings_record_t;
 
 _Static_assert(sizeof(app_settings_record_v1_t) == 6, "v1 settings layout changed");
@@ -95,10 +113,12 @@ _Static_assert(sizeof(app_settings_record_v2_t) == 7, "v2 settings layout change
 _Static_assert(sizeof(app_settings_record_v3_t) == 9, "v3 settings layout changed");
 _Static_assert(sizeof(app_settings_record_v4_t) == 10, "v4 settings layout changed");
 _Static_assert(sizeof(app_settings_record_v5_t) == 12, "v5 settings layout changed");
-_Static_assert(sizeof(app_settings_record_t) == 13, "v6 settings layout changed");
+_Static_assert(sizeof(app_settings_record_v6_t) == 13, "v6 settings layout changed");
+_Static_assert(sizeof(app_settings_record_t) == 14, "v7 settings layout changed");
 
 static const app_settings_t s_defaults = {
     .brightness_index = 9,
+    .volume_index = 8,
     .hour = 0,
     .minute = 0,
     .second = 0,
@@ -131,8 +151,8 @@ static bool s_initialized;
 
 static bool settings_valid(const app_settings_t *settings)
 {
-    return settings && settings->brightness_index <= 9 && settings->hour < 24 &&
-           settings->minute < 60 && settings->second < 60 &&
+    return settings && settings->brightness_index <= 9 && settings->volume_index <= 10 &&
+           settings->hour < 24 && settings->minute < 60 && settings->second < 60 &&
            (settings->time_format == APP_SETTINGS_TIME_HH_MM ||
             settings->time_format == APP_SETTINGS_TIME_HH_MM_SS) &&
            settings->screen_timeout_index < APP_SETTINGS_SCREEN_TIMEOUT_COUNT &&
@@ -144,6 +164,7 @@ static app_settings_record_t record_from_settings(const app_settings_t *settings
     return (app_settings_record_t){
         .version = APP_SETTINGS_VERSION,
         .brightness_index = settings->brightness_index,
+        .volume_index = settings->volume_index,
         .hour = settings->hour,
         .minute = settings->minute,
         .second = settings->second,
@@ -165,6 +186,7 @@ static bool settings_from_v1_record(const app_settings_record_v1_t *record,
 
     *settings = (app_settings_t){
         .brightness_index = record->brightness_index,
+        .volume_index = 8,
         .hour = record->hour,
         .minute = record->minute,
         .second = record->second,
@@ -190,6 +212,7 @@ static bool settings_from_v2_record(const app_settings_record_v2_t *record,
 
     *settings = (app_settings_t){
         .brightness_index = record->brightness_index,
+        .volume_index = 8,
         .hour = record->hour,
         .minute = record->minute,
         .second = record->second,
@@ -216,6 +239,7 @@ static bool settings_from_v3_record(const app_settings_record_v3_t *record,
 
     *settings = (app_settings_t){
         .brightness_index = record->brightness_index,
+        .volume_index = 8,
         .hour = record->hour,
         .minute = record->minute,
         .second = record->second,
@@ -242,6 +266,7 @@ static bool settings_from_v4_record(const app_settings_record_v4_t *record,
 
     *settings = (app_settings_t){
         .brightness_index = record->brightness_index,
+        .volume_index = 8,
         .hour = record->hour,
         .minute = record->minute,
         .second = record->second,
@@ -270,6 +295,7 @@ static bool settings_from_v5_record(const app_settings_record_v5_t *record,
 
     *settings = (app_settings_t){
         .brightness_index = record->brightness_index,
+        .volume_index = 8,
         .hour = record->hour,
         .minute = record->minute,
         .second = record->second,
@@ -285,10 +311,10 @@ static bool settings_from_v5_record(const app_settings_record_v5_t *record,
     return settings_valid(settings);
 }
 
-static bool settings_from_record(const app_settings_record_t *record,
-                                 app_settings_t *settings)
+static bool settings_from_v6_record(const app_settings_record_v6_t *record,
+                                    app_settings_t *settings)
 {
-    if (!record || !settings || record->version != APP_SETTINGS_VERSION ||
+    if (!record || !settings || record->version != APP_SETTINGS_VERSION_V6 ||
         record->wifi_enabled > 1u || record->light_sleep_enabled > 1u ||
         record->wifi_power_save_enabled > 1u || record->debug_enabled > 1u ||
         record->screencast_enabled > 1u ||
@@ -299,6 +325,38 @@ static bool settings_from_record(const app_settings_record_t *record,
 
     *settings = (app_settings_t){
         .brightness_index = record->brightness_index,
+        .volume_index = 8,
+        .hour = record->hour,
+        .minute = record->minute,
+        .second = record->second,
+        .time_format = (app_settings_time_format_t)record->time_format,
+        .wifi_enabled = record->wifi_enabled != 0u,
+        .light_sleep_enabled = record->light_sleep_enabled != 0u,
+        .wifi_power_save_enabled = record->wifi_power_save_enabled != 0u,
+        .debug_enabled = record->debug_enabled != 0u,
+        .screencast_enabled = record->screencast_enabled != 0u,
+        .screen_timeout_index = record->screen_timeout_index,
+        .auto_sleep_timeout_index = record->auto_sleep_timeout_index,
+    };
+    return settings_valid(settings);
+}
+
+static bool settings_from_record(const app_settings_record_t *record,
+                                 app_settings_t *settings)
+{
+    if (!record || !settings || record->version != APP_SETTINGS_VERSION ||
+        record->volume_index > 10 ||
+        record->wifi_enabled > 1u || record->light_sleep_enabled > 1u ||
+        record->wifi_power_save_enabled > 1u || record->debug_enabled > 1u ||
+        record->screencast_enabled > 1u ||
+        record->screen_timeout_index >= APP_SETTINGS_SCREEN_TIMEOUT_COUNT ||
+        record->auto_sleep_timeout_index >= APP_SETTINGS_AUTO_SLEEP_COUNT) {
+        return false;
+    }
+
+    *settings = (app_settings_t){
+        .brightness_index = record->brightness_index,
+        .volume_index = record->volume_index,
         .hour = record->hour,
         .minute = record->minute,
         .second = record->second,
@@ -388,6 +446,14 @@ static esp_err_t load_settings(void)
         } else {
             s_settings = s_defaults;
         }
+    } else if (size == sizeof(app_settings_record_v6_t)) {
+        app_settings_record_v6_t record;
+        result = nvs_get_blob(handle, APP_SETTINGS_KEY, &record, &size);
+        if (result == ESP_OK && settings_from_v6_record(&record, &s_settings)) {
+            migrated_from = APP_SETTINGS_VERSION_V6;
+        } else {
+            s_settings = s_defaults;
+        }
     } else if (size == sizeof(app_settings_record_t)) {
         app_settings_record_t record;
         result = nvs_get_blob(handle, APP_SETTINGS_KEY, &record, &size);
@@ -445,6 +511,15 @@ uint8_t app_settings_get_brightness_percent(void)
         return 100;
     }
     return levels[s_settings.brightness_index];
+}
+
+uint8_t app_settings_get_volume_percent(void)
+{
+    static const uint8_t levels[] = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
+    if (s_settings.volume_index >= sizeof(levels) / sizeof(levels[0])) {
+        return 80;
+    }
+    return levels[s_settings.volume_index];
 }
 
 uint16_t app_settings_get_screen_timeout_seconds(void)

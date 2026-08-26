@@ -1,7 +1,9 @@
 #include "app_settings.h"
+#include "bsp_audio.h"
 #include "bsp_display.h"
 #include "bsp_button.h"
 #include "debug_log.h"
+#include "game_audio.h"
 #include "kiro_passport_network.h"
 #include "power_manager.h"
 #include "screencast.h"
@@ -14,7 +16,7 @@
 #include <string.h>
 #include "lvgl.h"
 
-#define SETTING_COUNT 6
+#define SETTING_COUNT 7
 #define TIME_ACTION_COUNT 6
 #define POWER_ACTION_COUNT 6
 #define WIFI_ACTION_COUNT 4
@@ -24,6 +26,7 @@
 
 typedef enum {
     SETTING_BRIGHTNESS,
+    SETTING_VOLUME,
     SETTING_TIME,
     SETTING_POWER,
     SETTING_WIFI,
@@ -83,6 +86,7 @@ typedef enum {
 } debug_action_t;
 
 static const uint8_t BRIGHTNESS_LEVELS[] = { 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
+static const uint8_t VOLUME_LEVELS[] = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
 
 static lv_obj_t *s_scr;
 static lv_obj_t *s_items[SETTING_COUNT];
@@ -130,6 +134,7 @@ static uint8_t s_relay_selected;
 static uint8_t s_debug_selected;
 static debug_log_type_t s_current_log_type = DEBUG_LOG_TYPE_DEVICE;
 static uint8_t s_brightness_index;
+static uint8_t s_volume_index;
 static settings_view_t s_view;
 
 static const char *wifi_state_text(void)
@@ -268,6 +273,12 @@ static void settings_refresh(void)
 
     lv_label_set_text_fmt(s_values[SETTING_BRIGHTNESS], "%u%%",
                           (unsigned)BRIGHTNESS_LEVELS[s_brightness_index]);
+    if (VOLUME_LEVELS[s_volume_index] == 0) {
+        lv_label_set_text(s_values[SETTING_VOLUME], "0%");
+    } else {
+        lv_label_set_text_fmt(s_values[SETTING_VOLUME], "%u%%",
+                              (unsigned)VOLUME_LEVELS[s_volume_index]);
+    }
     if (ui_status_get_time_format() == UI_STATUS_TIME_HH_MM_SS) {
         lv_label_set_text_fmt(s_values[SETTING_TIME], "%02u:%02u:%02u",
                               (unsigned)hour, (unsigned)minute, (unsigned)second);
@@ -453,6 +464,7 @@ static esp_err_t persist_settings(void)
 
     app_settings_t settings = *app_settings_get();
     settings.brightness_index = s_brightness_index;
+    settings.volume_index = s_volume_index;
     settings.hour = hour;
     settings.minute = minute;
     settings.second = second;
@@ -892,18 +904,18 @@ static void settings_build(void)
 
     s_scr = ui_system_screen_create();
     lv_obj_t *back = ui_system_label(s_scr, "<", &lv_font_montserrat_20, UI_SYSTEM_TEXT);
-    lv_obj_set_pos(back, 18, 42);
+    lv_obj_set_pos(back, 18, 36);
     lv_obj_t *heading = ui_system_label(s_scr, "设置", &ui_font_noto_sc_20, UI_SYSTEM_TEXT);
     lv_obj_set_width(heading, 208);
     lv_obj_set_style_text_align(heading, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_pos(heading, 16, 42);
-    ui_system_divider(s_scr, 16, 77, 208);
+    lv_obj_set_pos(heading, 16, 36);
+    ui_system_divider(s_scr, 16, 68, 208);
 
     static const char * const titles[SETTING_COUNT] = {
-        "亮度", "时间", "节能", "网络", "Relay", "调试",
+        "亮度", "音量", "时间", "节能", "网络", "Relay", "调试",
     };
     for (size_t i = 0; i < SETTING_COUNT; i++) {
-        int y = 88 + (int)i * 32;
+        int y = 74 + (int)i * 33;
         s_items[i] = ui_system_item_create(s_scr, 16, y, 208, 29);
         s_titles[i] = ui_system_label(s_items[i], titles[i], &ui_font_noto_sc_14,
                                       UI_SYSTEM_TEXT);
@@ -945,6 +957,10 @@ void demo_settings_enter(void)
         s_brightness_index = (sizeof(BRIGHTNESS_LEVELS) / sizeof(BRIGHTNESS_LEVELS[0])) - 1;
     }
     bsp_display_backlight(BRIGHTNESS_LEVELS[s_brightness_index]);
+    s_volume_index = app_settings_get()->volume_index;
+    if (s_volume_index >= sizeof(VOLUME_LEVELS) / sizeof(VOLUME_LEVELS[0])) {
+        s_volume_index = 8;
+    }
     s_selected = 0;
     s_time_selected = 0;
     s_power_selected = 0;
@@ -1051,6 +1067,13 @@ static void main_settings_key(bsp_btn_t btn)
                              (sizeof(BRIGHTNESS_LEVELS) / sizeof(BRIGHTNESS_LEVELS[0]));
         bsp_display_backlight(BRIGHTNESS_LEVELS[s_brightness_index]);
         persist_settings();
+        break;
+    case SETTING_VOLUME:
+        s_volume_index = (s_volume_index + 1) %
+                         (sizeof(VOLUME_LEVELS) / sizeof(VOLUME_LEVELS[0]));
+        bsp_audio_set_volume(VOLUME_LEVELS[s_volume_index]);
+        persist_settings();
+        game_audio_play(GAME_SFX_MOVE);
         break;
     case SETTING_TIME:
         s_time_selected = 0;

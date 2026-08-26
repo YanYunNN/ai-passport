@@ -1,6 +1,7 @@
 // main/demo_audio.c —— 播 1kHz 方波 / 录 3 秒后回放。
 // 音频收发会阻塞较久,故放到独立任务里跑,不占用按键回调与 LVGL 任务。
 #include "demo.h"
+#include "app_settings.h"
 #include "bsp_audio.h"
 #include "bsp_display.h"
 #include "ui_pixel.h"
@@ -45,7 +46,7 @@ static void play_tone(void)
         finish_audio("format failed");
         return;
     }
-    bsp_audio_set_volume(80);
+    bsp_audio_set_volume(app_settings_get_volume_percent());
 
     int16_t *buf = malloc(CHUNK_SAMPLES * sizeof(int16_t));
     if (!buf) {
@@ -97,7 +98,7 @@ static void record_and_play(void)
     }
 
     set_status("playing back...");
-    bsp_audio_set_volume(80);
+    bsp_audio_set_volume(app_settings_get_volume_percent());
     for (size_t off = 0; off < got; off += CHUNK_SAMPLES) {
         size_t n = (got - off) < CHUNK_SAMPLES ? (got - off) : CHUNK_SAMPLES;
         if (bsp_audio_write(rec + off, n * sizeof(int16_t)) != ESP_OK) break;

@@ -57,7 +57,9 @@ static void time_sync_task(void *argument)
     if (esp_sntp_enabled()) esp_sntp_stop();
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
     esp_sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
-    esp_sntp_setservername(0, TIME_SYNC_SERVER);
+    esp_sntp_setservername(0, "ntp.aliyun.com");
+    esp_sntp_setservername(1, "cn.pool.ntp.org");
+    esp_sntp_setservername(2, "pool.ntp.org");
     esp_sntp_set_time_sync_notification_cb(time_sync_notification);
     esp_sntp_init();
 

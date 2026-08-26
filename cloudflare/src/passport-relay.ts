@@ -190,16 +190,6 @@ export class PassportRelay extends DurableObject<Env> {
             await this.invalidateSession(attachment.sessionId, true);
             return;
         }
-        if (!attachment.sessionId) {
-            const hello = parseHello(message, attachment.deviceId);
-            if (!hello) {
-                socket.close(1008, "invalid hello");
-                return;
-            }
-            await this.handleHello(socket, attachment, hello.session_id);
-            return;
-        }
-
         // Check if device is sending screencast frame / slice
         if (message.includes('"screencast"')) {
             try {
@@ -212,6 +202,16 @@ export class PassportRelay extends DurableObject<Env> {
                     return;
                 }
             } catch {}
+        }
+
+        if (!attachment.sessionId) {
+            const hello = parseHello(message, attachment.deviceId);
+            if (!hello) {
+                socket.close(1008, "invalid hello");
+                return;
+            }
+            await this.handleHello(socket, attachment, hello.session_id);
+            return;
         }
 
         const state = await this.loadState();

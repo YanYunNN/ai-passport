@@ -197,6 +197,8 @@ esp_err_t bsp_audio_close(void)
     return result;
 }
 
+static uint8_t s_volume = 80;
+
 esp_err_t bsp_audio_set_format(uint32_t hz, uint8_t bits, uint8_t ch)
 {
     if (!s_dev) return ESP_ERR_INVALID_STATE;
@@ -229,7 +231,8 @@ esp_err_t bsp_audio_set_format(uint32_t hz, uint8_t bits, uint8_t ch)
     s_hz = hz;
     s_bits = bits;
     s_ch = ch;
-    ESP_LOGI(TAG, "codec 打开 %luHz/%ubit/%uch", (unsigned long)hz, bits, ch);
+    esp_codec_dev_set_out_vol(s_dev, s_volume);
+    ESP_LOGI(TAG, "codec 打开 %luHz/%ubit/%uch 音量=%u%%", (unsigned long)hz, bits, ch, (unsigned)s_volume);
     return ESP_OK;
 }
 
@@ -247,5 +250,6 @@ esp_err_t bsp_audio_read(void *pcm, size_t bytes)
 
 void bsp_audio_set_volume(uint8_t percent)
 {
+    s_volume = percent;
     if (s_dev && s_opened) esp_codec_dev_set_out_vol(s_dev, percent);
 }
