@@ -6,6 +6,7 @@
 #include "bsp_battery.h"
 #include "bsp_pins.h"
 #include "app_settings.h"
+#include "debug_log.h"
 #include "power_manager.h"
 #include "demo.h"
 #include "kiro_passport_network.h"
@@ -146,6 +147,7 @@ void app_main(void)
         ESP_LOGW(TAG, "应用设置初始化失败: %s", esp_err_to_name(settings_result));
     }
     const app_settings_t *settings = app_settings_get();
+    debug_log_init(settings->debug_enabled);
     esp_err_t power_result = power_manager_init(settings->light_sleep_enabled);
     if (power_result != ESP_OK) {
         ESP_LOGW(TAG, "浅睡眠策略未生效: %s", esp_err_to_name(power_result));

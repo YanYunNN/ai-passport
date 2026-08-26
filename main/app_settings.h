@@ -18,6 +18,7 @@ typedef struct {
     bool wifi_enabled;
     bool light_sleep_enabled;
     bool wifi_power_save_enabled;
+    bool debug_enabled;
 } app_settings_t;
 
 /* Initializes default NVS and loads the app-owned appcfg/cfg record. */

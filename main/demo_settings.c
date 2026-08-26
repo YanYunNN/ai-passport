@@ -1,6 +1,7 @@
 #include "app_settings.h"
 #include "bsp_display.h"
 #include "bsp_button.h"
+#include "debug_log.h"
 #include "kiro_passport_network.h"
 #include "power_manager.h"
 #include "time_sync.h"
@@ -9,12 +10,14 @@
 #include "ui_status.h"
 #include "ui_system.h"
 #include "wifi_manager.h"
+#include <string.h>
 #include "lvgl.h"
 
-#define SETTING_COUNT 5
+#define SETTING_COUNT 6
 #define TIME_ACTION_COUNT 5
 #define WIFI_ACTION_COUNT 5
 #define RELAY_ACTION_COUNT 3
+#define DEBUG_ACTION_COUNT 4
 
 typedef enum {
     SETTING_BRIGHTNESS,
@@ -22,6 +25,7 @@ typedef enum {
     SETTING_LIGHT_SLEEP,
     SETTING_WIFI,
     SETTING_RELAY,
+    SETTING_DEBUG,
 } setting_id_t;
 
 typedef enum {
@@ -30,6 +34,8 @@ typedef enum {
     SETTINGS_VIEW_WIFI,
     SETTINGS_VIEW_PROVISIONING,
     SETTINGS_VIEW_RELAY,
+    SETTINGS_VIEW_DEBUG,
+    SETTINGS_VIEW_LOG_VIEWER,
 } settings_view_t;
 
 typedef enum {
@@ -54,6 +60,13 @@ typedef enum {
     RELAY_ACTION_BACK,
 } relay_action_t;
 
+typedef enum {
+    DEBUG_ACTION_TOGGLE,
+    DEBUG_ACTION_DEVICE_LOG,
+    DEBUG_ACTION_NETWORK_LOG,
+    DEBUG_ACTION_BACK,
+} debug_action_t;
+
 static const uint8_t BRIGHTNESS_LEVELS[] = { 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
 
 static lv_obj_t *s_scr;
@@ -77,11 +90,19 @@ static lv_obj_t *s_relay_actions[RELAY_ACTION_COUNT];
 static lv_obj_t *s_relay_action_titles[RELAY_ACTION_COUNT];
 static lv_obj_t *s_relay_action_values[RELAY_ACTION_COUNT];
 static lv_obj_t *s_relay_action_indicators[RELAY_ACTION_COUNT];
+static lv_obj_t *s_debug_actions[DEBUG_ACTION_COUNT];
+static lv_obj_t *s_debug_action_titles[DEBUG_ACTION_COUNT];
+static lv_obj_t *s_debug_action_values[DEBUG_ACTION_COUNT];
+static lv_obj_t *s_debug_action_indicators[DEBUG_ACTION_COUNT];
+static lv_obj_t *s_log_cont;
+static lv_obj_t *s_log_label;
 static lv_timer_t *s_refresh_timer;
 static uint8_t s_selected;
 static uint8_t s_time_selected;
 static uint8_t s_wifi_selected;
 static uint8_t s_relay_selected;
+static uint8_t s_debug_selected;
+static debug_log_type_t s_current_log_type = DEBUG_LOG_TYPE_DEVICE;
 static uint8_t s_brightness_index;
 static settings_view_t s_view;
 
@@ -168,6 +189,18 @@ static void clear_relay_objects(void)
     }
 }
 
+static void clear_debug_objects(void)
+{
+    for (size_t i = 0; i < DEBUG_ACTION_COUNT; i++) {
+        s_debug_actions[i] = NULL;
+        s_debug_action_titles[i] = NULL;
+        s_debug_action_values[i] = NULL;
+        s_debug_action_indicators[i] = NULL;
+    }
+    s_log_cont = NULL;
+    s_log_label = NULL;
+}
+
 static void settings_refresh(void)
 {
     if (s_view != SETTINGS_VIEW_MAIN) return;
@@ -201,6 +234,7 @@ static void settings_refresh(void)
     lv_label_set_text(s_values[SETTING_RELAY], relay_config.credential[0] ?
                       kiro_passport_network_state_name(kiro_passport_network_get_state()) :
                       relay_enrollment_text(&enrollment));
+    lv_label_set_text(s_values[SETTING_DEBUG], debug_log_is_enabled() ? "ON" : "OFF");
 }
 
 static void time_details_refresh(void)
@@ -302,19 +336,22 @@ static esp_err_t persist_settings(void)
     uint8_t second;
     ui_status_get_time(&hour, &minute, &second);
 
-    app_settings_t settings = {
-        .brightness_index = s_brightness_index,
-        .hour = hour,
-        .minute = minute,
-        .second = second,
-        .time_format = ui_status_get_time_format() == UI_STATUS_TIME_HH_MM_SS
-                           ? APP_SETTINGS_TIME_HH_MM_SS : APP_SETTINGS_TIME_HH_MM,
-        .wifi_enabled = wifi_manager_is_enabled(),
-        .light_sleep_enabled = power_manager_is_light_sleep_enabled(),
-        .wifi_power_save_enabled = wifi_manager_is_power_save_enabled(),
-    };
+    app_settings_t settings = *app_settings_get();
+    settings.brightness_index = s_brightness_index;
+    settings.hour = hour;
+    settings.minute = minute;
+    settings.second = second;
+    settings.time_format = ui_status_get_time_format() == UI_STATUS_TIME_HH_MM_SS
+                               ? APP_SETTINGS_TIME_HH_MM_SS : APP_SETTINGS_TIME_HH_MM;
+    settings.wifi_enabled = wifi_manager_is_enabled();
+    settings.light_sleep_enabled = power_manager_is_light_sleep_enabled();
+    settings.wifi_power_save_enabled = wifi_manager_is_power_save_enabled();
+    settings.debug_enabled = debug_log_is_enabled();
     return app_settings_save(&settings);
 }
+
+static void debug_details_refresh(void);
+static void log_viewer_refresh(void);
 
 static void refresh_timer(lv_timer_t *timer)
 {
@@ -327,6 +364,10 @@ static void refresh_timer(lv_timer_t *timer)
         wifi_details_refresh();
     } else if (s_view == SETTINGS_VIEW_RELAY) {
         relay_details_refresh();
+    } else if (s_view == SETTINGS_VIEW_DEBUG) {
+        debug_details_refresh();
+    } else if (s_view == SETTINGS_VIEW_LOG_VIEWER) {
+        log_viewer_refresh();
     }
 }
 
@@ -510,6 +551,120 @@ static void relay_details_build(void)
     lv_screen_load(s_scr);
 }
 
+static void debug_details_refresh(void)
+{
+    if (s_view != SETTINGS_VIEW_DEBUG) return;
+
+    bool enabled = debug_log_is_enabled();
+    for (size_t i = 0; i < DEBUG_ACTION_COUNT; i++) {
+        ui_system_set_item_state(s_debug_actions[i], s_debug_action_titles[i],
+                                 s_debug_action_values[i], s_debug_action_indicators[i],
+                                 i == s_debug_selected, true);
+    }
+    lv_label_set_text(s_debug_action_values[DEBUG_ACTION_TOGGLE], enabled ? "ON" : "OFF");
+    lv_label_set_text(s_debug_action_values[DEBUG_ACTION_DEVICE_LOG], "");
+    lv_label_set_text(s_debug_action_values[DEBUG_ACTION_NETWORK_LOG], "");
+    lv_label_set_text(s_debug_action_values[DEBUG_ACTION_BACK], "");
+}
+
+static void debug_details_build(void)
+{
+    s_scr = ui_system_screen_create();
+    lv_obj_t *heading = ui_system_label(s_scr, "调试", &ui_font_noto_sc_20,
+                                        UI_SYSTEM_TEXT);
+    lv_obj_set_width(heading, 208);
+    lv_obj_set_style_text_align(heading, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_pos(heading, 16, 42);
+    ui_system_divider(s_scr, 16, 77, 208);
+
+    static const char * const titles[DEBUG_ACTION_COUNT] = {
+        "调试开关", "设备日志", "网络日志", "返回",
+    };
+    for (size_t i = 0; i < DEBUG_ACTION_COUNT; i++) {
+        int y = 92 + (int)i * 32;
+        s_debug_actions[i] = ui_system_item_create(s_scr, 16, y, 208, 29);
+        s_debug_action_titles[i] = ui_system_label(s_debug_actions[i], titles[i],
+                                                   &ui_font_noto_sc_14, UI_SYSTEM_TEXT);
+        lv_obj_set_pos(s_debug_action_titles[i], 16, 6);
+        s_debug_action_values[i] = ui_system_label(s_debug_actions[i], "",
+                                                   &lv_font_montserrat_14, UI_SYSTEM_MUTED);
+        lv_obj_set_width(s_debug_action_values[i], 82);
+        lv_obj_set_style_text_align(s_debug_action_values[i], LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_pos(s_debug_action_values[i], 82, 6);
+        s_debug_action_indicators[i] = ui_system_label(s_debug_actions[i], ">",
+                                                       &lv_font_montserrat_20, UI_SYSTEM_MUTED);
+        lv_obj_set_pos(s_debug_action_indicators[i], 180, 2);
+    }
+    debug_details_refresh();
+    lv_screen_load(s_scr);
+}
+
+static void log_viewer_refresh(void)
+{
+    if (s_view != SETTINGS_VIEW_LOG_VIEWER || !s_log_label) return;
+
+    static char lines[DEBUG_LOG_MAX_LINES][DEBUG_LOG_LINE_MAX_LEN];
+    size_t count = debug_log_get_lines(s_current_log_type, lines, DEBUG_LOG_MAX_LINES);
+
+    if (count == 0) {
+        lv_label_set_text(s_log_label, "(暂无日志记录)");
+        return;
+    }
+
+    static char full_text[DEBUG_LOG_MAX_LINES * (DEBUG_LOG_LINE_MAX_LEN + 1) + 1];
+    full_text[0] = '\0';
+    size_t pos = 0;
+    for (size_t i = 0; i < count; i++) {
+        size_t len = strlen(lines[i]);
+        if (pos + len + 2 < sizeof(full_text)) {
+            memcpy(full_text + pos, lines[i], len);
+            pos += len;
+            full_text[pos++] = '\n';
+            full_text[pos] = '\0';
+        }
+    }
+    lv_label_set_text(s_log_label, full_text);
+}
+
+static void log_viewer_build(void)
+{
+    s_scr = ui_system_screen_create();
+    const char *title = (s_current_log_type == DEBUG_LOG_TYPE_NETWORK) ? "网络日志" : "设备日志";
+    lv_obj_t *heading = ui_system_label(s_scr, title, &ui_font_noto_sc_14,
+                                        UI_SYSTEM_TEXT);
+    lv_obj_set_width(heading, 208);
+    lv_obj_set_style_text_align(heading, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_pos(heading, 16, 32);
+    ui_system_divider(s_scr, 16, 62, 208);
+
+    s_log_cont = lv_obj_create(s_scr);
+    lv_obj_set_pos(s_log_cont, 14, 68);
+    lv_obj_set_size(s_log_cont, 212, 216);
+    lv_obj_set_style_bg_color(s_log_cont, lv_color_hex(UI_SYSTEM_SURFACE), 0);
+    lv_obj_set_style_border_color(s_log_cont, lv_color_hex(UI_SYSTEM_BORDER), 0);
+    lv_obj_set_style_border_width(s_log_cont, 1, 0);
+    lv_obj_set_style_radius(s_log_cont, 4, 0);
+    lv_obj_set_style_pad_all(s_log_cont, 6, 0);
+    lv_obj_add_flag(s_log_cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(s_log_cont, LV_SCROLLBAR_MODE_AUTO);
+
+    s_log_label = lv_label_create(s_log_cont);
+    lv_obj_set_width(s_log_label, 196);
+    lv_label_set_long_mode(s_log_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(s_log_label, &ui_font_noto_sc_14, 0);
+    lv_obj_set_style_text_color(s_log_label, lv_color_hex(UI_SYSTEM_TEXT), 0);
+
+    lv_obj_t *hint = ui_system_label(s_scr, "UP/DOWN 滚动  OK 返回", &ui_font_noto_sc_14,
+                                     UI_SYSTEM_MUTED);
+    lv_obj_set_width(hint, 208);
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_pos(hint, 16, 292);
+
+    log_viewer_refresh();
+    lv_obj_scroll_to_y(s_log_cont, LV_COORD_MAX, LV_ANIM_OFF);
+    lv_screen_load(s_scr);
+}
+
 static void settings_build(void)
 {
     if (s_view == SETTINGS_VIEW_TIME) {
@@ -528,6 +683,14 @@ static void settings_build(void)
         relay_details_build();
         return;
     }
+    if (s_view == SETTINGS_VIEW_DEBUG) {
+        debug_details_build();
+        return;
+    }
+    if (s_view == SETTINGS_VIEW_LOG_VIEWER) {
+        log_viewer_build();
+        return;
+    }
 
     s_scr = ui_system_screen_create();
     lv_obj_t *back = ui_system_label(s_scr, "<", &lv_font_montserrat_20, UI_SYSTEM_TEXT);
@@ -539,10 +702,10 @@ static void settings_build(void)
     ui_system_divider(s_scr, 16, 77, 208);
 
     static const char * const titles[SETTING_COUNT] = {
-        "亮度", "时间", "浅睡眠", "网络", "Relay",
+        "亮度", "时间", "浅睡眠", "网络", "Relay", "调试",
     };
     for (size_t i = 0; i < SETTING_COUNT; i++) {
-        int y = 92 + (int)i * 32;
+        int y = 88 + (int)i * 32;
         s_items[i] = ui_system_item_create(s_scr, 16, y, 208, 29);
         s_titles[i] = ui_system_label(s_items[i], titles[i], &ui_font_noto_sc_14,
                                       UI_SYSTEM_TEXT);
@@ -570,6 +733,7 @@ static void show_view(settings_view_t view)
     clear_time_objects();
     clear_wifi_objects();
     clear_relay_objects();
+    clear_debug_objects();
     s_view = view;
     settings_build();
 }
@@ -585,6 +749,7 @@ void demo_settings_enter(void)
     s_time_selected = 0;
     s_wifi_selected = 0;
     s_relay_selected = 0;
+    s_debug_selected = 0;
     s_view = SETTINGS_VIEW_MAIN;
     settings_build();
     s_refresh_timer = lv_timer_create(refresh_timer, 500, NULL);
@@ -607,6 +772,7 @@ void demo_settings_exit(void)
     clear_time_objects();
     clear_wifi_objects();
     clear_relay_objects();
+    clear_debug_objects();
     s_view = SETTINGS_VIEW_MAIN;
 }
 
@@ -654,6 +820,10 @@ static void main_settings_key(bsp_btn_t btn)
     case SETTING_RELAY:
         s_relay_selected = 0;
         show_view(SETTINGS_VIEW_RELAY);
+        return;
+    case SETTING_DEBUG:
+        s_debug_selected = 0;
+        show_view(SETTINGS_VIEW_DEBUG);
         return;
     }
     settings_refresh();
@@ -787,6 +957,61 @@ static void relay_settings_key(bsp_btn_t btn)
     }
 }
 
+static void debug_settings_key(bsp_btn_t btn)
+{
+    if (btn == BSP_BTN_UP) {
+        s_debug_selected = (s_debug_selected + DEBUG_ACTION_COUNT - 1) % DEBUG_ACTION_COUNT;
+        debug_details_refresh();
+        return;
+    }
+    if (btn == BSP_BTN_DOWN) {
+        s_debug_selected = (s_debug_selected + 1) % DEBUG_ACTION_COUNT;
+        debug_details_refresh();
+        return;
+    }
+    if (btn != BSP_BTN_OK) return;
+
+    switch ((debug_action_t)s_debug_selected) {
+    case DEBUG_ACTION_TOGGLE:
+        debug_log_set_enabled(!debug_log_is_enabled());
+        persist_settings();
+        debug_details_refresh();
+        break;
+    case DEBUG_ACTION_DEVICE_LOG:
+        s_current_log_type = DEBUG_LOG_TYPE_DEVICE;
+        show_view(SETTINGS_VIEW_LOG_VIEWER);
+        break;
+    case DEBUG_ACTION_NETWORK_LOG:
+        s_current_log_type = DEBUG_LOG_TYPE_NETWORK;
+        show_view(SETTINGS_VIEW_LOG_VIEWER);
+        break;
+    case DEBUG_ACTION_BACK:
+        s_selected = SETTING_DEBUG;
+        show_view(SETTINGS_VIEW_MAIN);
+        break;
+    }
+}
+
+static void log_viewer_key(bsp_btn_t btn)
+{
+    if (btn == BSP_BTN_UP) {
+        if (s_log_cont) {
+            lv_obj_scroll_by_bounded(s_log_cont, 0, 48, LV_ANIM_OFF);
+        }
+        return;
+    }
+    if (btn == BSP_BTN_DOWN) {
+        if (s_log_cont) {
+            lv_obj_scroll_by_bounded(s_log_cont, 0, -48, LV_ANIM_OFF);
+        }
+        return;
+    }
+    if (btn == BSP_BTN_OK) {
+        show_view(SETTINGS_VIEW_DEBUG);
+        return;
+    }
+}
+
 void demo_settings_key(bsp_btn_t btn, bsp_btn_ev_t ev)
 {
     if (ev != BSP_BTN_CLICK || s_view == SETTINGS_VIEW_PROVISIONING) return;
@@ -796,6 +1021,10 @@ void demo_settings_key(bsp_btn_t btn, bsp_btn_ev_t ev)
         wifi_settings_key(btn);
     } else if (s_view == SETTINGS_VIEW_RELAY) {
         relay_settings_key(btn);
+    } else if (s_view == SETTINGS_VIEW_DEBUG) {
+        debug_settings_key(btn);
+    } else if (s_view == SETTINGS_VIEW_LOG_VIEWER) {
+        log_viewer_key(btn);
     } else {
         main_settings_key(btn);
     }

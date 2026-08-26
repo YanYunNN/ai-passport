@@ -21,6 +21,7 @@ static const char *TAG = "wifi_manager";
 
 static bool s_initialized;
 static bool s_enabled = true;
+static bool s_power_save_enabled = true;
 static volatile wifi_manager_state_t s_state = WIFI_MANAGER_UNAVAILABLE;
 static bool s_portal_active;
 static bool s_transitioning;
@@ -145,6 +146,9 @@ static void connect_task(void *argument)
     if (result == ESP_OK) {
         ESP_LOGI(TAG, "候选 Wi-Fi 凭据已在连接前写入 Flash");
         result = esp_wifi_start();
+        if (result == ESP_OK) {
+            esp_wifi_set_ps(s_power_save_enabled ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE);
+        }
     }
     s_transitioning = false;
 
@@ -393,7 +397,12 @@ esp_err_t wifi_manager_set_enabled(bool enabled)
     if (result == ESP_OK) result = esp_wifi_get_config(WIFI_IF_STA, &saved_config);
     if (result == ESP_OK) s_saved_config = saved_config.sta.ssid[0] != '\0';
     memset(&saved_config, 0, sizeof(saved_config));
-    if (result == ESP_OK) result = esp_wifi_start();
+    if (result == ESP_OK) {
+        result = esp_wifi_start();
+        if (result == ESP_OK) {
+            esp_wifi_set_ps(s_power_save_enabled ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE);
+        }
+    }
     s_transitioning = false;
     if (result != ESP_OK) {
         s_state = WIFI_MANAGER_FAILED;
@@ -569,7 +578,12 @@ void wifi_manager_stop_provisioning(void)
     stop_portal_server();
     esp_err_t result = stop_wifi();
     if (result == ESP_OK) result = esp_wifi_set_mode(WIFI_MODE_STA);
-    if (result == ESP_OK && s_enabled) result = esp_wifi_start();
+    if (result == ESP_OK && s_enabled) {
+        result = esp_wifi_start();
+        if (result == ESP_OK) {
+            esp_wifi_set_ps(s_power_save_enabled ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE);
+        }
+    }
     s_transitioning = false;
     if (result != ESP_OK) {
         s_state = WIFI_MANAGER_FAILED;
@@ -600,8 +614,6 @@ const char *wifi_manager_get_provisioning_password(void)
 
 /* The Wi-Fi driver retains this policy across normal STA reconnects. It is applied
  * after init so an off-at-boot radio can keep the user's choice until enabled. */
-static bool s_power_save_enabled = true;
-
 esp_err_t wifi_manager_set_power_save(bool enabled)
 {
     bool previous = s_power_save_enabled;

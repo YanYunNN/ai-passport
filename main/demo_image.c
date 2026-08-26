@@ -47,8 +47,15 @@ static void render_current_image(void)
             lv_obj_set_style_bg_color(s_img_obj, lv_color_black(), 0);
         }
 
+        if (info.size >= 4) {
+            ESP_LOGI(TAG, "准备渲染图片: 魔数=[%02X %02X %02X %02X], size=%zu, title=%s, v=%lu",
+                     info.data[0], info.data[1], info.data[2], info.data[3],
+                     info.size, info.title, (unsigned long)info.version);
+        }
+
         lv_obj_clear_flag(s_img_obj, LV_OBJ_FLAG_HIDDEN);
         lv_image_set_src(s_img_obj, &s_img_dsc);
+        lv_obj_invalidate(s_img_obj);
 
         if (!s_info_bar) {
             s_info_bar = lv_obj_create(s_scr);

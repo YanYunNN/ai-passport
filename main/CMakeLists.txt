@@ -7,6 +7,7 @@ idf_component_register(
          "ui_system.c"
          "ui_status.c"
          "app_settings.c"
+         "debug_log.c"
          "power_manager.c"
          "wifi_manager.c"
          "time_sync.c"

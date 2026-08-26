@@ -20,14 +20,17 @@
 #include <string.h>
 #include <time.h>
 
-static uint8_t s_active_image_data[32768];
+static uint8_t s_active_image_data[24576];
 static size_t s_active_image_size = 0;
 static char s_active_image_id[64] = {0};
 static char s_active_image_title[64] = {0};
 static uint32_t s_active_image_version = 0;
 static SemaphoreHandle_t s_image_lock = NULL;
-static char *s_rx_buffer = NULL;
-static size_t s_rx_len = 0;
+static bool s_is_streaming_image = false;
+static char s_b64_carry[4];
+static size_t s_b64_carry_len = 0;
+static char s_ctrl_rx_buffer[1024];
+static size_t s_ctrl_rx_len = 0;
 
 bool kiro_passport_network_get_image(kiro_passport_image_info_t *out_info)
 {
@@ -217,40 +220,108 @@ static bool extract_json_string(const char *json, const char *key, char *out, si
     return true;
 }
 
+static inline bool is_b64_char(char c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+           (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=';
+}
+
+static void image_stream_reset(void)
+{
+    if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
+    if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+    s_b64_carry_len = 0;
+    s_is_streaming_image = false;
+    if (s_image_lock) xSemaphoreGive(s_image_lock);
+}
+
+static void image_stream_feed(const char *data, size_t len, bool is_first, bool is_last)
+{
+    if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
+    if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+
+    const char *p = data;
+    const char *end = data + len;
+
+    if (is_first) {
+        s_active_image_size = 0;
+        s_b64_carry_len = 0;
+        s_is_streaming_image = true;
+        s_active_image_id[0] = '\0';
+        s_active_image_title[0] = '\0';
+
+        extract_json_string(data, "id", s_active_image_id, sizeof(s_active_image_id), NULL, NULL);
+        extract_json_string(data, "title", s_active_image_title, sizeof(s_active_image_title), NULL, NULL);
+
+        // 寻找 "data": "
+        const char *k = strstr(data, "\"data\"");
+        if (k) {
+            const char *colon = strchr(k + 6, ':');
+            if (colon) {
+                const char *quote = strchr(colon, '"');
+                if (quote) {
+                    p = quote + 1;
+                }
+            }
+        }
+    }
+
+    if (!s_is_streaming_image) {
+        if (s_image_lock) xSemaphoreGive(s_image_lock);
+        return;
+    }
+
+    while (p < end) {
+        if (*p == '"' && !is_first) {
+            break;
+        }
+        if (is_b64_char(*p)) {
+            s_b64_carry[s_b64_carry_len++] = *p;
+            if (s_b64_carry_len == 4) {
+                if (s_active_image_size + 3 < sizeof(s_active_image_data)) {
+                    size_t olen = 0;
+                    if (mbedtls_base64_decode(s_active_image_data + s_active_image_size,
+                                              sizeof(s_active_image_data) - s_active_image_size,
+                                              &olen, (const unsigned char *)s_b64_carry, 4) == 0) {
+                        s_active_image_size += olen;
+                    }
+                }
+                s_b64_carry_len = 0;
+            }
+        }
+        p++;
+    }
+
+    if (is_last) {
+        if (s_b64_carry_len > 0) {
+            while (s_b64_carry_len < 4) {
+                s_b64_carry[s_b64_carry_len++] = '=';
+            }
+            if (s_active_image_size + 3 < sizeof(s_active_image_data)) {
+                size_t olen = 0;
+                if (mbedtls_base64_decode(s_active_image_data + s_active_image_size,
+                                          sizeof(s_active_image_data) - s_active_image_size,
+                                          &olen, (const unsigned char *)s_b64_carry, 4) == 0) {
+                    s_active_image_size += olen;
+                }
+            }
+            s_b64_carry_len = 0;
+        }
+
+        s_active_image_version++;
+        s_is_streaming_image = false;
+
+        ESP_LOGI(TAG, "流式接收并解码图片完成: id=%s, title=%s, size=%zu bytes, v=%lu",
+                 s_active_image_id, s_active_image_title, s_active_image_size,
+                 (unsigned long)s_active_image_version);
+    }
+
+    if (s_image_lock) xSemaphoreGive(s_image_lock);
+}
+
 static void process_message(const char *message)
 {
     if (!message) return;
-
-    // 检查是否为图片推送消息 {"v":1,"type":"image",...}
-    if (strstr(message, "\"type\":\"image\"") || strstr(message, "\"type\": \"image\"")) {
-        const char *data_start = NULL;
-        size_t b64_len = 0;
-        if (extract_json_string(message, "data", NULL, 0, &data_start, &b64_len) && b64_len > 0) {
-            size_t olen = 0;
-            if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
-            if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
-
-            int ret = mbedtls_base64_decode(
-                s_active_image_data, sizeof(s_active_image_data), &olen,
-                (const unsigned char *)data_start, b64_len);
-
-            if (ret == 0 && olen > 0) {
-                s_active_image_size = olen;
-                s_active_image_version++;
-
-                extract_json_string(message, "id", s_active_image_id, sizeof(s_active_image_id), NULL, NULL);
-                extract_json_string(message, "title", s_active_image_title, sizeof(s_active_image_title), NULL, NULL);
-
-                ESP_LOGI(TAG, "已成功接收并解码新图片: id=%s, title=%s, size=%zu bytes, v=%lu",
-                         s_active_image_id, s_active_image_title, s_active_image_size, (unsigned long)s_active_image_version);
-            } else {
-                ESP_LOGE(TAG, "图片 Base64 解码失败: ret=%d, b64_len=%zu", ret, b64_len);
-            }
-
-            if (s_image_lock) xSemaphoreGive(s_image_lock);
-            return;
-        }
-    }
 
     kiro_passport_decision_t rejection;
     kiro_passport_request_result_t result = kiro_passport_submit_request(message, time(NULL), &rejection);
@@ -303,28 +374,43 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t event_id, 
         }
 
         if ((event->op_code != WS_TRANSPORT_OPCODES_TEXT && event->op_code != WS_TRANSPORT_OPCODES_CONT && event->op_code != 0) ||
-            event->payload_len <= 0 || event->payload_len >= 65536 || event->payload_offset < 0 ||
-            event->data_len < 0 || event->payload_offset + event->data_len > event->payload_len) {
-            if (s_rx_buffer) { free(s_rx_buffer); s_rx_buffer = NULL; }
-            s_rx_len = 0;
+            event->payload_len <= 0 || event->payload_offset < 0 || event->data_len < 0 ||
+            event->payload_offset + event->data_len > event->payload_len) {
+            image_stream_reset();
+            s_ctrl_rx_len = 0;
             return;
         }
-        if (event->payload_offset == 0 || !s_rx_buffer) {
-            if (s_rx_buffer) free(s_rx_buffer);
-            s_rx_buffer = malloc(event->payload_len + 1);
-            s_rx_len = 0;
+
+        bool is_first = (event->payload_offset == 0);
+        bool is_last = (event->payload_offset + event->data_len == event->payload_len);
+
+        // 如果是图片推送大消息 (total > 1024 字节或处于流式接收状态)
+        if (event->payload_len > 1024 || s_is_streaming_image) {
+            if (is_first) {
+                if (strstr(event->data_ptr, "\"type\":\"image\"") || strstr(event->data_ptr, "\"type\": \"image\"")) {
+                    image_stream_feed(event->data_ptr, event->data_len, true, is_last);
+                } else {
+                    ESP_LOGW(TAG, "收到未知大消息 (len=%d)，已忽略", (int)event->payload_len);
+                }
+            } else if (s_is_streaming_image) {
+                image_stream_feed(event->data_ptr, event->data_len, false, is_last);
+            }
+            return;
         }
-        if (s_rx_buffer && (size_t)event->payload_offset == s_rx_len) {
-            memcpy(s_rx_buffer + event->payload_offset, event->data_ptr, event->data_len);
-            s_rx_len += (size_t)event->data_len;
-        }
-        if (s_rx_buffer && s_rx_len == (size_t)event->payload_len) {
-            s_rx_buffer[s_rx_len] = '\0';
-            ESP_LOGI(TAG, "Relay 完整消息接收完毕 (total=%zu bytes)，正在处理...", s_rx_len);
-            process_message(s_rx_buffer);
-            free(s_rx_buffer);
-            s_rx_buffer = NULL;
-            s_rx_len = 0;
+
+        // 普通控制指令消息 (<= 1024 字节)
+        if (event->payload_len < (int)sizeof(s_ctrl_rx_buffer)) {
+            if (is_first) s_ctrl_rx_len = 0;
+            if ((size_t)event->payload_offset == s_ctrl_rx_len &&
+                s_ctrl_rx_len + (size_t)event->data_len < sizeof(s_ctrl_rx_buffer)) {
+                memcpy(s_ctrl_rx_buffer + event->payload_offset, event->data_ptr, event->data_len);
+                s_ctrl_rx_len += (size_t)event->data_len;
+            }
+            if (is_last && s_ctrl_rx_len == (size_t)event->payload_len) {
+                s_ctrl_rx_buffer[s_ctrl_rx_len] = '\0';
+                process_message(s_ctrl_rx_buffer);
+                s_ctrl_rx_len = 0;
+            }
         }
     }
 }

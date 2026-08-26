@@ -131,15 +131,15 @@ static void apply_synchronized_time(void)
     set_clock_time((uint8_t)local_time.tm_hour, (uint8_t)local_time.tm_min,
                    (uint8_t)local_time.tm_sec);
     const app_settings_t *current = app_settings_get();
-    app_settings_t settings = {
-        .brightness_index = current->brightness_index,
-        .hour = (uint8_t)local_time.tm_hour,
-        .minute = (uint8_t)local_time.tm_min,
-        .second = (uint8_t)local_time.tm_sec,
-        .time_format = s_time_format == UI_STATUS_TIME_HH_MM_SS
-                           ? APP_SETTINGS_TIME_HH_MM_SS : APP_SETTINGS_TIME_HH_MM,
-        .wifi_enabled = wifi_manager_is_enabled(),
-    };
+    app_settings_t settings = *current;
+    settings.hour = (uint8_t)local_time.tm_hour;
+    settings.minute = (uint8_t)local_time.tm_min;
+    settings.second = (uint8_t)local_time.tm_sec;
+    settings.time_format = s_time_format == UI_STATUS_TIME_HH_MM_SS
+                               ? APP_SETTINGS_TIME_HH_MM_SS : APP_SETTINGS_TIME_HH_MM;
+    settings.wifi_enabled = wifi_manager_is_enabled();
+    settings.light_sleep_enabled = current->light_sleep_enabled;
+    settings.wifi_power_save_enabled = current->wifi_power_save_enabled;
     app_settings_save(&settings);
 }
 
