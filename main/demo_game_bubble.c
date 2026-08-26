@@ -823,10 +823,8 @@ void demo_game_bubble_exit(void)
 
 void demo_game_bubble_key(bsp_btn_t btn, bsp_btn_ev_t ev)
 {
-    if (ev != BSP_BTN_CLICK) return;
-
     if (s_game_over) {
-        if (btn == BSP_BTN_OK) {
+        if (btn == BSP_BTN_OK && ev == BSP_BTN_CLICK) {
             game_audio_play(GAME_SFX_POP);
             if (s_game_won) {
                 s_level++;
@@ -844,19 +842,27 @@ void demo_game_bubble_key(bsp_btn_t btn, bsp_btn_ev_t ev)
         return;
     }
 
+    if (btn == BSP_BTN_OK) {
+        if (ev == BSP_BTN_CLICK) {
+            launch_bubble();
+        }
+        return;
+    }
+
+    // UP/DOWN 按键支持单击、长按开始、以及长按连续连发 (HOLD)
+    if (ev != BSP_BTN_CLICK && ev != BSP_BTN_LONG && ev != BSP_BTN_HOLD) return;
+
     if (btn == BSP_BTN_UP) {
         // Rotate Counter-Clockwise (Left)
-        s_aim_angle -= 6.0f;
+        s_aim_angle -= 5.0f;
         if (s_aim_angle < -66.0f) s_aim_angle = -66.0f;
         game_audio_play(GAME_SFX_MOVE);
         update_aim_guide();
     } else if (btn == BSP_BTN_DOWN) {
         // Rotate Clockwise (Right)
-        s_aim_angle += 6.0f;
+        s_aim_angle += 5.0f;
         if (s_aim_angle > 66.0f) s_aim_angle = 66.0f;
         game_audio_play(GAME_SFX_MOVE);
         update_aim_guide();
-    } else if (btn == BSP_BTN_OK) {
-        launch_bubble();
     }
 }

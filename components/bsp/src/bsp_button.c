@@ -37,6 +37,7 @@ static void cb_press (void *a, void *u) { on_event(a, u, BSP_BTN_PRESS);  }
 static void cb_click (void *a, void *u) { on_event(a, u, BSP_BTN_CLICK);  }
 static void cb_double(void *a, void *u) { on_event(a, u, BSP_BTN_DOUBLE); }
 static void cb_long  (void *a, void *u) { on_event(a, u, BSP_BTN_LONG);   }
+static void cb_hold  (void *a, void *u) { on_event(a, u, BSP_BTN_HOLD);   }
 
 esp_err_t bsp_button_init(bsp_btn_cb_t cb, void *user) {
     s_cb = cb; s_user = user;
@@ -68,10 +69,17 @@ esp_err_t bsp_button_init(bsp_btn_cb_t cb, void *user) {
             return e == ESP_OK ? ESP_FAIL : e;
         }
         void *idx = (void *)(intptr_t)i;
-        iot_button_register_cb(s_btn[i], BUTTON_PRESS_DOWN,      NULL, cb_press,  idx);
-        iot_button_register_cb(s_btn[i], BUTTON_SINGLE_CLICK,    NULL, cb_click,  idx);
-        iot_button_register_cb(s_btn[i], BUTTON_DOUBLE_CLICK,    NULL, cb_double, idx);
-        iot_button_register_cb(s_btn[i], BUTTON_LONG_PRESS_START,NULL, cb_long,   idx);
+        if (i == BSP_BTN_OK) {
+            iot_button_set_param(s_btn[i], BUTTON_LONG_PRESS_TIME_MS, (void *)1000);
+        } else {
+            // UP/DOWN 按键长按 250ms 后即开始连发
+            iot_button_set_param(s_btn[i], BUTTON_LONG_PRESS_TIME_MS, (void *)250);
+        }
+        iot_button_register_cb(s_btn[i], BUTTON_PRESS_DOWN,       NULL, cb_press,  idx);
+        iot_button_register_cb(s_btn[i], BUTTON_SINGLE_CLICK,     NULL, cb_click,  idx);
+        iot_button_register_cb(s_btn[i], BUTTON_DOUBLE_CLICK,     NULL, cb_double, idx);
+        iot_button_register_cb(s_btn[i], BUTTON_LONG_PRESS_START, NULL, cb_long,   idx);
+        iot_button_register_cb(s_btn[i], BUTTON_LONG_PRESS_HOLD,  NULL, cb_hold,   idx);
     }
 
     // 通道已由组件配置好,这里只补一份校准句柄给 bsp_button_read_mv() 用。

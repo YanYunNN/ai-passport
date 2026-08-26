@@ -764,15 +764,23 @@ void demo_game_suika_exit(void)
 
 void demo_game_suika_key(bsp_btn_t btn, bsp_btn_ev_t ev)
 {
-    if (ev != BSP_BTN_CLICK) return;
-
     if (s_game_over) {
-        if (btn == BSP_BTN_OK) {
+        if (btn == BSP_BTN_OK && ev == BSP_BTN_CLICK) {
             game_audio_play(GAME_SFX_POP);
             suika_reset_game();
         }
         return;
     }
+
+    if (btn == BSP_BTN_OK) {
+        if (ev == BSP_BTN_CLICK) {
+            suika_drop_fruit();
+        }
+        return;
+    }
+
+    // UP/DOWN 按键支持单击、长按开始、以及长按连续连发 (HOLD)
+    if (ev != BSP_BTN_CLICK && ev != BSP_BTN_LONG && ev != BSP_BTN_HOLD) return;
 
     int r = FRUIT_TIERS[s_current_tier].radius;
     int min_x = CONTAINER_LEFT + r;
@@ -790,7 +798,5 @@ void demo_game_suika_key(bsp_btn_t btn, bsp_btn_ev_t ev)
         if (s_dropper_x > max_x) s_dropper_x = (float)max_x;
         game_audio_play(GAME_SFX_MOVE);
         update_dropper_visual();
-    } else if (btn == BSP_BTN_OK) {
-        suika_drop_fruit();
     }
 }

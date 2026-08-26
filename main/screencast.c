@@ -23,10 +23,7 @@ static const char *TAG = "screencast";
 #define SCREENCAST_B64_SIZE     (((SCREENCAST_RAW_SIZE + 2) / 3) * 4 + 4) // 3204 bytes
 #define SCREENCAST_MSG_SIZE     (SCREENCAST_B64_SIZE + 256) // ~3460 bytes
 
-static bool s_enabled = false;
-static uint32_t s_interval_ms = 1000;
-static bool s_capture_requested = false;
-static SemaphoreHandle_t s_lock = NULL;
+static SemaphoreHandle_t s_trigger_sem = NULL;
 static TaskHandle_t s_task_handle = NULL;
 static uint32_t s_frame_seq = 0;
 
@@ -110,6 +107,7 @@ static bool capture_slice(lv_display_t *disp, uint8_t slice_idx, uint8_t *out_bu
 static void send_full_frame(void)
 {
     if (!kiro_passport_network_is_connected()) {
+        ESP_LOGW(TAG, "网络未就绪，放弃截屏");
         return;
     }
 
@@ -119,7 +117,7 @@ static void send_full_frame(void)
     }
 
     uint32_t seq = ++s_frame_seq;
-    ESP_LOGI(TAG, "正在采集并发送全屏帧 seq=%lu (共 %d 片)", (unsigned long)seq, SCREENCAST_TOTAL_SLICES);
+    ESP_LOGI(TAG, "执行单帧截屏上报 seq=%lu (共 %d 片)", (unsigned long)seq, SCREENCAST_TOTAL_SLICES);
 
     for (uint8_t slice = 0; slice < SCREENCAST_TOTAL_SLICES; slice++) {
         if (!kiro_passport_network_is_connected()) break;
@@ -145,102 +143,70 @@ static void send_full_frame(void)
         if (len > 0) {
             int sent = kiro_passport_network_send_text(s_msg_buf);
             if (sent < 0) {
-                ESP_LOGW(TAG, "切片 %u 发送受阻，中止本帧投屏以保护连接", slice);
+                ESP_LOGW(TAG, "切片 %u 发送受阻，中止本帧以保护连接", slice);
                 break;
             }
         }
 
         vTaskDelay(pdMS_TO_TICKS(15));
     }
-    ESP_LOGD(TAG, "全屏帧 seq=%lu 发送完成", (unsigned long)seq);
+    ESP_LOGI(TAG, "单帧截屏 seq=%lu 上报完成", (unsigned long)seq);
 }
 
 static void screencast_task(void *pvParameters)
 {
     (void)pvParameters;
-    ESP_LOGI(TAG, "实时投屏采集任务已启动");
+    ESP_LOGI(TAG, "按需远程截屏服务已就绪");
 
     while (1) {
-        bool should_run = false;
-
-        if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(100)) == pdTRUE) {
-            if (s_capture_requested) {
-                s_capture_requested = false;
-                should_run = true;
-            } else if (s_enabled) {
-                should_run = true;
-            }
-            xSemaphoreGive(s_lock);
-        }
-
-        if (should_run) {
+        if (xSemaphoreTake(s_trigger_sem, portMAX_DELAY) == pdTRUE) {
             if (kiro_passport_network_is_connected()) {
                 send_full_frame();
             } else {
-                vTaskDelay(pdMS_TO_TICKS(1000));
+                ESP_LOGW(TAG, "收到截屏请求，但 WebSocket 尚未就绪");
             }
         }
-
-        uint32_t delay_ms = s_interval_ms;
-        if (delay_ms < 1500) delay_ms = 1500;
-        vTaskDelay(pdMS_TO_TICKS(delay_ms));
     }
 }
 
 esp_err_t screencast_init(void)
 {
-    if (s_lock) return ESP_OK;
+    if (s_trigger_sem) return ESP_OK;
 
-    s_lock = xSemaphoreCreateMutex();
-    if (!s_lock) {
-        ESP_LOGE(TAG, "创建互斥锁失败");
+    s_trigger_sem = xSemaphoreCreateBinary();
+    if (!s_trigger_sem) {
+        ESP_LOGE(TAG, "创建触发信号量失败");
         return ESP_ERR_NO_MEM;
     }
 
     BaseType_t ret = xTaskCreate(screencast_task, "screencast", 3072, NULL, 4, &s_task_handle);
     if (ret != pdPASS) {
-        ESP_LOGE(TAG, "创建投屏任务失败");
-        vSemaphoreDelete(s_lock);
-        s_lock = NULL;
+        ESP_LOGE(TAG, "创建截屏任务失败");
+        vSemaphoreDelete(s_trigger_sem);
+        s_trigger_sem = NULL;
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "实时投屏服务初始化成功");
+    ESP_LOGI(TAG, "按需截屏服务初始化成功");
     return ESP_OK;
 }
 
+static bool s_screencast_enabled = true;
+
 void screencast_set_enabled(bool enabled)
 {
-    if (s_lock && xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
-        s_enabled = enabled;
-        ESP_LOGI(TAG, "实时投屏已%s", enabled ? "开启" : "关闭");
-        xSemaphoreGive(s_lock);
-    }
+    s_screencast_enabled = enabled;
 }
 
 bool screencast_is_enabled(void)
 {
-    bool enabled = false;
-    if (s_lock && xSemaphoreTake(s_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
-        enabled = s_enabled;
-        xSemaphoreGive(s_lock);
-    }
-    return enabled;
+    return s_screencast_enabled;
 }
 
 void screencast_request_capture(void)
 {
-    if (s_lock && xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
-        s_capture_requested = true;
-        ESP_LOGI(TAG, "已触发单帧远程截屏请求");
-        xSemaphoreGive(s_lock);
+    if (s_screencast_enabled && s_trigger_sem) {
+        xSemaphoreGive(s_trigger_sem);
     }
 }
 
-void screencast_set_interval_ms(uint32_t interval_ms)
-{
-    if (s_lock && xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
-        s_interval_ms = interval_ms;
-        xSemaphoreGive(s_lock);
-    }
-}

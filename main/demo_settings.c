@@ -474,7 +474,7 @@ static esp_err_t persist_settings(void)
     settings.light_sleep_enabled = power_manager_is_light_sleep_enabled();
     settings.wifi_power_save_enabled = wifi_manager_is_power_save_enabled();
     settings.debug_enabled = debug_log_is_enabled();
-    settings.screencast_enabled = screencast_is_enabled();
+    settings.screencast_enabled = false;
     return app_settings_save(&settings);
 }
 
@@ -756,14 +756,13 @@ static void debug_details_refresh(void)
     if (s_view != SETTINGS_VIEW_DEBUG) return;
 
     bool enabled = debug_log_is_enabled();
-    bool cast_enabled = screencast_is_enabled();
     for (size_t i = 0; i < DEBUG_ACTION_COUNT; i++) {
         ui_system_set_item_state(s_debug_actions[i], s_debug_action_titles[i],
                                  s_debug_action_values[i], s_debug_action_indicators[i],
                                  i == s_debug_selected, true);
     }
     lv_label_set_text(s_debug_action_values[DEBUG_ACTION_TOGGLE], enabled ? "ON" : "OFF");
-    lv_label_set_text(s_debug_action_values[DEBUG_ACTION_SCREENCAST], cast_enabled ? "ON" : "OFF");
+    lv_label_set_text(s_debug_action_values[DEBUG_ACTION_SCREENCAST], "TEST");
     lv_label_set_text(s_debug_action_values[DEBUG_ACTION_DEVICE_LOG], "");
     lv_label_set_text(s_debug_action_values[DEBUG_ACTION_NETWORK_LOG], "");
     lv_label_set_text(s_debug_action_values[DEBUG_ACTION_BACK], "");
@@ -780,7 +779,7 @@ static void debug_details_build(void)
     ui_system_divider(s_scr, 16, 67, 208);
 
     static const char * const titles[DEBUG_ACTION_COUNT] = {
-        "调试开关", "实时投屏", "设备日志", "网络日志", "返回",
+        "调试开关", "截屏测试", "设备日志", "网络日志", "返回",
     };
     for (size_t i = 0; i < DEBUG_ACTION_COUNT; i++) {
         int y = 78 + (int)i * 32;
@@ -1286,9 +1285,8 @@ static void debug_settings_key(bsp_btn_t btn)
         debug_details_refresh();
         break;
     case DEBUG_ACTION_SCREENCAST:
-        screencast_set_enabled(!screencast_is_enabled());
-        persist_settings();
-        debug_details_refresh();
+        screencast_request_capture();
+        lv_label_set_text(s_debug_action_values[DEBUG_ACTION_SCREENCAST], "SENT");
         break;
     case DEBUG_ACTION_DEVICE_LOG:
         s_current_log_type = DEBUG_LOG_TYPE_DEVICE;
