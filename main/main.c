@@ -89,6 +89,11 @@ static void enter_menu(void)
 static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user)
 {
     (void)user;
+    bool was_dimmed = power_manager_activity_notify();
+    if (was_dimmed) {
+        // 息屏状态下按任意键仅点亮屏幕，不触发操作
+        return;
+    }
     if (!bsp_lvgl_lock(500)) return;
 
     if (s_active >= 0) {
