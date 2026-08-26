@@ -10,7 +10,8 @@
 #define APP_SETTINGS_VERSION_V2 2
 #define APP_SETTINGS_VERSION_V3 3
 #define APP_SETTINGS_VERSION_V4 4
-#define APP_SETTINGS_VERSION 5
+#define APP_SETTINGS_VERSION_V5 5
+#define APP_SETTINGS_VERSION 6
 
 static const char *TAG = "app_settings";
 
@@ -71,13 +72,30 @@ typedef struct __attribute__((packed)) {
     uint8_t debug_enabled;
     uint8_t screen_timeout_index;
     uint8_t auto_sleep_timeout_index;
+} app_settings_record_v5_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t version;
+    uint8_t brightness_index;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+    uint8_t time_format;
+    uint8_t wifi_enabled;
+    uint8_t light_sleep_enabled;
+    uint8_t wifi_power_save_enabled;
+    uint8_t debug_enabled;
+    uint8_t screencast_enabled;
+    uint8_t screen_timeout_index;
+    uint8_t auto_sleep_timeout_index;
 } app_settings_record_t;
 
 _Static_assert(sizeof(app_settings_record_v1_t) == 6, "v1 settings layout changed");
 _Static_assert(sizeof(app_settings_record_v2_t) == 7, "v2 settings layout changed");
 _Static_assert(sizeof(app_settings_record_v3_t) == 9, "v3 settings layout changed");
 _Static_assert(sizeof(app_settings_record_v4_t) == 10, "v4 settings layout changed");
-_Static_assert(sizeof(app_settings_record_t) == 12, "v5 settings layout changed");
+_Static_assert(sizeof(app_settings_record_v5_t) == 12, "v5 settings layout changed");
+_Static_assert(sizeof(app_settings_record_t) == 13, "v6 settings layout changed");
 
 static const app_settings_t s_defaults = {
     .brightness_index = 9,
@@ -89,6 +107,7 @@ static const app_settings_t s_defaults = {
     .light_sleep_enabled = true,
     .wifi_power_save_enabled = true,
     .debug_enabled = true,
+    .screencast_enabled = false,
     .screen_timeout_index = 0,
     .auto_sleep_timeout_index = 0,
 };
@@ -133,6 +152,7 @@ static app_settings_record_t record_from_settings(const app_settings_t *settings
         .light_sleep_enabled = settings->light_sleep_enabled ? 1u : 0u,
         .wifi_power_save_enabled = settings->wifi_power_save_enabled ? 1u : 0u,
         .debug_enabled = settings->debug_enabled ? 1u : 0u,
+        .screencast_enabled = settings->screencast_enabled ? 1u : 0u,
         .screen_timeout_index = settings->screen_timeout_index,
         .auto_sleep_timeout_index = settings->auto_sleep_timeout_index,
     };
@@ -153,6 +173,7 @@ static bool settings_from_v1_record(const app_settings_record_v1_t *record,
         .light_sleep_enabled = true,
         .wifi_power_save_enabled = true,
         .debug_enabled = true,
+        .screencast_enabled = false,
         .screen_timeout_index = 0,
         .auto_sleep_timeout_index = 0,
     };
@@ -177,6 +198,7 @@ static bool settings_from_v2_record(const app_settings_record_v2_t *record,
         .light_sleep_enabled = true,
         .wifi_power_save_enabled = true,
         .debug_enabled = true,
+        .screencast_enabled = false,
         .screen_timeout_index = 0,
         .auto_sleep_timeout_index = 0,
     };
@@ -202,6 +224,7 @@ static bool settings_from_v3_record(const app_settings_record_v3_t *record,
         .light_sleep_enabled = record->light_sleep_enabled != 0u,
         .wifi_power_save_enabled = record->wifi_power_save_enabled != 0u,
         .debug_enabled = true,
+        .screencast_enabled = false,
         .screen_timeout_index = 0,
         .auto_sleep_timeout_index = 0,
     };
@@ -227,16 +250,17 @@ static bool settings_from_v4_record(const app_settings_record_v4_t *record,
         .light_sleep_enabled = record->light_sleep_enabled != 0u,
         .wifi_power_save_enabled = record->wifi_power_save_enabled != 0u,
         .debug_enabled = record->debug_enabled != 0u,
+        .screencast_enabled = false,
         .screen_timeout_index = 0,
         .auto_sleep_timeout_index = 0,
     };
     return settings_valid(settings);
 }
 
-static bool settings_from_record(const app_settings_record_t *record,
-                                 app_settings_t *settings)
+static bool settings_from_v5_record(const app_settings_record_v5_t *record,
+                                    app_settings_t *settings)
 {
-    if (!record || !settings || record->version != APP_SETTINGS_VERSION ||
+    if (!record || !settings || record->version != APP_SETTINGS_VERSION_V5 ||
         record->wifi_enabled > 1u || record->light_sleep_enabled > 1u ||
         record->wifi_power_save_enabled > 1u || record->debug_enabled > 1u ||
         record->screen_timeout_index >= APP_SETTINGS_SCREEN_TIMEOUT_COUNT ||
@@ -254,6 +278,36 @@ static bool settings_from_record(const app_settings_record_t *record,
         .light_sleep_enabled = record->light_sleep_enabled != 0u,
         .wifi_power_save_enabled = record->wifi_power_save_enabled != 0u,
         .debug_enabled = record->debug_enabled != 0u,
+        .screencast_enabled = false,
+        .screen_timeout_index = record->screen_timeout_index,
+        .auto_sleep_timeout_index = record->auto_sleep_timeout_index,
+    };
+    return settings_valid(settings);
+}
+
+static bool settings_from_record(const app_settings_record_t *record,
+                                 app_settings_t *settings)
+{
+    if (!record || !settings || record->version != APP_SETTINGS_VERSION ||
+        record->wifi_enabled > 1u || record->light_sleep_enabled > 1u ||
+        record->wifi_power_save_enabled > 1u || record->debug_enabled > 1u ||
+        record->screencast_enabled > 1u ||
+        record->screen_timeout_index >= APP_SETTINGS_SCREEN_TIMEOUT_COUNT ||
+        record->auto_sleep_timeout_index >= APP_SETTINGS_AUTO_SLEEP_COUNT) {
+        return false;
+    }
+
+    *settings = (app_settings_t){
+        .brightness_index = record->brightness_index,
+        .hour = record->hour,
+        .minute = record->minute,
+        .second = record->second,
+        .time_format = (app_settings_time_format_t)record->time_format,
+        .wifi_enabled = record->wifi_enabled != 0u,
+        .light_sleep_enabled = record->light_sleep_enabled != 0u,
+        .wifi_power_save_enabled = record->wifi_power_save_enabled != 0u,
+        .debug_enabled = record->debug_enabled != 0u,
+        .screencast_enabled = record->screencast_enabled != 0u,
         .screen_timeout_index = record->screen_timeout_index,
         .auto_sleep_timeout_index = record->auto_sleep_timeout_index,
     };
@@ -323,6 +377,14 @@ static esp_err_t load_settings(void)
         result = nvs_get_blob(handle, APP_SETTINGS_KEY, &record, &size);
         if (result == ESP_OK && settings_from_v4_record(&record, &s_settings)) {
             migrated_from = APP_SETTINGS_VERSION_V4;
+        } else {
+            s_settings = s_defaults;
+        }
+    } else if (size == sizeof(app_settings_record_v5_t)) {
+        app_settings_record_v5_t record;
+        result = nvs_get_blob(handle, APP_SETTINGS_KEY, &record, &size);
+        if (result == ESP_OK && settings_from_v5_record(&record, &s_settings)) {
+            migrated_from = APP_SETTINGS_VERSION_V5;
         } else {
             s_settings = s_defaults;
         }

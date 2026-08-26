@@ -8,6 +8,7 @@
 #include "app_settings.h"
 #include "debug_log.h"
 #include "power_manager.h"
+#include "screencast.h"
 #include "demo.h"
 #include "kiro_passport_network.h"
 #include "ui_font_noto_sc_14.h"
@@ -191,6 +192,9 @@ void app_main(void)
     if (passport_result != ESP_OK) {
         ESP_LOGW(TAG, "Kiro Passport Wi-Fi 初始化失败: %s", esp_err_to_name(passport_result));
     }
+
+    screencast_init();
+    screencast_set_enabled(settings->screencast_enabled);
 
     if (bsp_lvgl_lock(1000)) {
         ui_status_init();

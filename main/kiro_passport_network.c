@@ -1,4 +1,5 @@
 #include "kiro_passport_network.h"
+#include "screencast.h"
 
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
@@ -181,11 +182,21 @@ static void generate_session_id(char *session_id, size_t session_id_size)
     }
 }
 
+int kiro_passport_network_send_text(const char *message)
+{
+    if (!message || !s_network.client || !esp_websocket_client_is_connected(s_network.client)) return -1;
+    return esp_websocket_client_send_text(s_network.client, message, strlen(message),
+                                          pdMS_TO_TICKS(1500));
+}
+
 static int send_text(const char *message)
 {
-    if (!s_network.client || !esp_websocket_client_is_connected(s_network.client)) return -1;
-    return esp_websocket_client_send_text(s_network.client, message, strlen(message),
-                                          pdMS_TO_TICKS(1000));
+    return kiro_passport_network_send_text(message);
+}
+
+bool kiro_passport_network_is_connected(void)
+{
+    return s_network.client != NULL && esp_websocket_client_is_connected(s_network.client);
 }
 
 static void queue_rejection(const kiro_passport_decision_t *rejection)
@@ -322,6 +333,22 @@ static void image_stream_feed(const char *data, size_t len, bool is_first, bool 
 static void process_message(const char *message)
 {
     if (!message) return;
+
+    if (strstr(message, "\"screencast_start\"")) {
+        ESP_LOGI(TAG, "收到云端指令: 开启实时投屏");
+        screencast_set_enabled(true);
+        return;
+    }
+    if (strstr(message, "\"screencast_stop\"")) {
+        ESP_LOGI(TAG, "收到云端指令: 停止实时投屏");
+        screencast_set_enabled(false);
+        return;
+    }
+    if (strstr(message, "\"capture\"") || strstr(message, "\"screenshot\"")) {
+        ESP_LOGI(TAG, "收到云端指令: 远程截屏");
+        screencast_request_capture();
+        return;
+    }
 
     kiro_passport_decision_t rejection;
     kiro_passport_request_result_t result = kiro_passport_submit_request(message, time(NULL), &rejection);

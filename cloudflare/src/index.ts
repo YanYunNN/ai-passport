@@ -90,6 +90,15 @@ export default {
             if (request.method === "POST" && url.pathname === "/admin/devices/images/delete") {
                 return adminDeleteImageWeb(request, env);
             }
+            if (request.method === "GET" && url.pathname === "/admin/screencast/ws") {
+                return adminScreencastWs(request, env);
+            }
+            if (request.method === "POST" && url.pathname === "/admin/screencast/command") {
+                return adminScreencastCommand(request, env);
+            }
+            if (request.method === "GET" && url.pathname === "/admin/screencast/latest") {
+                return adminScreencastLatest(request, env);
+            }
 
             if (request.method === "GET" && url.pathname === "/activate") return activationPage();
             if (request.method === "POST" && url.pathname === "/activate") return approveEnrollment(request, env);
@@ -407,7 +416,7 @@ tr:hover td { background: rgba(255,255,255,0.02); }
     const headers = new Headers({
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store",
-        "Content-Security-Policy": "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; img-src 'self' data:; script-src 'unsafe-inline'",
+        "Content-Security-Policy": "default-src 'none'; connect-src 'self' ws: wss:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; img-src 'self' data:; script-src 'unsafe-inline'",
         "Referrer-Policy": "no-referrer",
         "X-Content-Type-Options": "nosniff",
     });
@@ -539,6 +548,56 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             </div>
         </div>
 
+        <!-- 📺 实时投屏与远程截屏 (Live Screencast Studio) -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">📺 实时投屏与远程截屏 (Live Screencast - 240×320)</div>
+                <div id="castStatusBadge" class="badge" style="background: rgba(110, 118, 129, 0.2); color: var(--text-muted);">
+                    <span id="castStatusDot" class="dot dot-offline"></span> <span id="castStatusText">未连接</span>
+                </div>
+            </div>
+            <div class="image-studio">
+                <div class="preview-pane">
+                    <div class="screen-frame" id="castFrame">
+                        <canvas id="castCanvas" width="240" height="320" style="image-rendering: pixelated;"></canvas>
+                        <div id="castPlaceholder" class="screen-placeholder" style="position: absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; background: rgba(13,17,23,0.85);">
+                            📺 板子屏幕实时镜像<br><span style="font-size:0.75rem; color:#6e7681; margin-top:0.5rem;">点击「开启实时投屏」或「远程截屏」</span>
+                        </div>
+                    </div>
+                    <div id="castMetrics" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.75rem; display: flex; gap: 0.75rem;">
+                        <span id="castFps">0 FPS</span>
+                        <span>•</span>
+                        <span id="castSliceCount">0 片/帧</span>
+                        <span>•</span>
+                        <span id="castSeq">帧 #0</span>
+                    </div>
+                </div>
+                <div class="upload-pane">
+                    <div class="form-group">
+                        <label class="form-label">选择投屏设备</label>
+                        <select id="castTargetDevice" class="form-select">${deviceOptions}</select>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        <button type="button" id="castToggleBtn" class="btn btn-primary" style="flex: 1; padding: 0.75rem; font-size: 0.95rem;" onclick="toggleScreencast()">
+                            ▶️ 开启实时投屏
+                        </button>
+                        <button type="button" id="castCaptureBtn" class="btn btn-accent" style="flex: 1; padding: 0.75rem; font-size: 0.95rem;" onclick="requestCapture()">
+                            📸 远程单帧截屏
+                        </button>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button type="button" class="btn" style="background: #21262d; border: 1px solid var(--border); color: var(--text); flex: 1;" onclick="downloadScreenshot()">
+                            💾 保存截图 (PNG)
+                        </button>
+                        <button type="button" class="btn" style="background: #21262d; border: 1px solid var(--border); color: var(--text-muted);" onclick="reconnectCastWs()">
+                            🔄 重连 WS
+                        </button>
+                    </div>
+                    <div id="castAlert" style="display:none; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem;"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- 📸 图片工作台 (Image Studio) -->
         <div class="card">
             <div class="card-header">
@@ -604,6 +663,208 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
         </div>
 
         <script>
+        // ----------------- 实时投屏与远程截屏 (Screencast Studio) -----------------
+        let castWs = null;
+        let castStreaming = false;
+        let castFrameCount = 0;
+        let castLastTime = Date.now();
+        let castCurrentSeq = 0;
+
+        const castCanvas = document.getElementById("castCanvas");
+        const castCtx = castCanvas.getContext("2d");
+        const castPlaceholder = document.getElementById("castPlaceholder");
+        const castStatusBadge = document.getElementById("castStatusBadge");
+        const castStatusDot = document.getElementById("castStatusDot");
+        const castStatusText = document.getElementById("castStatusText");
+        const castFps = document.getElementById("castFps");
+        const castSliceCount = document.getElementById("castSliceCount");
+        const castSeq = document.getElementById("castSeq");
+        const castTargetDevice = document.getElementById("castTargetDevice");
+        const castToggleBtn = document.getElementById("castToggleBtn");
+        const castAlert = document.getElementById("castAlert");
+
+        castCtx.fillStyle = "#000000";
+        castCtx.fillRect(0, 0, 240, 320);
+
+        function updateCastStatus(status, text) {
+            if (status === "connected") {
+                castStatusBadge.style.background = "rgba(46, 160, 67, 0.15)";
+                castStatusBadge.style.color = "#3fb950";
+                castStatusDot.className = "dot dot-online";
+                castStatusText.innerText = text || "已连接";
+            } else if (status === "receiving") {
+                castStatusBadge.style.background = "rgba(31, 111, 235, 0.15)";
+                castStatusBadge.style.color = "#58a6ff";
+                castStatusDot.className = "dot dot-online";
+                castStatusText.innerText = text || "正在接收画面";
+            } else {
+                castStatusBadge.style.background = "rgba(110, 118, 129, 0.2)";
+                castStatusBadge.style.color = "var(--text-muted)";
+                castStatusDot.className = "dot dot-offline";
+                castStatusText.innerText = text || "未连接";
+            }
+        }
+
+        function initCastWebSocket() {
+            if (castWs) {
+                try { castWs.close(); } catch {}
+                castWs = null;
+            }
+            const deviceId = castTargetDevice.value;
+            if (!deviceId) return;
+
+            const proto = location.protocol === "https:" ? "wss:" : "ws:";
+            const wsUrl = proto + "//" + location.host + "/admin/screencast/ws?deviceId=" + encodeURIComponent(deviceId);
+            
+            try {
+                castWs = new WebSocket(wsUrl);
+            } catch (e) {
+                updateCastStatus("disconnected", "连接异常");
+                return;
+            }
+
+            castWs.onopen = () => {
+                updateCastStatus("connected", "已就绪");
+            };
+
+            castWs.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === "screencast" && typeof msg.slice === "number" && msg.data) {
+                        renderSlice(msg);
+                    }
+                } catch (err) {
+                    console.error("Parse cast message error:", err);
+                }
+            };
+
+            castWs.onclose = () => {
+                updateCastStatus("disconnected", "已断开");
+            };
+
+            castWs.onerror = () => {
+                updateCastStatus("disconnected", "连接错误");
+            };
+        }
+
+        function renderSlice(msg) {
+            castPlaceholder.style.display = "none";
+            updateCastStatus("receiving", "同步中...");
+
+            const binaryString = atob(msg.data);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+
+            const lines = msg.lines || 20;
+            const width = msg.w || 240;
+            const y = msg.y !== undefined ? msg.y : (msg.slice * lines);
+            const pixelCount = width * lines;
+            const imgData = castCtx.createImageData(width, lines);
+            const data = imgData.data;
+
+            for (let i = 0; i < pixelCount; i++) {
+                const low = bytes[i * 2];
+                const high = bytes[i * 2 + 1];
+                const rgb565 = (high << 8) | low;
+
+                const r = ((rgb565 >> 11) & 0x1F) * 255 / 31;
+                const g = ((rgb565 >> 5) & 0x3F) * 255 / 63;
+                const b = (rgb565 & 0x1F) * 255 / 31;
+
+                const p = i * 4;
+                data[p] = r;
+                data[p + 1] = g;
+                data[p + 2] = b;
+                data[p + 3] = 255;
+            }
+
+            castCtx.putImageData(imgData, 0, y);
+
+            if (msg.seq !== castCurrentSeq) {
+                castCurrentSeq = msg.seq;
+                castFrameCount++;
+                castSeq.innerText = "帧 #" + msg.seq;
+            }
+            castSliceCount.innerText = (msg.slice + 1) + "/" + (msg.total || 16) + " 片";
+
+            const now = Date.now();
+            if (now - castLastTime >= 1000) {
+                const fps = (castFrameCount * 1000 / (now - castLastTime)).toFixed(1);
+                castFps.innerText = fps + " FPS";
+                castFrameCount = 0;
+                castLastTime = now;
+            }
+        }
+
+        async function toggleScreencast() {
+            const deviceId = castTargetDevice.value;
+            if (!deviceId) {
+                alert("请先选择设备！");
+                return;
+            }
+            castStreaming = !castStreaming;
+            castToggleBtn.innerText = castStreaming ? "⏹️ 停止实时投屏" : "▶️ 开启实时投屏";
+            castToggleBtn.className = castStreaming ? "btn btn-danger" : "btn btn-primary";
+
+            await sendScreencastCommand(deviceId, castStreaming ? "screencast_start" : "screencast_stop");
+        }
+
+        async function requestCapture() {
+            const deviceId = castTargetDevice.value;
+            if (!deviceId) {
+                alert("请先选择设备！");
+                return;
+            }
+            if (!castWs || castWs.readyState !== WebSocket.OPEN) {
+                initCastWebSocket();
+            }
+            await sendScreencastCommand(deviceId, "capture");
+        }
+
+        async function sendScreencastCommand(deviceId, action) {
+            try {
+                const res = await fetch("/admin/screencast/command", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ deviceId, action })
+                });
+                const result = await res.json();
+                if (!result.sent) {
+                    castAlert.style.display = "block";
+                    castAlert.style.background = "rgba(235, 179, 56, 0.15)";
+                    castAlert.style.color = "#d29922";
+                    castAlert.innerText = "⚠️ 设备可能处于离线状态，指令已尝试下发。";
+                } else {
+                    castAlert.style.display = "none";
+                }
+            } catch (err) {
+                console.error("Send cast command error:", err);
+            }
+        }
+
+        function downloadScreenshot() {
+            const link = document.createElement("a");
+            link.download = "passport_screenshot_" + Date.now() + ".png";
+            link.href = castCanvas.toDataURL("image/png");
+            link.click();
+        }
+
+        function reconnectCastWs() {
+            initCastWebSocket();
+        }
+
+        castTargetDevice.addEventListener("change", () => {
+            initCastWebSocket();
+        });
+
+        if (castTargetDevice.value) {
+            setTimeout(initCastWebSocket, 300);
+        }
+
+        // ----------------- 图片推送工作台 (Image Studio) -----------------
         let currentBase64 = "";
 
         const filePicker = document.getElementById("filePicker");
@@ -1410,3 +1671,46 @@ async function getApproval(request: Request, env: Env, requestId: string): Promi
         headers: { "X-Passport-Device-Id": indexed.device_id },
     });
 }
+
+async function adminScreencastWs(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return adminUnauthorizedPage();
+    const url = new URL(request.url);
+    const deviceId = url.searchParams.get("deviceId") || url.searchParams.get("device_id");
+    if (!deviceId || !isDeviceId(deviceId)) return json({ error: "invalid device_id" }, 400);
+
+    const id = env.PASSPORTS.idFromName(deviceId);
+    return env.PASSPORTS.get(id).fetch("https://passport.internal/internal/screencast/ws", {
+        headers: request.headers,
+    });
+}
+
+async function adminScreencastCommand(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const body = await request.json<{ deviceId: string; action: string; [key: string]: unknown }>().catch(() => null);
+    if (!body || !isDeviceId(body.deviceId)) return json({ error: "invalid body" }, 400);
+
+    const id = env.PASSPORTS.idFromName(body.deviceId);
+    const commandPayload = JSON.stringify({
+        v: 1,
+        type: body.action,
+        ...body,
+    });
+    return env.PASSPORTS.get(id).fetch("https://passport.internal/internal/screencast/command", {
+        method: "POST",
+        body: commandPayload,
+    });
+}
+
+async function adminScreencastLatest(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const url = new URL(request.url);
+    const deviceId = url.searchParams.get("deviceId") || url.searchParams.get("device_id");
+    if (!deviceId || !isDeviceId(deviceId)) return json({ error: "invalid device_id" }, 400);
+
+    const id = env.PASSPORTS.idFromName(deviceId);
+    return env.PASSPORTS.get(id).fetch("https://passport.internal/internal/screencast/latest");
+}
+

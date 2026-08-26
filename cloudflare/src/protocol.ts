@@ -160,3 +160,25 @@ export function serializeDeviceRequest(request: DeviceRequest): string {
 export function isDeviceId(value: string): boolean {
     return DEVICE_ID_PATTERN.test(value);
 }
+
+export interface ScreencastMessage {
+    v: 1;
+    type: "screencast";
+    seq: number;
+    slice: number;
+    total: number;
+    y: number;
+    lines: number;
+    data: string;
+}
+
+export function parseScreencastMessage(payload: string): ScreencastMessage | null {
+    try {
+        const obj = JSON.parse(payload);
+        if (obj && obj.type === "screencast" && typeof obj.slice === "number" && typeof obj.data === "string") {
+            return obj as ScreencastMessage;
+        }
+    } catch {}
+    return null;
+}
+

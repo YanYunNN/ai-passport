@@ -19,6 +19,7 @@ typedef struct {
     bool light_sleep_enabled;
     bool wifi_power_save_enabled;
     bool debug_enabled;
+    bool screencast_enabled;
     uint8_t screen_timeout_index;
     uint8_t auto_sleep_timeout_index;
 } app_settings_t;

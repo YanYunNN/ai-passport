@@ -63,6 +63,8 @@ const projectionRetryDelayMs = 10_000;
 
 export class PassportRelay extends DurableObject<Env> {
     private readonly sockets = new Map<WebSocket, SocketAttachment>();
+    private readonly adminViewers = new Set<WebSocket>();
+    private readonly latestSlices = new Map<number, string>();
 
     constructor(ctx: DurableObjectState, env: Env) {
         super(ctx, env);
@@ -85,11 +87,48 @@ export class PassportRelay extends DurableObject<Env> {
         }
         if (request.method === "POST" && url.pathname === "/internal/revoke") return this.revoke(request);
         if (request.method === "POST" && url.pathname === "/internal/send-image") return this.sendImage(request);
+        if (request.method === "GET" && url.pathname === "/internal/screencast/ws") {
+            return this.connectAdminViewer(request);
+        }
+        if (request.method === "POST" && url.pathname === "/internal/screencast/command") {
+            return this.sendScreencastCommand(request);
+        }
+        if (request.method === "GET" && url.pathname === "/internal/screencast/latest") {
+            const slices = Array.from(this.latestSlices.values()).map((s) => JSON.parse(s));
+            return json({ slices });
+        }
         if (request.method === "GET" && url.pathname === "/internal/status") {
             const openSockets = this.ctx.getWebSockets();
             return json({ online: openSockets.length > 0 || this.sockets.size > 0 });
         }
         return json({ error: "not found" }, 404);
+    }
+
+    private connectAdminViewer(request: Request): Response {
+        if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+            return json({ error: "expected websocket upgrade" }, 400);
+        }
+        const pair = new WebSocketPair();
+        const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
+        this.ctx.acceptWebSocket(server);
+        this.adminViewers.add(server);
+        return new Response(null, { status: 101, webSocket: client });
+    }
+
+    private async sendScreencastCommand(request: Request): Promise<Response> {
+        const payload = await request.text();
+        const sockets = this.ctx.getWebSockets();
+        const allSockets = new Set([...sockets, ...this.sockets.keys()]);
+        let sent = false;
+        for (const socket of allSockets) {
+            if (!this.adminViewers.has(socket)) {
+                try {
+                    socket.send(payload);
+                    sent = true;
+                } catch {}
+            }
+        }
+        return json({ sent, online: allSockets.size > 0 });
     }
 
     private async sendImage(request: Request): Promise<Response> {
@@ -110,9 +149,11 @@ export class PassportRelay extends DurableObject<Env> {
             data: payload.data,
         });
         for (const socket of allSockets) {
-            try {
-                socket.send(msg);
-            } catch {}
+            if (!this.adminViewers.has(socket)) {
+                try {
+                    socket.send(msg);
+                } catch {}
+            }
         }
         return json({ sent: true, online: true });
     }
@@ -127,6 +168,19 @@ export class PassportRelay extends DurableObject<Env> {
     }
 
     async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
+        if (this.adminViewers.has(socket)) {
+            if (typeof message === "string") {
+                const sockets = this.ctx.getWebSockets();
+                const allSockets = new Set([...sockets, ...this.sockets.keys()]);
+                for (const s of allSockets) {
+                    if (!this.adminViewers.has(s)) {
+                        try { s.send(message); } catch {}
+                    }
+                }
+            }
+            return;
+        }
+
         const attachment = this.attachmentFor(socket);
         if (!attachment || typeof message !== "string") {
             await this.denyCurrentForProtocolError();
@@ -146,6 +200,20 @@ export class PassportRelay extends DurableObject<Env> {
             return;
         }
 
+        // Check if device is sending screencast frame / slice
+        if (message.includes('"screencast"')) {
+            try {
+                const parsed = JSON.parse(message);
+                if (parsed && parsed.type === "screencast" && typeof parsed.slice === "number") {
+                    this.latestSlices.set(parsed.slice, message);
+                    for (const viewer of this.adminViewers) {
+                        try { viewer.send(message); } catch {}
+                    }
+                    return;
+                }
+            } catch {}
+        }
+
         const state = await this.loadState();
         const decision = parseDecision(message, attachment.deviceId);
         if (!decision || state.deviceId !== attachment.deviceId || state.currentSessionId !== attachment.sessionId ||
@@ -161,6 +229,10 @@ export class PassportRelay extends DurableObject<Env> {
     }
 
     async webSocketClose(socket: WebSocket): Promise<void> {
+        if (this.adminViewers.has(socket)) {
+            this.adminViewers.delete(socket);
+            return;
+        }
         const attachment = this.attachmentFor(socket);
         this.sockets.delete(socket);
         await this.invalidateSession(attachment?.sessionId, false);

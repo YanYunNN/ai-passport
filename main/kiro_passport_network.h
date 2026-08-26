@@ -67,3 +67,10 @@ typedef struct {
 
 /* 获取当前接收到的图片信息，若无图片返回 false */
 bool kiro_passport_network_get_image(kiro_passport_image_info_t *out_info);
+
+/* 发送自定义文本消息到已连接的 WebSocket (成功返回发送字节数，失败返回 -1) */
+int kiro_passport_network_send_text(const char *message);
+
+/* 检查 WebSocket 是否处于连接活跃状态 */
+bool kiro_passport_network_is_connected(void);
+

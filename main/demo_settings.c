@@ -4,6 +4,7 @@
 #include "debug_log.h"
 #include "kiro_passport_network.h"
 #include "power_manager.h"
+#include "screencast.h"
 #include "time_sync.h"
 #include "ui_font_noto_sc_14.h"
 #include "ui_font_noto_sc_20.h"
@@ -12,7 +13,6 @@
 #include "wifi_manager.h"
 #include <string.h>
 #include "lvgl.h"
-#include <string.h>
 
 #define SETTING_COUNT 6
 #define TIME_ACTION_COUNT 6
@@ -20,7 +20,7 @@
 #define WIFI_ACTION_COUNT 4
 #define NET_ROW_MAX (MAX_WIFI_PROFILES + 1)
 #define RELAY_ACTION_COUNT 3
-#define DEBUG_ACTION_COUNT 4
+#define DEBUG_ACTION_COUNT 5
 
 typedef enum {
     SETTING_BRIGHTNESS,
@@ -76,6 +76,7 @@ typedef enum {
 
 typedef enum {
     DEBUG_ACTION_TOGGLE,
+    DEBUG_ACTION_SCREENCAST,
     DEBUG_ACTION_DEVICE_LOG,
     DEBUG_ACTION_NETWORK_LOG,
     DEBUG_ACTION_BACK,
@@ -461,6 +462,7 @@ static esp_err_t persist_settings(void)
     settings.light_sleep_enabled = power_manager_is_light_sleep_enabled();
     settings.wifi_power_save_enabled = wifi_manager_is_power_save_enabled();
     settings.debug_enabled = debug_log_is_enabled();
+    settings.screencast_enabled = screencast_is_enabled();
     return app_settings_save(&settings);
 }
 
@@ -742,12 +744,14 @@ static void debug_details_refresh(void)
     if (s_view != SETTINGS_VIEW_DEBUG) return;
 
     bool enabled = debug_log_is_enabled();
+    bool cast_enabled = screencast_is_enabled();
     for (size_t i = 0; i < DEBUG_ACTION_COUNT; i++) {
         ui_system_set_item_state(s_debug_actions[i], s_debug_action_titles[i],
                                  s_debug_action_values[i], s_debug_action_indicators[i],
                                  i == s_debug_selected, true);
     }
     lv_label_set_text(s_debug_action_values[DEBUG_ACTION_TOGGLE], enabled ? "ON" : "OFF");
+    lv_label_set_text(s_debug_action_values[DEBUG_ACTION_SCREENCAST], cast_enabled ? "ON" : "OFF");
     lv_label_set_text(s_debug_action_values[DEBUG_ACTION_DEVICE_LOG], "");
     lv_label_set_text(s_debug_action_values[DEBUG_ACTION_NETWORK_LOG], "");
     lv_label_set_text(s_debug_action_values[DEBUG_ACTION_BACK], "");
@@ -760,14 +764,14 @@ static void debug_details_build(void)
                                         UI_SYSTEM_TEXT);
     lv_obj_set_width(heading, 208);
     lv_obj_set_style_text_align(heading, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_pos(heading, 16, 42);
-    ui_system_divider(s_scr, 16, 77, 208);
+    lv_obj_set_pos(heading, 16, 32);
+    ui_system_divider(s_scr, 16, 67, 208);
 
     static const char * const titles[DEBUG_ACTION_COUNT] = {
-        "调试开关", "设备日志", "网络日志", "返回",
+        "调试开关", "实时投屏", "设备日志", "网络日志", "返回",
     };
     for (size_t i = 0; i < DEBUG_ACTION_COUNT; i++) {
-        int y = 92 + (int)i * 32;
+        int y = 78 + (int)i * 32;
         s_debug_actions[i] = ui_system_item_create(s_scr, 16, y, 208, 29);
         s_debug_action_titles[i] = ui_system_label(s_debug_actions[i], titles[i],
                                                    &ui_font_noto_sc_14, UI_SYSTEM_TEXT);
@@ -1255,6 +1259,11 @@ static void debug_settings_key(bsp_btn_t btn)
     switch ((debug_action_t)s_debug_selected) {
     case DEBUG_ACTION_TOGGLE:
         debug_log_set_enabled(!debug_log_is_enabled());
+        persist_settings();
+        debug_details_refresh();
+        break;
+    case DEBUG_ACTION_SCREENCAST:
+        screencast_set_enabled(!screencast_is_enabled());
         persist_settings();
         debug_details_refresh();
         break;
