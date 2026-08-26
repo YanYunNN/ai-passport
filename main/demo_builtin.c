@@ -21,6 +21,7 @@ static const builtin_subdemo_t SUBDEMOS[] = {
     { "按键", demo_button_enter, demo_button_exit, demo_button_key },
     { "音频", demo_audio_enter, demo_audio_exit, demo_audio_key },
     { "电量", demo_battery_enter, demo_battery_exit, demo_battery_key },
+    { "动画", demo_anim_enter, demo_anim_exit, demo_anim_key },
 };
 
 #define SUBDEMO_COUNT (sizeof(SUBDEMOS) / sizeof(SUBDEMOS[0]))

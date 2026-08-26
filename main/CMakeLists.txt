@@ -16,6 +16,7 @@ idf_component_register(
          "demo_button.c"
          "demo_audio.c"
          "demo_battery.c"
+         "demo_anim.c"
          "demo_builtin.c"
          "demo_reader.c"
          "demo_image.c"
