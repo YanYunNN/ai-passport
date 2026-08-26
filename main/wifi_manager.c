@@ -12,8 +12,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-
 #define WIFI_PORTAL_MAX_FORM_LENGTH 160
 #define WIFI_CONNECT_RETRY_LIMIT 4
 
@@ -34,6 +34,9 @@ static wifi_config_t s_station_config;
 static char s_ap_ssid[33];
 static char s_ap_password[13];
 static portMUX_TYPE s_provisioning_lock = portMUX_INITIALIZER_UNLOCKED;
+static char s_failed_ssids[MAX_WIFI_PROFILES][33];
+static uint8_t s_failed_count;
+static bool s_rescan_running;
 
 static void stop_portal_server(void)
 {
@@ -56,6 +59,49 @@ static void clear_pending_config(void)
     s_connection_scheduled = false;
     memset(&s_station_config, 0, sizeof(s_station_config));
     taskEXIT_CRITICAL(&s_provisioning_lock);
+}
+
+/* Track networks that failed in the current connect cycle so an automatic
+ * fallback scan never picks the same SSID twice (avoids retry loops on wrong
+ * credentials). Cleared on success or on a fresh manual/provisioning action. */
+static void remember_failed_ssid(const char *ssid)
+{
+    if (!ssid || !ssid[0]) return;
+    taskENTER_CRITICAL(&s_provisioning_lock);
+    for (uint8_t i = 0; i < s_failed_count; i++) {
+        if (strcmp(s_failed_ssids[i], ssid) == 0) {
+            taskEXIT_CRITICAL(&s_provisioning_lock);
+            return;
+        }
+    }
+    if (s_failed_count < MAX_WIFI_PROFILES) {
+        snprintf(s_failed_ssids[s_failed_count], sizeof(s_failed_ssids[0]),
+                 "%s", ssid);
+        s_failed_count++;
+    }
+    taskEXIT_CRITICAL(&s_provisioning_lock);
+}
+
+static void reset_failed_ssids(void)
+{
+    taskENTER_CRITICAL(&s_provisioning_lock);
+    s_failed_count = 0;
+    taskEXIT_CRITICAL(&s_provisioning_lock);
+}
+
+static bool failed_before(const char *ssid)
+{
+    if (!ssid) return false;
+    taskENTER_CRITICAL(&s_provisioning_lock);
+    bool found = false;
+    for (uint8_t i = 0; i < s_failed_count; i++) {
+        if (strcmp(s_failed_ssids[i], ssid) == 0) {
+            found = true;
+            break;
+        }
+    }
+    taskEXIT_CRITICAL(&s_provisioning_lock);
+    return found;
 }
 
 static int hex_value(char character)
@@ -122,6 +168,31 @@ static void fail_connection(const char *operation, esp_err_t result)
     clear_pending_config();
 }
 
+/* Shared "apply a station config and connect" sequence used by the portal
+ * connect task and by the multi-profile switch path. */
+static esp_err_t switch_station_and_connect(wifi_config_t *config)
+{
+    s_transitioning = true;
+    esp_err_t result = stop_wifi();
+    if (result == ESP_OK) result = esp_wifi_set_mode(WIFI_MODE_STA);
+
+    /* Persist before starting the station: a reset, DHCP failure, or lost GOT_IP event
+     * must not discard a valid selection. Invalid credentials can always be replaced by
+     * re-provisioning from Settings. */
+    if (result == ESP_OK) result = esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+    if (result == ESP_OK) result = esp_wifi_set_config(WIFI_IF_STA, config);
+    if (result == ESP_OK) {
+        ESP_LOGI(TAG, "候选 Wi-Fi 凭据已在连接前写入 Flash");
+        result = esp_wifi_start();
+    }
+    s_transitioning = false;
+
+    if (result != ESP_OK) return result;
+    s_state = WIFI_MANAGER_CONNECTING;
+    s_retry_count = 0;
+    return esp_wifi_connect();
+}
+
 static void connect_task(void *argument)
 {
     uint32_t generation = (uint32_t)(uintptr_t)argument;
@@ -132,32 +203,24 @@ static void connect_task(void *argument)
         return;
     }
 
-    s_transitioning = true;
     stop_portal_server();
-    esp_err_t result = stop_wifi();
-    if (result == ESP_OK) result = esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_err_t result = switch_station_and_connect(&s_station_config);
+    if (result != ESP_OK) fail_connection("启动候选 Wi-Fi 配置", result);
+    vTaskDelete(NULL);
+}
 
-    /* Persist before starting the station: a reset, DHCP failure, or lost GOT_IP event
-     * must not discard a valid provisioning submission. Invalid credentials can always
-     * be replaced by starting provisioning again from Settings. */
-    if (result == ESP_OK) result = esp_wifi_set_storage(WIFI_STORAGE_FLASH);
-    if (result == ESP_OK) result = esp_wifi_set_config(WIFI_IF_STA, &s_station_config);
-    if (result == ESP_OK) {
-        ESP_LOGI(TAG, "候选 Wi-Fi 凭据已在连接前写入 Flash");
-        result = esp_wifi_start();
+/* Background task for the automatic fallback scan started when retries for the
+ * last used network are exhausted (e.g. the device moved to another place). */
+static void wifi_rescan_task(void *argument)
+{
+    (void)argument;
+    esp_err_t err = wifi_manager_select_best_profile();
+    taskENTER_CRITICAL(&s_provisioning_lock);
+    s_rescan_running = false;
+    taskEXIT_CRITICAL(&s_provisioning_lock);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "自动切换网络失败: %s", esp_err_to_name(err));
     }
-    s_transitioning = false;
-
-    if (result != ESP_OK) {
-        fail_connection("启动候选 Wi-Fi 配置", result);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    s_state = WIFI_MANAGER_CONNECTING;
-    s_retry_count = 0;
-    result = esp_wifi_connect();
-    if (result != ESP_OK) fail_connection("连接候选 Wi-Fi", result);
     vTaskDelete(NULL);
 }
 
@@ -251,7 +314,20 @@ static esp_err_t portal_configure_handler(httpd_req_t *request)
         httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid Wi-Fi credentials");
         return ESP_FAIL;
     }
+
+    /* Remember the submitted network so the fallback scan can switch back to
+     * it later even if this first connection attempt fails. */
+    wifi_profile_t profile = { 0 };
+    /* Precision limits the copy to the buffer size so a full-length SSID
+     * (32 chars) cannot trigger the truncation warning. */
+    snprintf(profile.ssid, sizeof(profile.ssid), "%.*s",
+             (int)sizeof(profile.ssid) - 1, ssid);
+    snprintf(profile.password, sizeof(profile.password), "%s", password);
     memset(password, 0, sizeof(password));
+    if (wifi_manager_add_profile(&profile) != ESP_OK) {
+        ESP_LOGW(TAG, "无法保存 Wi-Fi 配置到 NVS");
+    }
+    memset(&profile, 0, sizeof(profile));
 
     httpd_resp_set_type(request, "text/html");
     esp_err_t result = httpd_resp_sendstr(
@@ -333,7 +409,38 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
         } else if (s_state == WIFI_MANAGER_CONNECTING) {
             ESP_LOGW(TAG, "Wi-Fi 连接重试已耗尽");
             s_state = WIFI_MANAGER_FAILED;
+
+            /* Remember which network just failed so an automatic scan cannot
+             * pick it again (prevents retry loops on wrong credentials). */
+            wifi_config_t current = { 0 };
+            if (esp_wifi_get_config(WIFI_IF_STA, &current) == ESP_OK &&
+                current.sta.ssid[0]) {
+                remember_failed_ssid((const char *)current.sta.ssid);
+            }
             clear_pending_config();
+
+            /* Fall back to scanning for another stored profile. */
+            if (wifi_nvs_count_profiles() > 0) {
+                taskENTER_CRITICAL(&s_provisioning_lock);
+                bool spawn = !s_rescan_running;
+                if (spawn) s_rescan_running = true;
+                taskEXIT_CRITICAL(&s_provisioning_lock);
+                if (spawn &&
+                    xTaskCreate(wifi_rescan_task, "wifi_rescan", 4096, NULL, 5, NULL) != pdPASS) {
+                    taskENTER_CRITICAL(&s_provisioning_lock);
+                    s_rescan_running = false;
+                    taskEXIT_CRITICAL(&s_provisioning_lock);
+                    ESP_LOGW(TAG, "无法创建 Wi-Fi 自动切换任务");
+                }
+            }
+        } else if (s_state == WIFI_MANAGER_CONNECTED) {
+            /* Dropped while online (e.g. the device moved to another location):
+             * retry from scratch, then fall back to scanning. */
+            ESP_LOGW(TAG, "连接中断，正在重连");
+            s_state = WIFI_MANAGER_CONNECTING;
+            s_retry_count = 0;
+            esp_err_t result = esp_wifi_connect();
+            if (result != ESP_OK) fail_connection("恢复 Wi-Fi 连接", result);
         }
     }
 }
@@ -348,6 +455,7 @@ static void ip_event_handler(void *argument, esp_event_base_t event_base,
     if (!s_enabled) return;
 
     if (s_pending_config) persist_pending_config();
+    reset_failed_ssids();
     s_state = WIFI_MANAGER_CONNECTED;
     ESP_LOGI(TAG, "已获取 IP，网络已连接");
 
@@ -401,6 +509,7 @@ esp_err_t wifi_manager_set_enabled(bool enabled)
         return result;
     }
 
+    reset_failed_ssids();
     s_state = s_saved_config ? WIFI_MANAGER_CONNECTING : WIFI_MANAGER_UNCONFIGURED;
     if (s_saved_config) {
         result = esp_wifi_connect();
@@ -480,6 +589,128 @@ wifi_manager_state_t wifi_manager_get_state(void)
     return s_state;
 }
 
+/* Multi-WiFi profile management */
+
+esp_err_t wifi_manager_add_profile(const wifi_profile_t *profile)
+{
+    if (!profile) return ESP_ERR_INVALID_ARG;
+    return wifi_nvs_save_profile(profile);
+}
+
+esp_err_t wifi_manager_remove_profile(const char *ssid)
+{
+    if (!ssid) return ESP_ERR_INVALID_ARG;
+    return wifi_nvs_remove_profile(ssid);
+}
+
+/* Apply the given profile to the station and start connecting. Shared by the
+ * manual selection and by the automatic fallback scan; unlike the portal flow
+ * it does not require an active SoftAP. */
+static esp_err_t switch_to_profile(const wifi_profile_t *profile)
+{
+    wifi_config_t config = { 0 };
+    snprintf((char *)config.sta.ssid, sizeof(config.sta.ssid), "%s", profile->ssid);
+    snprintf((char *)config.sta.password, sizeof(config.sta.password), "%s",
+             profile->password);
+    config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+
+    taskENTER_CRITICAL(&s_provisioning_lock);
+    if (!s_initialized || !s_enabled || s_portal_active || s_transitioning ||
+        s_pending_config) {
+        taskEXIT_CRITICAL(&s_provisioning_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_station_config = config;
+    s_pending_config = true;
+    taskEXIT_CRITICAL(&s_provisioning_lock);
+
+    esp_err_t err = switch_station_and_connect(&config);
+    memset(&config, 0, sizeof(config));
+    if (err != ESP_OK) fail_connection("切换 Wi-Fi 网络", err);
+    return err;
+}
+
+esp_err_t wifi_manager_set_active_profile(const char *ssid)
+{
+    if (!ssid) return ESP_ERR_INVALID_ARG;
+    wifi_profile_t profile;
+    esp_err_t err = wifi_nvs_load_profile(ssid, &profile);
+    if (err != ESP_OK) return err;
+    /* The user's explicit choice wins the scan tie-breaker until changed. */
+    wifi_nvs_set_active_ssid(ssid);
+    reset_failed_ssids();
+    return switch_to_profile(&profile);
+}
+
+static bool scan_contains_ssid(const wifi_ap_record_t *records, uint16_t count,
+                               const char *ssid)
+{
+    for (uint16_t i = 0; i < count; i++) {
+        if (strcmp((const char *)records[i].ssid, ssid) == 0) return true;
+    }
+    return false;
+}
+
+esp_err_t wifi_manager_select_best_profile(void)
+{
+    wifi_profile_t profiles[MAX_WIFI_PROFILES];
+    size_t count = wifi_nvs_get_all_profiles(profiles, MAX_WIFI_PROFILES);
+    if (count == 0) return ESP_ERR_NOT_FOUND;
+
+    taskENTER_CRITICAL(&s_provisioning_lock);
+    bool busy = !s_initialized || !s_enabled || s_portal_active ||
+                s_transitioning || s_pending_config;
+    taskEXIT_CRITICAL(&s_provisioning_lock);
+    if (busy) return ESP_ERR_INVALID_STATE;
+
+    wifi_scan_config_t scan_cfg = { 0 };
+    esp_err_t err = esp_wifi_scan_start(&scan_cfg, true);
+    if (err != ESP_OK) return err;
+    uint16_t ap_num = 0;
+    err = esp_wifi_scan_get_ap_num(&ap_num);
+    if (err != ESP_OK) return err;
+    if (ap_num == 0) return ESP_ERR_NOT_FOUND;
+
+    wifi_ap_record_t *records = malloc((size_t)ap_num * sizeof(*records));
+    if (!records) return ESP_ERR_NO_MEM;
+    err = esp_wifi_scan_get_ap_records(&ap_num, records);
+    if (err != ESP_OK) {
+        free(records);
+        return err;
+    }
+
+    /* Prefer the manually selected profile when visible, otherwise the most
+     * preferred (lowest priority number) visible profile. Networks that
+     * already failed in this cycle are skipped. */
+    char active_ssid[33];
+    bool has_active =
+        wifi_nvs_get_active_ssid(active_ssid, sizeof(active_ssid)) == ESP_OK;
+    const wifi_profile_t *best = NULL;
+    for (size_t i = 0; i < count; i++) {
+        if (failed_before(profiles[i].ssid)) continue;
+        if (has_active && strcmp(profiles[i].ssid, active_ssid) == 0 &&
+            scan_contains_ssid(records, ap_num, profiles[i].ssid)) {
+            best = &profiles[i];
+            break;
+        }
+    }
+    if (!best) {
+        for (size_t i = 0; i < count; i++) {
+            if (failed_before(profiles[i].ssid) ||
+                !scan_contains_ssid(records, ap_num, profiles[i].ssid)) {
+                continue;
+            }
+            if (!best || profiles[i].priority < best->priority) {
+                best = &profiles[i];
+            }
+        }
+    }
+    free(records);
+    if (!best) return ESP_ERR_NOT_FOUND;
+    return switch_to_profile(best);
+}
+
+
 esp_err_t wifi_manager_get_connected_ssid(char *ssid, size_t size)
 {
     if (!ssid || size == 0) return ESP_ERR_INVALID_ARG;
@@ -526,6 +757,7 @@ esp_err_t wifi_manager_start_provisioning(void)
     s_pending_config = false;
     memset(&s_station_config, 0, sizeof(s_station_config));
     taskEXIT_CRITICAL(&s_provisioning_lock);
+    reset_failed_ssids();
 
     s_transitioning = true;
     stop_portal_server();

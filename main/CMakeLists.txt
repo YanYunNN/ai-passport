@@ -9,6 +9,7 @@ idf_component_register(
          "app_settings.c"
          "power_manager.c"
          "wifi_manager.c"
+         "wifi_nvs.c"
          "time_sync.c"
          "demo_display.c"
          "demo_button.c"
