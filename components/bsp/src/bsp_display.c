@@ -4,6 +4,7 @@
 #include "bsp_pins.h"
 #include "driver/spi_master.h"
 #include "driver/ledc.h"
+#include "driver/gpio.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
@@ -60,6 +61,8 @@ static const st_init_cmd_t ST7789P3_CMDS[] = {
 
 static void backlight_init(void) {
     if (BSP_LCD_BL < 0) { ESP_LOGW(TAG, "背光引脚未接 MCU,亮度不可调"); return; }
+    gpio_hold_dis((gpio_num_t)BSP_LCD_BL);
+    gpio_deep_sleep_hold_dis();
     ledc_timer_config_t t = {
         .speed_mode      = BSP_BL_LEDC_MODE,
         .timer_num       = BSP_BL_LEDC_TIMER,
@@ -171,4 +174,23 @@ void bsp_display_backlight(uint8_t percent) {
     uint32_t duty = (max_duty * percent) / 100u;
     ledc_set_duty(BSP_BL_LEDC_MODE, BSP_BL_LEDC_CHANNEL, duty);
     ledc_update_duty(BSP_BL_LEDC_MODE, BSP_BL_LEDC_CHANNEL);
+}
+
+void bsp_display_sleep(void) {
+    bsp_display_backlight(0);
+
+    if (BSP_LCD_BL >= 0) {
+        gpio_reset_pin((gpio_num_t)BSP_LCD_BL);
+        gpio_set_direction((gpio_num_t)BSP_LCD_BL, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)BSP_LCD_BL, 0);
+        gpio_hold_en((gpio_num_t)BSP_LCD_BL);
+        gpio_deep_sleep_hold_en();
+    }
+
+    if (s_panel) {
+        esp_lcd_panel_disp_on_off(s_panel, false);
+    }
+    if (s_io) {
+        esp_lcd_panel_io_tx_param(s_io, 0x10, NULL, 0); // 0x10 = SLPIN
+    }
 }

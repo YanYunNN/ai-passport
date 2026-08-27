@@ -120,7 +120,7 @@ static void render_current_image(void)
             lv_obj_set_pos(title, 0, 16);
 
             lv_obj_t *hint = ui_system_label(s_placeholder,
-                "请在电脑或手机访问后台:\n\nws.yanyun.fun/admin\n\n在「图片工作台」选择\n图片并点击推送到设备",
+                "请在电脑或手机访问后台:\n\nws.yanyun.asia/admin\n\n在「图片工作台」选择\n图片并点击推送到设备",
                 &ui_font_noto_sc_14, UI_SYSTEM_MUTED);
             lv_obj_set_width(hint, 192);
             lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);

@@ -2,6 +2,9 @@ name = "kiro-passport-relay"
 main = "src/index.ts"
 compatibility_date = "2026-08-23"
 
+[vars]
+ADMIN_UI_USERNAME = "yanyun"
+
 # Before the first remote deployment, replace this placeholder with the ID printed by:
 #   npx wrangler d1 create kiro-passport
 [[d1_databases]]
@@ -20,5 +23,5 @@ new_sqlite_classes = ["PassportRelay"]
 
 # The parent zone must be onboarded to Cloudflare. This creates the Worker custom domain.
 [[routes]]
-pattern = "ws.yanyun.fun"
+pattern = "ws.yanyun.asia"
 custom_domain = true

@@ -7,7 +7,7 @@
 设备在连接 Wi-Fi 并完成可信时间同步后，主动建立以下长期连接：
 
 ```text
-wss://ws.yanyun.fun/device/<device_id>
+wss://ws.yanyun.asia/device/<device_id>
 ```
 
 Cloudflare 端将审批请求下发给设备，设备通过实体按键作出允许或拒绝选择，Cloudflare Durable Object（DO）将结果返回给 Kiro Hook 使用的本机 HTTP client。
@@ -66,7 +66,7 @@ Cloudflare 端将审批请求下发给设备，设备通过实体按键作出允
                     ▼
 ┌───────────────────────────────────────────┐
 │ Passport (ESP32-C3)                        │
-│ wss://ws.yanyun.fun/device/<id>       │
+│ wss://ws.yanyun.asia/device/<id>       │
 │ Authorization: Bearer <device credential>  │
 │ Wi-Fi + NTP + TLS + 实体按键审批            │
 └───────────────────────────────────────────┘
@@ -82,19 +82,19 @@ Cloudflare 端将审批请求下发给设备，设备通过实体按键作出允
 本项目的设备 relay 域名固定为：
 
 ```text
-ws.yanyun.fun
+ws.yanyun.asia
 ```
 
 设备固件注册的 relay URL 应为：
 
 ```text
-wss://ws.yanyun.fun
+wss://ws.yanyun.asia
 ```
 
 固件自动追加设备路径，因此最终连接地址是：
 
 ```text
-wss://ws.yanyun.fun/device/passport-AABBCCDDEEFF
+wss://ws.yanyun.asia/device/passport-AABBCCDDEEFF
 ```
 
 Worker 路由约定：
@@ -108,7 +108,7 @@ Worker 路由约定：
 | `/v1/requests/:request_id` | `GET` | Kiro Hook HTTP client | 查询审批终态 |
 | `/healthz` | `GET` | 运维 | 仅检查 Worker 可达性，不泄露设备状态 |
 
-应在 Cloudflare Dashboard 或 Wrangler 中将 `ws.yanyun.fun` 绑定为 Worker Custom Domain；DNS 必须由 Cloudflare 代理，才能由 Worker 接收 WebSocket Upgrade。
+应在 Cloudflare Dashboard 或 Wrangler 中将 `ws.yanyun.asia` 绑定为 Worker Custom Domain；DNS 必须由 Cloudflare 代理，才能由 Worker 接收 WebSocket Upgrade。
 
 ## 5. 身份、凭据与数据存储
 
@@ -161,7 +161,7 @@ CREATE TABLE approval_audit (
 1. 生产配置启用 NVS encryption，并完成 ESP-IDF NVS key / flash encryption 的受控烧录方案。
 2. 工厂系统调用设备注册 API，获得一次性返回的 device credential。
 3. 经受控串口、工厂治具或安全 provisioning 工具调用设备配置接口。
-4. 写入 `wss://ws.yanyun.fun` 与 device credential。
+4. 写入 `wss://ws.yanyun.asia` 与 device credential。
 5. 工厂工具清理内存、日志和临时文件中的 credential。
 
 禁止通过 Wi-Fi 配网页提交设备 credential。该页面只用于家庭/现场的 Wi-Fi 路由器配置。
@@ -418,7 +418,7 @@ wrangler secret put DEVICE_CREDENTIAL_PEPPER
 ### 阶段 A：Cloudflare 基础设施
 
 1. 在 Cloudflare 创建 Worker、D1 数据库和 Durable Object binding。
-2. 将 `ws.yanyun.fun` 绑定为 Worker Custom Domain。
+2. 将 `ws.yanyun.asia` 绑定为 Worker Custom Domain。
 3. 执行 D1 migration，建立 `devices` 和 `approval_audit` 表。
 4. 使用 `wrangler secret put` 注入管理端、Hook 和 pepper secret。
 5. 部署 `/healthz`，验证域名、TLS 和 Worker 可达性。
@@ -430,7 +430,7 @@ wrangler secret put DEVICE_CREDENTIAL_PEPPER
 3. 实现 `/device/:device_id` 的 Bearer 验证与 WebSocket Upgrade。
 4. 将连接转交给对应 Durable Object。
 5. 实现 `hello`、单连接替换和 session 绑定。
-6. 在真实设备上启用加密 NVS，并写入 `wss://ws.yanyun.fun` 与 credential。
+6. 在真实设备上启用加密 NVS，并写入 `wss://ws.yanyun.asia` 与 credential。
 7. 验证设备页面在 Wi-Fi/NTP 后显示 `Relay ready`。
 
 ### 阶段 C：审批与 Hook
@@ -454,7 +454,7 @@ wrangler secret put DEVICE_CREDENTIAL_PEPPER
 - [ ] Passport 不含 Cloudflare API/Wrangler/管理 token。
 - [ ] D1 不保存 device credential 明文。
 - [ ] 设备 credential 只保存到加密 NVS。
-- [ ] 固件仅连接 `wss://ws.yanyun.fun/device/<device_id>`。
+- [ ] 固件仅连接 `wss://ws.yanyun.asia/device/<device_id>`。
 - [ ] TLS 证书、主机名和系统时间校验均成功后才连接。
 - [ ] Worker 验证 URL device ID、Bearer credential 和设备状态。
 - [ ] DO 对每个决策校验 `device_id + session_id + request_id + expires_at`。

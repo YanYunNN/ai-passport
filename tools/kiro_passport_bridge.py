@@ -3,7 +3,7 @@
 Kiro AI Passport Bridge CLI and Hook Handler.
 
 This script bridges Kiro IDE/CLI hooks and local developers with the Cloudflare
-Passport Relay (https://ws.yanyun.fun) to deliver hardware-in-the-loop approvals
+Passport Relay (https://ws.yanyun.asia) to deliver hardware-in-the-loop approvals
 for high-risk AI agent operations.
 """
 
@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-DEFAULT_RELAY_URL = "https://ws.yanyun.fun"
+DEFAULT_RELAY_URL = "https://ws.yanyun.asia"
 DEFAULT_CONFIG_PATHS = [
     Path.cwd() / ".kiro" / "passport_config.json",
     Path.home() / ".kiro" / "passport_config.json",

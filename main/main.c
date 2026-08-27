@@ -159,7 +159,6 @@ void app_main(void)
     if (power_result != ESP_OK) {
         ESP_LOGW(TAG, "浅睡眠策略未生效: %s", esp_err_to_name(power_result));
     }
-    bsp_display_backlight(app_settings_get_brightness_percent());
 
     bool button_ok = (bsp_button_init(on_key, NULL) == ESP_OK);
     bool audio_ok = (bsp_audio_init() == ESP_OK);
@@ -206,6 +205,8 @@ void app_main(void)
         enter_menu();
         bsp_lvgl_unlock();
     }
+
+    bsp_display_backlight(app_settings_get_brightness_percent());
 
     ESP_LOGI(TAG, "就绪:按键=%d 音频=%d 电量=%d 阅读=%d 图片=%d 游戏=%d 设置=%d Kiro=%d 内置=%d Wi-Fi=%d",
              button_ok, audio_ok, batt_ok, s_ok[0], s_ok[1], s_ok[2], s_ok[3], s_ok[4], s_ok[5],

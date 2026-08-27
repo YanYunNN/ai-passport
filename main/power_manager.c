@@ -167,7 +167,7 @@ static void wait_for_button_release(void)
 void power_manager_enter_deep_sleep(void)
 {
     ESP_LOGI(TAG, "正在进入深度休眠 (Deep Sleep)...");
-    bsp_display_backlight(0);
+    bsp_display_sleep();
     wait_for_button_release();
     esp_wifi_stop();
     esp_deep_sleep_enable_gpio_wakeup(1ULL << BSP_BTN_GPIO, ESP_GPIO_WAKEUP_GPIO_LOW);

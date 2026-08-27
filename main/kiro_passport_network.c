@@ -56,9 +56,9 @@ bool kiro_passport_network_get_image(kiro_passport_image_info_t *out_info)
 #define KIRO_NETWORK_MIN_VALID_EPOCH 1704067200 /* 2024-01-01 UTC */
 #define KIRO_ENROLLMENT_DEVICE_CODE_MAX 44
 #define KIRO_ENROLLMENT_RESPONSE_MAX 512
-#define KIRO_ENROLLMENT_URL "https://ws.yanyun.fun/v1/enrollment"
-#define KIRO_ENROLLMENT_RELAY_URL "wss://ws.yanyun.fun"
-#define KIRO_ENROLLMENT_VERIFICATION_URI "https://ws.yanyun.fun/admin/pair"
+#define KIRO_ENROLLMENT_URL "https://ws.yanyun.asia/v1/enrollment"
+#define KIRO_ENROLLMENT_RELAY_URL "wss://ws.yanyun.asia"
+#define KIRO_ENROLLMENT_VERIFICATION_URI "https://ws.yanyun.asia/admin/pair"
 #define KIRO_ENROLLMENT_MAX_LIFETIME_SECONDS 600
 #define KIRO_ENROLLMENT_MIN_INTERVAL_SECONDS 5
 #define KIRO_ENROLLMENT_MAX_INTERVAL_SECONDS 60

@@ -35,6 +35,10 @@ void bsp_display_backlight(uint8_t percent)
     (void)percent;
 }
 
+void bsp_display_sleep(void)
+{
+}
+
 lv_display_t *bsp_lvgl_init(void)
 {
     if (s_disp) return s_disp;
