@@ -1,4 +1,4 @@
-/* simulator/src/stubs_wifi.c
+/* simulator/module/stubs_wifi.c
  * Wi-Fi 管理 + 多配置档案 的宿主桩（P0 无真实射频）。
  *
  * wifi_nvs：内存版档案存储（单次运行内有效），让"设置 → 网络"页可操作。

@@ -1,5 +1,5 @@
-/* simulator/src/shim_freertos.c
- * FreeRTOS 任务/队列的宿主实现（pthread）。
+/* simulator/shell/shim_freertos.c
+ * FreeRTOS 任务/队列的宿主实现（pthread），由外壳持有、经 sim_api_t 提供给固件模块。
  *
  * 简化语义（P0）：
  *  - vTaskDelete 只释放句柄，不终止线程：worker 任务自身是"等待-检查"循环，

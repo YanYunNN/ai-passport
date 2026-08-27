@@ -28,6 +28,10 @@ vprintf_like_t esp_log_set_vprintf(vprintf_like_t func);
 void esp_log_printf(int level, const char *tag, const char *fmt, ...)
     __attribute__((format(gnu_printf, 3, 4)));
 
+/* 服务表入口（外壳侧实现）：与 esp_log_printf 等价，但接收现成的 va_list。
+ * 固件模块的 esp_log_printf 胶水最终转调到这里；模块自身不要直接调用。 */
+void esp_log_vprintf(int level, const char *tag, const char *fmt, va_list args);
+
 #define ESP_LOGE(tag, ...) esp_log_printf(ESP_LOG_ERROR, tag, __VA_ARGS__)
 #define ESP_LOGW(tag, ...) esp_log_printf(ESP_LOG_WARN,  tag, __VA_ARGS__)
 #define ESP_LOGI(tag, ...) esp_log_printf(ESP_LOG_INFO,  tag, __VA_ARGS__)

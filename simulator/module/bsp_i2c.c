@@ -1,4 +1,4 @@
-/* simulator/src/bsp_i2c.c
+/* simulator/module/bsp_i2c.c
  * 虚拟 I2C（P0 桩）：总线上无设备。
  */
 #include "bsp_i2c.h"

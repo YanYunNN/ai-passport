@@ -1,4 +1,4 @@
-/* simulator/src/bsp_audio.c
+/* simulator/module/bsp_audio.c
  * 虚拟音频（P0 桩）：结构存在但 codec 不可用。
  *
  * 行为对齐固件的降级路径：

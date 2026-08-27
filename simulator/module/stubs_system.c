@@ -1,4 +1,4 @@
-/* simulator/src/stubs_system.c
+/* simulator/module/stubs_system.c
  * 电源管理 / 投屏 / 时间同步 的宿主桩（P0 无真实行为）。
  * 保持 main/ 源码原样可链接：返回合理的空闲状态，不做任何硬件动作。
  */

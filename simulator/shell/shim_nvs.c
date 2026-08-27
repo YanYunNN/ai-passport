@@ -1,5 +1,5 @@
-/* simulator/src/shim_nvs.c
- * NVS 的内存版宿主实现。
+/* simulator/shell/shim_nvs.c
+ * NVS 的内存版宿主实现（外壳侧），经 sim_api_t 提供给固件模块。
  *
  * 数据只保留在单次进程运行内：重启模拟器后 app_settings 回到默认值。
  * 仅实现 app_settings.c 用到的 blob 读写路径（open/get/set/commit/close）。

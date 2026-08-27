@@ -1,4 +1,4 @@
-/* simulator/src/stubs_kiro.c
+/* simulator/module/stubs_kiro.c
  * Kiro Passport 的宿主桩（P0 无网络）。
  *
  * kiro_passport_network_init() 返回 ESP_ERR_NOT_SUPPORTED：

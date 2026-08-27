@@ -1,6 +1,7 @@
 build/
 # PC simulator build output
 simulator/build/
+simulator/firmware/
 # ESP-IDF build tree (named esp-idf) and the SDK clone nested inside it.
 esp-idf/
 # Stray CMake/bootloader residue left at the repo root.

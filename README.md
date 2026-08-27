@@ -201,7 +201,8 @@ docs/                    Agent hardware development guide and extension document
 sdkconfig.defaults       ESP32-C3, USB console, Flash, and LVGL defaults
 AGENTS.md                Coding, validation, and contribution rules for agents
 ```
-The [`simulator/`](simulator/README.md) directory is a Windows/macOS host build of the same
+The [`simulator/`](simulator/README.md) directory is a Windows/macOS PC simulator built as a generic shell plus a pluggable firmware module: `sim_shell` loads `main/` compiled as a shared library (`simulator/firmware/`) through a fixed ABI, so firmware can be swapped by replacing the module file without rebuilding the shell.
+It is the same
 `main/` sources with a virtual BSP (SDL window, keyboard buttons, stubbed audio/network).
 It is a fast UI/logic iteration loop only: hardware behaviors (ADC windows, codec timing,
 real Wi-Fi, battery calibration, power) are not simulated, and the on-device acceptance

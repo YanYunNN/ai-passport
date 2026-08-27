@@ -1,5 +1,5 @@
-/* simulator/src/bsp_display.c
- * 虚拟显示：LVGL 渲染到 SDL 窗口（240x320，2 倍缩放）。
+/* simulator/module/bsp_display.c
+ * 虚拟显示：LVGL 渲染到 SDL 窗口（240x320，默认 1 倍缩放，即 240x320）。
  * 对应真实硬件：ST7789P3 240x320 SPI 屏 + LEDC 背光。
  */
 #include "bsp_display.h"
@@ -9,6 +9,7 @@
 #include "src/drivers/sdl/lv_sdl_window.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 
 static lv_display_t *s_disp;
 
@@ -47,9 +48,22 @@ lv_display_t *bsp_lvgl_init(void)
         fprintf(stderr, "[sim] lv_sdl_window_create failed\n");
         return NULL;
     }
-    /* 2 倍缩放：240x320 → 480x640 窗口，屏幕更大更易用 */
-    lv_sdl_window_set_zoom(s_disp, 2.0f);
-    printf("[sim] LVGL display %dx%d (zoom 2x)\n", BSP_LCD_W, BSP_LCD_H);
+    /* 窗口缩放：默认 1 倍（240x320，与真实屏幕 1:1）；可用环境变量 SIM_ZOOM 调整，
+     * 如 SIM_ZOOM=2 得到 480x640。 */
+    float zoom = 1.0f;
+    const char *env_zoom = getenv("SIM_ZOOM");
+    if (env_zoom && env_zoom[0]) {
+        float parsed = (float)atof(env_zoom);
+        if (parsed >= 0.5f && parsed <= 4.0f) {
+            zoom = parsed;
+        } else {
+            printf("[sim] 忽略无效 SIM_ZOOM=%s（有效范围 0.5~4.0）\n", env_zoom);
+        }
+    }
+    lv_sdl_window_set_zoom(s_disp, zoom);
+    printf("[sim] LVGL display %dx%d (zoom %.1fx → 窗口 %dx%d)\n",
+           BSP_LCD_W, BSP_LCD_H, (double)zoom,
+           (int)(BSP_LCD_W * zoom), (int)(BSP_LCD_H * zoom));
     return s_disp;
 }
 

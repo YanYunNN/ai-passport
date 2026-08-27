@@ -1,4 +1,4 @@
-/* simulator/src/bsp_button.c
+/* simulator/module/bsp_button.c
  * 虚拟按键：键盘 → bsp_btn_ev_t 事件。
  *
  * 对应真实硬件：三个按键共用一个 ADC 引脚（GPIO0），靠分压区分。
@@ -10,6 +10,7 @@
  */
 #include "bsp_button.h"
 #include "bsp_pins.h"
+#include "module_internal.h"
 
 #include <SDL.h>
 #include <stdbool.h>
