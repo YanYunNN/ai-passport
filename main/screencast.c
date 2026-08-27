@@ -179,7 +179,7 @@ esp_err_t screencast_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    BaseType_t ret = xTaskCreate(screencast_task, "screencast", 3072, NULL, 4, &s_task_handle);
+    BaseType_t ret = xTaskCreate(screencast_task, "screencast", 6144, NULL, 4, &s_task_handle);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "创建截屏任务失败");
         vSemaphoreDelete(s_trigger_sem);

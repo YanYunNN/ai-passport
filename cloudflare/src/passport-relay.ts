@@ -141,18 +141,40 @@ export class PassportRelay extends DurableObject<Env> {
         if (allSockets.size === 0) {
             return json({ sent: false, online: false });
         }
-        const msg = JSON.stringify({
-            v: 1,
-            type: "image",
-            id: payload.imageId,
-            title: payload.title || "Image",
-            data: payload.data,
-        });
+
+        const CHUNK_SIZE = 768; // must be multiple of 4 for valid base64
+        const totalChunks = Math.ceil(payload.data.length / CHUNK_SIZE);
+
         for (const socket of allSockets) {
             if (!this.adminViewers.has(socket)) {
                 try {
-                    socket.send(msg);
-                } catch {}
+                    socket.send(JSON.stringify({
+                        v: 1,
+                        type: "image_start",
+                        id: payload.imageId,
+                        title: payload.title || "Image",
+                        chunks: totalChunks,
+                    }));
+
+                    for (let i = 0; i < totalChunks; i++) {
+                        const chunk = payload.data.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+                        socket.send(JSON.stringify({
+                            v: 1,
+                            type: "image_chunk",
+                            id: payload.imageId,
+                            seq: i,
+                            data: chunk,
+                        }));
+                    }
+
+                    socket.send(JSON.stringify({
+                        v: 1,
+                        type: "image_end",
+                        id: payload.imageId,
+                    }));
+                } catch (err) {
+                    console.error("sendImage error", err);
+                }
             }
         }
         return json({ sent: true, online: true });

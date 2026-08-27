@@ -336,6 +336,53 @@ static void process_message(const char *message)
 {
     if (!message) return;
 
+    if (strstr(message, "\"type\":\"image_start\"") || strstr(message, "\"type\": \"image_start\"")) {
+        if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
+        if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+        s_active_image_size = 0;
+        s_b64_carry_len = 0;
+        s_active_image_id[0] = '\0';
+        s_active_image_title[0] = '\0';
+        extract_json_string(message, "id", s_active_image_id, sizeof(s_active_image_id), NULL, NULL);
+        extract_json_string(message, "title", s_active_image_title, sizeof(s_active_image_title), NULL, NULL);
+        if (s_image_lock) xSemaphoreGive(s_image_lock);
+        ESP_LOGI(TAG, "收到图片推送开始: id=%s, title=%s", s_active_image_id, s_active_image_title);
+        return;
+    }
+
+    if (strstr(message, "\"type\":\"image_chunk\"") || strstr(message, "\"type\": \"image_chunk\"")) {
+        const char *chunk_data = NULL;
+        size_t chunk_len = 0;
+        if (extract_json_string(message, "data", NULL, 0, &chunk_data, &chunk_len) && chunk_data && chunk_len > 0) {
+            if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
+            if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+            if (s_active_image_size + chunk_len <= sizeof(s_active_image_data)) {
+                size_t olen = 0;
+                int ret = mbedtls_base64_decode(s_active_image_data + s_active_image_size,
+                                                sizeof(s_active_image_data) - s_active_image_size,
+                                                &olen, (const unsigned char *)chunk_data, chunk_len);
+                if (ret == 0) {
+                    s_active_image_size += olen;
+                } else {
+                    ESP_LOGE(TAG, "Base64 chunk decode 失败: ret=%d", ret);
+                }
+            }
+            if (s_image_lock) xSemaphoreGive(s_image_lock);
+        }
+        return;
+    }
+
+    if (strstr(message, "\"type\":\"image_end\"") || strstr(message, "\"type\": \"image_end\"")) {
+        if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
+        if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+        s_active_image_version++;
+        ESP_LOGI(TAG, "图片推送接收完成: id=%s, title=%s, size=%zu bytes, v=%lu",
+                 s_active_image_id, s_active_image_title, s_active_image_size,
+                 (unsigned long)s_active_image_version);
+        if (s_image_lock) xSemaphoreGive(s_image_lock);
+        return;
+    }
+
     if (strstr(message, "\"capture\"") || strstr(message, "\"screenshot\"") || strstr(message, "\"screencast_start\"")) {
         ESP_LOGI(TAG, "收到云端指令: 远程截屏");
         screencast_request_capture();
@@ -447,43 +494,7 @@ static void destroy_client(void)
     kiro_passport_set_connection(false, NULL);
 }
 
-static const char s_relay_ca_pem[] =
-    // GTS Root R4
-    "-----BEGIN CERTIFICATE-----\n"
-    "MIICCTCCAY6gAwIBAgINAgPlwGjvYxqccpBQUjAKBggqhkjOPQQDAzBHMQswCQYD\n"
-    "VQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEUMBIG\n"
-    "A1UEAxMLR1RTIFJvb3QgUjQwHhcNMTYwNjIyMDAwMDAwWhcNMzYwNjIyMDAwMDAw\n"
-    "WjBHMQswCQYDVQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2Vz\n"
-    "IExMQzEUMBIGA1UEAxMLR1RTIFJvb3QgUjQwdjAQBgcqhkjOPQIBBgUrgQQAIgNi\n"
-    "AATzdHOnaItgrkO4NcWBMHtLSZ37wWHO5t5GvWvVYRg1rkDdc/eJkTBa6zzuhXyi\n"
-    "QHY7qca4R9gq55KRanPpsXI5nymfopjTX15YhmUPoYRlBtHci8nHc8iMai/lxKvR\n"
-    "HYqjQjBAMA4GA1UdDwEB/wQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQW\n"
-    "BBSATNbrdP9JNqPV2Py1PsVq8JQdjDAKBggqhkjOPQQDAwNpADBmAjEA6ED/g94D\n"
-    "9J+uHXqnLrmvT/aDHQ4thQEd0dlq7A/Cr8deVl5c1RxYIigL9zC2L7F8AjEA8GE8\n"
-    "p/SgguMh1YQdc4acLa/KNJvxn7kjNuK8YAOdgLOaVsjh4rsUecrNIdSUtUlD\n"
-    "-----END CERTIFICATE-----\n"
-    // GlobalSign Root CA
-    "-----BEGIN CERTIFICATE-----\n"
-    "MIIDdTCCAl2gAwIBAgILBAAAAAABFUtaw5QwDQYJKoZIhvcNAQEFBQAwVzELMAkG\n"
-    "A1UEBhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExEDAOBgNVBAsTB1Jv\n"
-    "b3QgQ0ExGzAZBgNVBAMTEkdsb2JhbFNpZ24gUm9vdCBDQTAeFw05ODA5MDExMjAw\n"
-    "MDBaFw0yODAxMjgxMjAwMDBaMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBHbG9i\n"
-    "YWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9iYWxT\n"
-    "aWduIFJvb3QgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDaDuaZ\n"
-    "jc6j40+Kfvvxi4Mla+pIH/EqsLmVEQS98GPR4mdmzxzdzxtIK+6NiY6arymAZavp\n"
-    "xy0Sy6scTHAHoT0KMM0VjU/43dSMUBUc71DuxC73/OlS8pF94G3VNTCOXkNz8kHp\n"
-    "1Wrjsok6Vjk4bwY8iGlbKk3Fp1S4bInMm/k8yuX9ifUSPJJ4ltbcdG6TRGHRjcdG\n"
-    "snUOhugZitVtbNV4FpWi6cgKOOvyJBNPc1STE4U6G7weNLWLBYy5d4ux2x8gkasJ\n"
-    "U26Qzns3dLlwR5EiUWMWea6xrkEmCMgZK9FGqkjWZCrXgzT/LCrBbBlDSgeF59N8\n"
-    "9iFo7+ryUp9/k5DPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMBAf8E\n"
-    "BTADAQH/MB0GA1UdDgQWBBRge2YaRQ2XyolQL30EzTSo//z9SzANBgkqhkiG9w0B\n"
-    "AQUFAAOCAQEA1nPnfE920I2/7LqivjTFKDK1fPxsnCwrvQmeU79rXqoRSLblCKOz\n"
-    "yj1hTdNGCbM+w6DjY1Ub8rrvrTnhQ7k4o+YviiY776BQVvnGCv04zcQLcFGUl5gE\n"
-    "38NflNUVyRRBnMRddWQVDf9VMOyGj/8N7yy5Y0b2qvzfvGn9LhJIZJrglfCm7ymP\n"
-    "AbEVtQwdpf5pLGkkeB6zpxxxYu7KyJesF12KwvhHhm4qxFYxldBniYUr+WymXUad\n"
-    "DKqC5JlR3XC321Y9YeRq4VzW9v493kHMB65jUr9TU/Qr6cf9tveCX4XSQRjbgbME\n"
-    "HMUfpIBvFSDJ3gyICh3WZlXi/EjJKSZp4A==\n"
-    "-----END CERTIFICATE-----\n";
+
 
 static esp_err_t start_client(void)
 {
@@ -497,17 +508,17 @@ static esp_err_t start_client(void)
         header_length >= (int)sizeof(headers)) return ESP_ERR_INVALID_SIZE;
 
     generate_session_id(s_network.session_id, sizeof(s_network.session_id));
-    ESP_LOGI(TAG, "正在启动 WebSocket 连接: URI=%s", uri);
+    ESP_LOGI(TAG, "正在启动 WebSocket 连接: URI=%s, free_heap=%lu", uri, (unsigned long)esp_get_free_heap_size());
     const esp_websocket_client_config_t config = {
         .uri = uri,
         .headers = headers,
-        .cert_pem = s_relay_ca_pem,
+        .crt_bundle_attach = esp_crt_bundle_attach,
         .disable_auto_reconnect = true,
         .enable_close_reconnect = false,
         .reconnect_timeout_ms = KIRO_NETWORK_RECONNECT_MS,
         .network_timeout_ms = 10000,
-        .buffer_size = 4096,
-        .task_stack = 6144,
+        .buffer_size = 2048,
+        .task_stack = 4096,
         .task_prio = 5,
         .ping_interval_sec = 20,
         .pingpong_timeout_sec = 10,
@@ -877,6 +888,16 @@ static esp_err_t load_config(void)
     nvs_close(handle);
     if (result == ESP_OK && size == sizeof(stored) && valid_relay_url(stored.relay_url) &&
         safe_value(stored.credential, sizeof(stored.credential))) {
+        if (strcmp(stored.relay_url, "wss://ws.yanyun.fun") == 0) {
+            ESP_LOGI(TAG, "检测到旧域名 wss://ws.yanyun.fun，自动迁移为 %s", KIRO_ENROLLMENT_RELAY_URL);
+            snprintf(stored.relay_url, sizeof(stored.relay_url), "%s", KIRO_ENROLLMENT_RELAY_URL);
+            nvs_handle_t rw_handle;
+            if (nvs_open(KIRO_NETWORK_NAMESPACE, NVS_READWRITE, &rw_handle) == ESP_OK) {
+                nvs_set_blob(rw_handle, KIRO_NETWORK_CONFIG_KEY, &stored, sizeof(stored));
+                nvs_commit(rw_handle);
+                nvs_close(rw_handle);
+            }
+        }
         snprintf(stored.device_id, sizeof(stored.device_id), "%s", s_network.config.device_id);
         s_network.config = stored;
         return ESP_OK;
