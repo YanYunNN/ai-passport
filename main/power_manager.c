@@ -2,6 +2,7 @@
 #include "app_settings.h"
 #include "bsp_display.h"
 #include "bsp_pins.h"
+#include "bsp_button.h"
 #include "esp_log.h"
 #include "esp_pm.h"
 #include "esp_sleep.h"
@@ -40,6 +41,22 @@ static void inactivity_timer_cb(void *arg)
     }
 }
 
+static void log_wakeup_cause(void)
+{
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    switch (cause) {
+    case ESP_SLEEP_WAKEUP_GPIO:
+        ESP_LOGW(TAG, "上次深睡由 GPIO 低电平唤醒 (mask=0x%llx)", (unsigned long long)esp_sleep_get_gpio_wakeup_status());
+        break;
+    case ESP_SLEEP_WAKEUP_UNDEFINED:
+        // 上电复位或软件复位,不是从深睡唤醒
+        break;
+    default:
+        ESP_LOGI(TAG, "上次深睡唤醒原因: %d", (int)cause);
+        break;
+    }
+}
+
 static esp_err_t apply_power_policy(bool light_sleep_enabled)
 {
 #if CONFIG_PM_ENABLE
@@ -65,6 +82,7 @@ static esp_err_t apply_power_policy(bool light_sleep_enabled)
 
 esp_err_t power_manager_init(bool light_sleep_enabled)
 {
+    log_wakeup_cause();
     s_last_activity_time_sec = (uint32_t)(esp_timer_get_time() / 1000000ULL);
     s_screen_dimmed = false;
 
@@ -120,12 +138,38 @@ void power_manager_wake_screen(void)
     bsp_display_backlight(app_settings_get_brightness_percent());
 }
 
+// 深睡唤醒配置的是 GPIO 低电平触发:若触发本次休眠的按键在入眠瞬间仍被按住,
+// GPIO 在进入深睡时仍为低电平,芯片会在睡下去的一瞬间被自己唤醒,表现为
+// "屏幕闪一下又回到菜单,根本没睡"。因此入眠前必须等按键完全松开。
+// 松开判定用 ADC 电压:按住时 ≤ 确定键上界 1900mV,松开后被外部 10k 上拉抬到 3300mV。
+#define BTN_RELEASE_MV_THRESHOLD 1900
+
+static void wait_for_button_release(void)
+{
+    const uint32_t timeout_ms = 3000;
+    const uint32_t step_ms = 10;
+    uint32_t waited = 0;
+    while (waited < timeout_ms) {
+        int mv = bsp_button_read_mv();
+        bool pressed = (mv >= 0 && mv <= BTN_RELEASE_MV_THRESHOLD);
+        if (!pressed) {
+            // 再确认 50ms,避免把按下/松开的临界抖动误判为已松开
+            vTaskDelay(pdMS_TO_TICKS(50));
+            mv = bsp_button_read_mv();
+            if (mv < 0 || mv > BTN_RELEASE_MV_THRESHOLD) return;
+        }
+        vTaskDelay(pdMS_TO_TICKS(step_ms));
+        waited += step_ms;
+    }
+    ESP_LOGW(TAG, "等待按键松开超时(%u ms),仍按原计划进入深睡", (unsigned)timeout_ms);
+}
+
 void power_manager_enter_deep_sleep(void)
 {
     ESP_LOGI(TAG, "正在进入深度休眠 (Deep Sleep)...");
     bsp_display_backlight(0);
+    wait_for_button_release();
     esp_wifi_stop();
-    esp_deep_sleep_enable_gpio_wakeup(1ULL << BSP_BTN_ADC_CHANNEL, ESP_GPIO_WAKEUP_GPIO_LOW);
-    vTaskDelay(pdMS_TO_TICKS(50));
+    esp_deep_sleep_enable_gpio_wakeup(1ULL << BSP_BTN_GPIO, ESP_GPIO_WAKEUP_GPIO_LOW);
     esp_deep_sleep_start();
 }

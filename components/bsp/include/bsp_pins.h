@@ -52,6 +52,9 @@
 // ============================================================================
 #define BSP_BTN_ADC_UNIT     ADC_UNIT_1
 #define BSP_BTN_ADC_CHANNEL  ADC_CHANNEL_0    // GPIO0
+// 按键所在 GPIO。ADC 通道号 ≠ GPIO 号,凡是用位掩码按"第几个引脚"寻址的场合
+// (如深睡 GPIO 唤醒)一律用 BSP_BTN_GPIO,不要拿 BSP_BTN_ADC_CHANNEL 凑数。
+#define BSP_BTN_GPIO         0
 #define BSP_BTN_COUNT        3
 
 // 每键的电压窗口 {min_mV, max_mV};边界取相邻档中点。

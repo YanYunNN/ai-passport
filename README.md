@@ -195,8 +195,14 @@ See the [AI Hardware Development Guide](docs/AI_HARDWARE_DEVELOPMENT_GUIDE.md) f
 components/bsp/include/  Public BSP APIs and bsp_pins.h hardware facts
 components/bsp/src/      Display, button, audio, battery, and shared-I2C implementations
 main/                    Minimal menu, LVGL UI, and independent hardware demo pages
+simulator/               PC simulator: compiles the same main/ sources with a virtual BSP
 tests/                   Lightweight logic tests that can run without hardware
 docs/                    Agent hardware development guide and extension documentation
 sdkconfig.defaults       ESP32-C3, USB console, Flash, and LVGL defaults
 AGENTS.md                Coding, validation, and contribution rules for agents
 ```
+The [`simulator/`](simulator/README.md) directory is a Windows/macOS host build of the same
+`main/` sources with a virtual BSP (SDL window, keyboard buttons, stubbed audio/network).
+It is a fast UI/logic iteration loop only: hardware behaviors (ADC windows, codec timing,
+real Wi-Fi, battery calibration, power) are not simulated, and the on-device acceptance
+checklist below still applies unchanged.
