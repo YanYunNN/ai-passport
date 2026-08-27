@@ -1,4 +1,10 @@
 build/
+# ESP-IDF build tree (named esp-idf) and the SDK clone nested inside it.
+esp-idf/
+# Stray CMake/bootloader residue left at the repo root.
+bootloader/
+bootloader-prefix/
+gdbinit/
 sdkconfig
 sdkconfig.old
 managed_components/

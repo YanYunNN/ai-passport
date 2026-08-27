@@ -17,9 +17,14 @@ static bool load_slot(nvs_handle_t handle, size_t slot, wifi_profile_t *out)
 {
     char key[8];
     slot_key(slot, key, sizeof(key));
+    // Accept blobs smaller than the current struct so profiles written by an
+    // older firmware (without the enterprise fields) still load; the missing
+    // tail stays zeroed.
     size_t required = sizeof(*out);
-    return nvs_get_blob(handle, key, out, &required) == ESP_OK &&
-           required == sizeof(*out) && out->ssid[0];
+    memset(out, 0, sizeof(*out));
+    if (nvs_get_blob(handle, key, out, &required) != ESP_OK) return false;
+    if (required == 0 || required > sizeof(*out)) return false;
+    return out->ssid[0];
 }
 
 static esp_err_t store_slot(nvs_handle_t handle, size_t slot,

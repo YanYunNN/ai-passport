@@ -8,10 +8,16 @@
 #define MAX_WIFI_PROFILES 5
 
 // A saved network credential pair. priority 0 = most preferred.
+// enterprise != 0 means WPA2-Enterprise (PEAP/MSCHAPv2): password holds the
+// EAP password and identity the login name (applied to both the outer EAP
+// identity and the inner MSCHAPv2 username). For WPA2-PSK networks identity
+// stays empty.
 typedef struct {
     char ssid[32];
     char password[64];
+    char identity[64];
     uint8_t priority;
+    uint8_t enterprise;
 } wifi_profile_t;
 
 // Namespace used for storing Wi-Fi profiles.

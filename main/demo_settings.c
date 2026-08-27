@@ -392,8 +392,13 @@ static void networks_refresh(void)
         bool enabled;
         if (i < count) {
             title = profiles[i].ssid;
-            value = (is_connected && strcmp(connected, profiles[i].ssid) == 0)
-                        ? "ONLINE" : "";
+            if (is_connected && strcmp(connected, profiles[i].ssid) == 0) {
+                value = "ONLINE";
+            } else if (profiles[i].enterprise) {
+                value = "EAP";
+            } else {
+                value = "";
+            }
             enabled = wifi_manager_is_enabled();
         } else if (i == count) {
             title = "返回";

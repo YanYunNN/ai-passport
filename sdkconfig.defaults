@@ -42,6 +42,12 @@ CONFIG_ESP_PHY_MAC_BB_PD=y
 CONFIG_BUTTON_PERIOD_TIME_MS=20
 # 不启用 CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION：悬空 D+/D- 噪声会持续阻止浅睡眠。
 
+# --- Wi-Fi 企业认证(WPA2-Enterprise) ---
+# 支持公司 WiFi 的"用户名+密码"PEAP/MSCHAPv2 认证；默认已开启,这里显式固化。
+CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=y
+# C3 无 PSRAM:企业认证连接期间释放动态缓冲,降低堆内存占用。
+CONFIG_ESP_WIFI_ENT_FREE_DYNAMIC_BUFFER=y
+
 # --- Kiro Passport Wi-Fi relay ---
 # Passport uses a TLS-verified WSS client; the server certificate must validate
 # against the ESP-IDF certificate bundle. This build persists enrollment
