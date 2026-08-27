@@ -1,7 +1,10 @@
-// main/demo_games.c - 游戏板块子菜单（合成大西瓜、泡泡龙）
+// main/demo_games.c - 游戏板块子菜单（合成大西瓜、泡泡龙、俄罗斯方块、贪吃蛇、像素小鸟）
 #include "demo_games.h"
 #include "demo_game_suika.h"
 #include "demo_game_bubble.h"
+#include "demo_game_tetris.h"
+#include "demo_game_snake.h"
+#include "demo_game_flappy.h"
 #include "game_audio.h"
 #include "ui_system.h"
 #include "ui_status.h"
@@ -21,6 +24,9 @@ typedef struct {
 static const game_item_t GAMES[] = {
     { "合成大西瓜", "Suika", demo_game_suika_enter, demo_game_suika_exit, demo_game_suika_key },
     { "泡泡龙",     "Bobble", demo_game_bubble_enter, demo_game_bubble_exit, demo_game_bubble_key },
+    { "俄罗斯方块", "Tetris", demo_game_tetris_enter, demo_game_tetris_exit, demo_game_tetris_key },
+    { "贪吃蛇",     "Snake", demo_game_snake_enter, demo_game_snake_exit, demo_game_snake_key },
+    { "像素小鸟",   "Flappy", demo_game_flappy_enter, demo_game_flappy_exit, demo_game_flappy_key },
 };
 
 #define GAME_COUNT (sizeof(GAMES) / sizeof(GAMES[0]))
@@ -61,36 +67,37 @@ static void games_menu_build(void)
     lv_obj_set_pos(heading, 16, 42);
     ui_system_divider(s_scr, 16, 77, 208);
 
+    // 5 个游戏 + 返回: 行高 36 恰好满屏不滚动
     for (size_t i = 0; i < GAME_COUNT; i++) {
-        int y = 92 + (int)i * 44;
-        s_cards[i] = ui_system_item_create(s_scr, 16, y, 208, 38);
+        int y = 92 + (int)i * 36;
+        s_cards[i] = ui_system_item_create(s_scr, 16, y, 208, 32);
         s_rows[i] = ui_system_label(s_cards[i], GAMES[i].name,
                                     &ui_font_noto_sc_14, UI_SYSTEM_TEXT);
-        lv_obj_set_pos(s_rows[i], 16, 10);
+        lv_obj_set_pos(s_rows[i], 16, 8);
         s_status[i] = ui_system_label(s_cards[i], GAMES[i].desc, &ui_font_noto_sc_14,
                                       UI_SYSTEM_MUTED);
         lv_obj_set_width(s_status[i], 60);
         lv_obj_set_style_text_align(s_status[i], LV_TEXT_ALIGN_RIGHT, 0);
-        lv_obj_set_pos(s_status[i], 104, 10);
+        lv_obj_set_pos(s_status[i], 104, 8);
         s_indicators[i] = ui_system_label(s_cards[i], ">", &lv_font_montserrat_20,
                                            UI_SYSTEM_MUTED);
-        lv_obj_set_pos(s_indicators[i], 180, 8);
+        lv_obj_set_pos(s_indicators[i], 180, 5);
     }
 
     // 返回选项
-    int back_y = 92 + (int)GAME_COUNT * 44;
-    s_cards[GAME_COUNT] = ui_system_item_create(s_scr, 16, back_y, 208, 38);
+    int back_y = 92 + (int)GAME_COUNT * 36;
+    s_cards[GAME_COUNT] = ui_system_item_create(s_scr, 16, back_y, 208, 32);
     s_rows[GAME_COUNT] = ui_system_label(s_cards[GAME_COUNT], "返回",
                                          &ui_font_noto_sc_14, UI_SYSTEM_TEXT);
-    lv_obj_set_pos(s_rows[GAME_COUNT], 16, 10);
+    lv_obj_set_pos(s_rows[GAME_COUNT], 16, 8);
     s_status[GAME_COUNT] = ui_system_label(s_cards[GAME_COUNT], "", &ui_font_noto_sc_14,
                                            UI_SYSTEM_MUTED);
     lv_obj_set_width(s_status[GAME_COUNT], 60);
     lv_obj_set_style_text_align(s_status[GAME_COUNT], LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_pos(s_status[GAME_COUNT], 104, 10);
+    lv_obj_set_pos(s_status[GAME_COUNT], 104, 8);
     s_indicators[GAME_COUNT] = ui_system_label(s_cards[GAME_COUNT], ">", &lv_font_montserrat_20,
                                                 UI_SYSTEM_MUTED);
-    lv_obj_set_pos(s_indicators[GAME_COUNT], 180, 8);
+    lv_obj_set_pos(s_indicators[GAME_COUNT], 180, 5);
 
     games_menu_refresh();
     lv_screen_load(s_scr);

@@ -64,6 +64,12 @@ static sim_nvs_ns_t *find_ns(const char *namespace_name, bool create)
     return NULL;
 }
 
+static sim_nvs_ns_t *handle_to_ns(nvs_handle_t handle)
+{
+    if (handle < 1 || handle > SIM_NVS_MAX_NS) return NULL;
+    return &s_ns[handle - 1];
+}
+
 static sim_nvs_entry_t *find_entry(sim_nvs_ns_t *ns, const char *key, bool create)
 {
     for (size_t i = 0; i < SIM_NVS_MAX_KEYS; i++) {
@@ -92,8 +98,8 @@ esp_err_t nvs_open(const char *namespace_name, uint32_t open_mode,
     sim_nvs_ns_t *ns = find_ns(namespace_name, open_mode == NVS_READWRITE);
     if (!ns) return ESP_ERR_NVS_NOT_FOUND;
 
-    /* 句柄直接复用命名空间指针（int 宽度足够） */
-    *out_handle = (nvs_handle_t)(uintptr_t)ns;
+    /* 64 位宿主下指针放不进 32 位 nvs_handle_t，改用命名空间下标(1 起) */
+    *out_handle = (nvs_handle_t)(ns - s_ns + 1);
     return ESP_OK;
 }
 
@@ -102,7 +108,7 @@ esp_err_t nvs_get_blob(nvs_handle_t handle, const char *key,
 {
     if (!key || !length) return ESP_ERR_INVALID_ARG;
 
-    sim_nvs_ns_t *ns = (sim_nvs_ns_t *)(uintptr_t)handle;
+    sim_nvs_ns_t *ns = handle_to_ns(handle);
     if (!ns || !ns->used) return ESP_ERR_NVS_NOT_INITIALIZED;
 
     sim_nvs_entry_t *entry = find_entry(ns, key, false);
@@ -127,7 +133,7 @@ esp_err_t nvs_set_blob(nvs_handle_t handle, const char *key,
     if (!key || (!value && length > 0)) return ESP_ERR_INVALID_ARG;
     if (length > SIM_NVS_MAX_BLOB) return ESP_ERR_NVS_NOT_ENOUGH_SPACE;
 
-    sim_nvs_ns_t *ns = (sim_nvs_ns_t *)(uintptr_t)handle;
+    sim_nvs_ns_t *ns = handle_to_ns(handle);
     if (!ns || !ns->used) return ESP_ERR_NVS_NOT_INITIALIZED;
 
     sim_nvs_entry_t *entry = find_entry(ns, key, true);

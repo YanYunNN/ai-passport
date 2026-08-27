@@ -84,6 +84,9 @@ set(FIRMWARE_MAIN_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/demo_games.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/demo_game_suika.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/demo_game_bubble.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/demo_game_tetris.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/demo_game_snake.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main/demo_game_flappy.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/demo_settings.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/demo_kiro_passport.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../main/game_audio.c

@@ -189,20 +189,74 @@ typedef struct {
 } autotest_step_t;
 
 /* 覆盖：菜单导航(CLICK) → 进入图片页 → 长按返回(LONG) → 进入游戏页
- * → 进入合成大西瓜 → 长按退出 → 返回主菜单。脚本不校验结果，进程不崩溃即通过。 */
+ * → 合成大西瓜 → 长按退出 → 俄罗斯方块(移动/旋转/双击速降/长按返回)
+ * → 贪吃蛇(转向/暂停/长按返回) → 像素小鸟(拍翅/长按返回) → 返回主菜单。
+ * 脚本不校验结果，进程不崩溃即通过。
+ *
+ * 时序约定（模拟器实测 ~177fps，1 帧≈5.65ms）：
+ *   同键两次 CLICK 间隔 ≥80 帧(≈450ms)，避开 300ms 双击窗口；
+ *   长按 hold ≥280 帧(≈1.6s)，确保越过 1000ms 长按阈值；
+ *   双击(速降)用 40 帧(≈226ms)间隔触发。 */
 static const autotest_step_t AUTOTEST[] = {
-    {  40, SDLK_DOWN,    1 }, {  42, SDLK_DOWN,    0 },
-    {  80, SDLK_RETURN,  1 }, {  82, SDLK_RETURN,  0 },
-    { 400, SDLK_RETURN,  1 },
-    { 680, SDLK_RETURN,  0 },
-    { 720, SDLK_DOWN,    1 }, {  722, SDLK_DOWN,    0 },
-    { 760, SDLK_RETURN,  1 }, {  762, SDLK_RETURN,  0 },
-    { 800, SDLK_RETURN,  1 }, {  802, SDLK_RETURN,  0 },
-    {1000, SDLK_RETURN,  1 },
-    {1280, SDLK_RETURN,  0 },
-    {1320, SDLK_DOWN,    1 }, { 1322, SDLK_DOWN,    0 },
-    {1340, SDLK_DOWN,    1 }, { 1342, SDLK_DOWN,    0 },
-    {1360, SDLK_RETURN,  1 }, { 1362, SDLK_RETURN,  0 },
+    {  60, SDLK_DOWN,    1 }, {  62, SDLK_DOWN,    0 },
+    { 120, SDLK_RETURN,  1 }, { 122, SDLK_RETURN,  0 },
+    { 500, SDLK_RETURN,  1 },
+    { 780, SDLK_RETURN,  0 },
+    { 860, SDLK_DOWN,    1 }, {  862, SDLK_DOWN,    0 },
+    { 940, SDLK_RETURN,  1 }, {  942, SDLK_RETURN,  0 },
+    /* 游戏中心: 进入合成大西瓜 */
+    {1040, SDLK_RETURN,  1 }, { 1042, SDLK_RETURN,  0 },
+    {1400, SDLK_RETURN,  1 },
+    {1680, SDLK_RETURN,  0 },
+    /* 游戏中心: 选中俄罗斯方块(第 3 项) */
+    {1780, SDLK_DOWN,    1 }, { 1782, SDLK_DOWN,    0 },
+    {1880, SDLK_DOWN,    1 }, { 1882, SDLK_DOWN,    0 },
+    {1960, SDLK_RETURN,  1 }, { 1962, SDLK_RETURN,  0 },
+    /* 俄罗斯方块: 左移/右移/旋转/双击速降 */
+    {2060, SDLK_UP,      1 }, { 2062, SDLK_UP,      0 },
+    {2160, SDLK_DOWN,    1 }, { 2162, SDLK_DOWN,    0 },
+    {2260, SDLK_RETURN,  1 }, { 2262, SDLK_RETURN,  0 },
+    {2360, SDLK_RETURN,  1 }, { 2362, SDLK_RETURN,  0 },
+    {2400, SDLK_RETURN,  1 }, { 2402, SDLK_RETURN,  0 },
+    {2560, SDLK_RETURN,  1 },
+    {2840, SDLK_RETURN,  0 },
+    /* 贪吃蛇: 转向/暂停/继续 */
+    {2940, SDLK_DOWN,    1 }, { 2942, SDLK_DOWN,    0 },
+    {3020, SDLK_RETURN,  1 }, { 3022, SDLK_RETURN,  0 },
+    {3120, SDLK_UP,      1 }, { 3122, SDLK_UP,      0 },
+    {3220, SDLK_DOWN,    1 }, { 3222, SDLK_DOWN,    0 },
+    {3320, SDLK_RETURN,  1 }, { 3322, SDLK_RETURN,  0 },
+    {3440, SDLK_RETURN,  1 }, { 3442, SDLK_RETURN,  0 },
+    {3600, SDLK_RETURN,  1 },
+    {3880, SDLK_RETURN,  0 },
+    /* 像素小鸟: 长时悬停飞行(按物理周期 ~45 tick 拍翅, 振荡区间落在所有缺口通道内),
+     * 连续穿过多个水管以复现过管崩溃 */
+    {3980, SDLK_DOWN,    1 }, { 3982, SDLK_DOWN,    0 },
+    {4060, SDLK_RETURN,  1 }, { 4062, SDLK_RETURN,  0 },
+    {4120, SDLK_RETURN,  1 }, { 4122, SDLK_RETURN,  0 },
+    {4290, SDLK_RETURN,  1 }, { 4292, SDLK_RETURN,  0 },
+    {4449, SDLK_RETURN,  1 }, { 4451, SDLK_RETURN,  0 },
+    {4608, SDLK_RETURN,  1 }, { 4610, SDLK_RETURN,  0 },
+    {4767, SDLK_RETURN,  1 }, { 4769, SDLK_RETURN,  0 },
+    {4926, SDLK_RETURN,  1 }, { 4928, SDLK_RETURN,  0 },
+    {5085, SDLK_RETURN,  1 }, { 5087, SDLK_RETURN,  0 },
+    {5244, SDLK_RETURN,  1 }, { 5246, SDLK_RETURN,  0 },
+    {5403, SDLK_RETURN,  1 }, { 5405, SDLK_RETURN,  0 },
+    {5562, SDLK_RETURN,  1 }, { 5564, SDLK_RETURN,  0 },
+    {5721, SDLK_RETURN,  1 }, { 5723, SDLK_RETURN,  0 },
+    {5880, SDLK_RETURN,  1 }, { 5882, SDLK_RETURN,  0 },
+    {6039, SDLK_RETURN,  1 }, { 6041, SDLK_RETURN,  0 },
+    {6200, SDLK_RETURN,  1 },
+    {6480, SDLK_RETURN,  0 },
+    /* 返回主菜单 */
+    {6580, SDLK_DOWN,    1 }, { 6582, SDLK_DOWN,    0 },
+    {6660, SDLK_RETURN,  1 }, { 6662, SDLK_RETURN,  0 },
+    /* 设置页: 切换一项触发保存(验证 NVS 保存路径) */
+    {6760, SDLK_DOWN,    1 }, { 6762, SDLK_DOWN,    0 },
+    {6840, SDLK_RETURN,  1 }, { 6842, SDLK_RETURN,  0 },
+    {6940, SDLK_RETURN,  1 }, { 6942, SDLK_RETURN,  0 },
+    {7100, SDLK_RETURN,  1 },
+    {7380, SDLK_RETURN,  0 },
 };
 #define AUTOTEST_COUNT (sizeof(AUTOTEST) / sizeof(AUTOTEST[0]))
 
@@ -227,7 +281,7 @@ int main(int argc, char **argv)
             frames = atoi(argv[i] + 9);
         } else if (strcmp(argv[i], "--autotest") == 0) {
             autotest = true;
-            if (frames < 0) frames = 1500;
+            if (frames < 0) frames = 7600;
         } else if (strncmp(argv[i], "--firmware=", 11) == 0) {
             firmware_arg = argv[i] + 11;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
