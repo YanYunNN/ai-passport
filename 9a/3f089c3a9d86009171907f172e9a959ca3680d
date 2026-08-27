@@ -1,0 +1,53 @@
+main/demo_game_snake.h
+  s_facd694f6ff0ac::t_15d0c7f3a35d37 1-9
+simulator/CMakeLists.txt
+  s_facd694f6ff0ac::t_ffd4a9794b79df 87-89
+main/demo_game_flappy.h
+  s_facd694f6ff0ac::t_e5774a3b6eaf5a 1-9
+main/demo_game_flappy.c
+  s_facd694f6ff0ac::t_687f63c371295f 17
+  s_facd694f6ff0ac::t_6e816c4c107f1d 1-10,12-16,18-19,21-22,27-113,115-137,153-154,164-237,240-254,256-266,268-373
+  s_facd694f6ff0ac::t_2a486806b5d3f7 20,23-26,114
+  s_facd694f6ff0ac::t_b021efddb1d35b 11
+  s_facd694f6ff0ac::t_35ddc3f5bd561a 138-152,155-163,238-239,255,267
+main/demo_game_tetris.c
+  s_facd694f6ff0ac::t_5c9282d280d15c 12
+  s_facd694f6ff0ac::t_35f16272e6f458 314-316,322
+  s_facd694f6ff0ac::t_08825ee4f2ad13 1-3,6-11,13-16,18-19,21-125,127-148,150-180,182-187,189-203,205-313,317-321,323-325,334-341,346-380,392-476
+  s_facd694f6ff0ac::t_f632ef627a19d6 4-5,17,20,126,149,181,188,204,381-391
+  s_facd694f6ff0ac::t_aaada7e6c0b88a 327-333,342-345
+simulator/shell/shell_main.c
+  s_facd694f6ff0ac::t_a45b3d88c29742 236,256
+  s_facd694f6ff0ac::t_40c98a3384000d 254
+  s_facd694f6ff0ac::t_7092ea7388e1bd 192,194-199,201-210,212-214,216-222,224-231,234-235
+  s_facd694f6ff0ac::t_f2bc420f72093d 232-233,237-250,252-253,255,257-259,284
+  s_facd694f6ff0ac::t_aac9cbf9331ab5 193,211,215,223,251
+main/CMakeLists.txt
+  s_facd694f6ff0ac::t_fa117f55c33a05 24-26
+main/demo_game_snake.c
+  s_facd694f6ff0ac::t_fb19aa73d1adf6 51-53
+  s_facd694f6ff0ac::t_9463fdcfd28003 1-9,11-50,54-391
+  s_facd694f6ff0ac::t_4df76faea29624 10
+simulator/shell/shim_nvs.c
+  s_facd694f6ff0ac::t_82f5ec6f27e626 67-72,101-102,111,136
+main/demo_game_tetris.h
+  s_facd694f6ff0ac::t_c1401863b6d35f 1-9
+main/demo_games.c
+  s_facd694f6ff0ac::t_b9aa260bb630e5 1,5-7,27-29,70,72-73,76,81,84,88-89,92,97,100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "9a3f089c3a9d86009171907f172e9a959ca3680d",
+  "prompts": {},
+  "sessions": {
+    "s_facd694f6ff0ac": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_bmz9bbo56stw",
+        "model": "auto(free)"
+      },
+      "human_author": null
+    }
+  }
+}
