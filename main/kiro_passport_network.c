@@ -17,6 +17,7 @@
 #include "time_sync.h"
 #include "wifi_manager.h"
 #include "mbedtls/base64.h"
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -189,6 +190,14 @@ int kiro_passport_network_send_text(const char *message)
                                           pdMS_TO_TICKS(1500));
 }
 
+int kiro_passport_network_send_binary(const void *data, size_t length)
+{
+    if (!data || length == 0 || length > INT_MAX || !s_network.client ||
+        !esp_websocket_client_is_connected(s_network.client)) return -1;
+    return esp_websocket_client_send_bin(s_network.client, data, (int)length,
+                                         pdMS_TO_TICKS(1500));
+}
+
 static int send_text(const char *message)
 {
     return kiro_passport_network_send_text(message);
@@ -230,6 +239,36 @@ static bool extract_json_string(const char *json, const char *key, char *out, si
         memcpy(out, val_start, copy_len);
         out[copy_len] = '\0';
     }
+    return true;
+}
+
+static bool extract_json_u32(const char *json, const char *key, uint32_t *out)
+{
+    if (!json || !key || !out) return false;
+
+    char search_key[32];
+    int key_len = snprintf(search_key, sizeof(search_key), "\"%s\"", key);
+    if (key_len <= 0 || key_len >= (int)sizeof(search_key)) return false;
+
+    const char *cursor = strstr(json, search_key);
+    if (!cursor) return false;
+    cursor = strchr(cursor + key_len, ':');
+    if (!cursor) return false;
+    do {
+        cursor++;
+    } while (*cursor == ' ' || *cursor == '\t');
+    if (*cursor < '0' || *cursor > '9') return false;
+
+    uint64_t value = 0;
+    do {
+        value = value * 10 + (uint64_t)(*cursor - '0');
+        if (value > UINT32_MAX) return false;
+        cursor++;
+    } while (*cursor >= '0' && *cursor <= '9');
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') cursor++;
+    if (*cursor != ',' && *cursor != '}') return false;
+
+    *out = (uint32_t)value;
     return true;
 }
 
@@ -335,6 +374,16 @@ static void image_stream_feed(const char *data, size_t len, bool is_first, bool 
 static void process_message(const char *message)
 {
     if (!message) return;
+
+    if (strstr(message, "\"type\":\"screencast_ack\"") || strstr(message, "\"type\": \"screencast_ack\"")) {
+        uint32_t seq = 0;
+        uint32_t slice = 0;
+        if (extract_json_u32(message, "seq", &seq) && extract_json_u32(message, "slice", &slice) &&
+            slice <= UINT8_MAX) {
+            screencast_acknowledge(seq, (uint8_t)slice);
+        }
+        return;
+    }
 
     if (strstr(message, "\"type\":\"image_start\"") || strstr(message, "\"type\": \"image_start\"")) {
         if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();

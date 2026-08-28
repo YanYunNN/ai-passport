@@ -19,6 +19,11 @@ esp_err_t screencast_init(void);
 void screencast_request_capture(void);
 
 /**
+ * @brief 确认云端已接收指定截屏切片
+ */
+void screencast_acknowledge(uint32_t frame_seq, uint8_t slice);
+
+/**
  * @brief 设置投屏启用状态
  */
 void screencast_set_enabled(bool enabled);

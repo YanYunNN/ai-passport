@@ -169,16 +169,61 @@ export interface ScreencastMessage {
     total: number;
     y: number;
     lines: number;
+    w?: number;
     data: string;
 }
 
 export function parseScreencastMessage(payload: string): ScreencastMessage | null {
     try {
-        const obj = JSON.parse(payload);
-        if (obj && obj.type === "screencast" && typeof obj.slice === "number" && typeof obj.data === "string") {
+        const obj = JSON.parse(payload) as Partial<ScreencastMessage>;
+        if (obj.v === 1 && obj.type === "screencast" &&
+            Number.isSafeInteger(obj.seq) && (obj.seq as number) >= 0 &&
+            Number.isSafeInteger(obj.slice) && (obj.slice as number) >= 0 &&
+            Number.isSafeInteger(obj.total) && (obj.total as number) > 0 &&
+            (obj.slice as number) < (obj.total as number) &&
+            Number.isSafeInteger(obj.y) && (obj.y as number) >= 0 &&
+            Number.isSafeInteger(obj.lines) && (obj.lines as number) > 0 &&
+            typeof obj.data === "string" && obj.data.length > 0 && obj.data.length <= 4096) {
             return obj as ScreencastMessage;
         }
     } catch {}
     return null;
 }
 
+const SCREENCAST_PACKET_HEADER_BYTES = 16;
+const SCREENCAST_PACKET_WIDTH = 240;
+const SCREENCAST_PACKET_LINES = 4;
+const SCREENCAST_PACKET_BYTES = SCREENCAST_PACKET_HEADER_BYTES +
+    SCREENCAST_PACKET_WIDTH * SCREENCAST_PACKET_LINES * 2;
+
+export function parseBinaryScreencastMessage(payload: ArrayBuffer): ScreencastMessage | null {
+    if (payload.byteLength !== SCREENCAST_PACKET_BYTES) return null;
+
+    const view = new DataView(payload);
+    const lines = view.getUint8(3);
+    const seq = view.getUint32(4);
+    const slice = view.getUint16(8);
+    const total = view.getUint16(10);
+    const y = view.getUint16(12);
+    const width = view.getUint16(14);
+    if (view.getUint8(0) !== 0x53 || view.getUint8(1) !== 0x43 || view.getUint8(2) !== 1 ||
+        lines !== SCREENCAST_PACKET_LINES || width !== SCREENCAST_PACKET_WIDTH ||
+        total !== 80 || slice >= total || y !== slice * lines) return null;
+
+    const pixels = new Uint8Array(payload, SCREENCAST_PACKET_HEADER_BYTES);
+    let binary = "";
+    for (let offset = 0; offset < pixels.length; offset += 0x8000) {
+        binary += String.fromCharCode(...pixels.subarray(offset, offset + 0x8000));
+    }
+    return {
+        v: 1,
+        type: "screencast",
+        seq,
+        slice,
+        total,
+        y,
+        lines,
+        w: width,
+        data: btoa(binary),
+    };
+}
