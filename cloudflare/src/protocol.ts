@@ -157,6 +157,75 @@ export function serializeDeviceRequest(request: DeviceRequest): string {
     return payload;
 }
 
+export interface DeviceNotify {
+    v: 1;
+    type: "notify";
+    device_id: string;
+    session_id: string;
+    id: string;
+    title: string;
+    content: string;
+    ts: number;
+}
+
+// The device's control buffer is 1024 bytes; keep the full serialized "notify"
+// within a safe margin at 1000 bytes (unlike MAX_MESSAGE_BYTES which is the
+// device->worker request limit). Inputs are pre-sanitized printable ASCII so no
+// JSON escaping is required, matching the firmware's unescaped parser grammar.
+const MAX_NOTIFY_BYTES = 1000;
+
+/**
+ * Build the exact "notify" payload. Truncates `content` (and validates every
+ * other field) so the serialized message always fits and stays printable-ASCII
+ * and NUL-safe. Throws if a fixed/generated field makes the message impossible.
+ */
+export function serializeDeviceNotify(notify: Omit<DeviceNotify, "type" | "v">): string {
+    // Same narrow sheet as `printableAscii`: space..~ excluding `"` (0x22) and
+    // `\` (0x5c), so the unescaped payload can never break the firmware parser.
+    const sanitize = (value: string, maxLength: number, fallback: string): string => {
+        const cleaned = [...value.replace(/[^ -!#-\[\]-~]/gu, "")];
+        return (cleaned.length > 0 ? cleaned.join("") : fallback).slice(0, maxLength);
+    };
+
+    const deviceId = sanitize(notify.device_id, 31, "");
+    const sessionId = sanitize(notify.session_id, 64, "");
+    const id = sanitize(notify.id, 64, "");
+    const title = sanitize(notify.title, 32, "Agent");
+    if (!deviceId || !sessionId || !id || !Number.isSafeInteger(notify.ts)) {
+        throw new Error("Invalid notify payload: missing or non-sanitizable fields");
+    }
+
+    // Reserve room for the fixed prefix/suffix and a trailing "..." crop marker.
+    const prefix = `{"v":1,"type":"notify","device_id":"${deviceId}",` +
+        `"session_id":"${sessionId}","id":"${id}","title":"${title}","content":"`;
+    const suffix = `","ts":${notify.ts}}`;
+    const prefixBytes = new TextEncoder().encode(prefix).byteLength;
+    const suffixBytes = new TextEncoder().encode(suffix).byteLength;
+    const reserved = prefixBytes + suffixBytes;
+    if (reserved > MAX_NOTIFY_BYTES) throw new Error("Notify header exceeds the device buffer limit");
+
+    const room = MAX_NOTIFY_BYTES - reserved;
+    let content = [...notify.content].filter((character) => /[ -!#-\[\]-~]/.test(character)).join("");
+    const encode = (value: string): number => new TextEncoder().encode(value).byteLength;
+    if (encode(content) > room) {
+        // Keep the message printable-ASCII and NUL-safe while fitting: trim the
+        // content (one code unit at a time) and append an ASCII "..." crop marker.
+        const ellipsis = "...".slice(0, Math.max(0, Math.min(room - 1, 3)));
+        const ellipsisBytes = encode(ellipsis);
+        const available = room - ellipsisBytes;
+        let last = content.length;
+        while (last > 0 && encode(content.slice(0, last)) > available) last--;
+        content = content.slice(0, last) + ellipsis;
+    }
+
+    const payload = `${prefix}${content}${suffix}`;
+    const bytes = new TextEncoder().encode(payload);
+    if (bytes.byteLength <= 0 || bytes.byteLength > MAX_NOTIFY_BYTES || /[^\x20-\x7e]/.test(payload) || payload.includes("\u0000")) {
+        throw new Error("Serialized notify exceeds device buffer limit or is not printable ASCII");
+    }
+    return payload;
+}
+
 export function isDeviceId(value: string): boolean {
     return DEVICE_ID_PATTERN.test(value);
 }

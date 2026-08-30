@@ -8,6 +8,7 @@ import {
     parseHello,
     parseScreencastMessage,
     type DeviceRequest,
+    serializeDeviceNotify,
     serializeDeviceRequest,
 } from "./protocol";
 
@@ -89,6 +90,7 @@ export class PassportRelay extends DurableObject<Env> {
             return this.connectDevice(request, url.pathname.slice("/device/".length));
         }
         if (request.method === "POST" && url.pathname === "/internal/requests") return this.createRequest(request);
+        if (request.method === "POST" && url.pathname === "/internal/notify") return this.pushNotify(request);
         if (request.method === "GET" && url.pathname.startsWith("/internal/requests/")) {
             return this.getRequest(request, url.pathname.slice("/internal/requests/".length));
         }
@@ -365,6 +367,37 @@ export class PassportRelay extends DurableObject<Env> {
             await this.finishPending(created, "deny", "offline");
         }
         return this.getStoredResponse(created.requestId);
+    }
+
+    private async pushNotify(request: Request): Promise<Response> {
+        const deviceId = request.headers.get("X-Passport-Device-Id");
+        if (!deviceId || !isDeviceId(deviceId)) return json({ error: "unauthorized" }, 401);
+        const input = await request.json<{ title?: string; content?: string; ts?: number; id?: string }>().catch(() => null);
+        if (!input || typeof input.content !== "string" || typeof input.id !== "string" ||
+            typeof input.ts !== "number" || !Number.isSafeInteger(input.ts)) {
+            return json({ error: "invalid notify body" }, 400);
+        }
+        const state = await this.loadState();
+        if (!state.currentSessionId || !state.deviceId) return json({ sent: false, online: false });
+        if (state.deviceId !== deviceId) return json({ error: "device mismatch" }, 403);
+        const socket = await this.currentAuthorizedSocket(state.currentSessionId);
+        if (!socket) return json({ sent: false, online: false });
+
+        const payload = serializeDeviceNotify({
+            device_id: deviceId,
+            session_id: state.currentSessionId,
+            id: input.id,
+            title: input.title ?? "Agent",
+            content: input.content,
+            ts: input.ts,
+        });
+        try {
+            socket.send(payload);
+        } catch (error) {
+            console.error("pushNotify send error", error);
+            return json({ sent: false, online: false });
+        }
+        return json({ sent: true, online: true });
     }
 
     private async getRequest(request: Request, requestId: string): Promise<Response> {

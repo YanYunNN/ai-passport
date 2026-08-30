@@ -9,7 +9,7 @@ import {
     verifyAdminBasicAuth,
     verifyDeviceCredential,
 } from "./auth";
-import { createRequestIndex, getRequestIndex } from "./db";
+import { createRequestIndex, getRequestIndex, listHookNotifyLogs, writeHookNotifyLog } from "./db";
 import type { Env } from "./env";
 import { PassportRelay } from "./passport-relay";
 import { isDeviceId, parseApprovalInput, REQUEST_ID_PATTERN } from "./protocol";
@@ -107,6 +107,9 @@ export default {
             if (request.method === "GET" && url.pathname === "/admin/screencast/latest") {
                 return adminScreencastLatest(request, env);
             }
+            if (request.method === "POST" && url.pathname === "/admin/hook/push") {
+                return adminHookPush(request, env);
+            }
 
             if (request.method === "GET" && url.pathname === "/activate") return activationPage();
             if (request.method === "POST" && url.pathname === "/activate") return approveEnrollment(request, env);
@@ -134,6 +137,8 @@ export default {
 
             const createMatch = url.pathname.match(/^\/v1\/devices\/(passport-[A-F0-9]{12})\/requests$/u);
             if (request.method === "POST" && createMatch) return createApproval(request, env, createMatch[1]);
+            const notifyMatch = url.pathname.match(/^\/v1\/devices\/(passport-[A-F0-9]{12})\/notify$/u);
+            if (request.method === "POST" && notifyMatch) return pushNotify(request, env, notifyMatch[1]);
             const statusMatch = url.pathname.match(/^\/v1\/requests\/([0-9a-f-]{1,36})$/u);
             if (request.method === "GET" && statusMatch) return getApproval(request, env, statusMatch[1]);
             return json({ error: "not found" }, 404);
@@ -156,10 +161,13 @@ async function checkDeviceOnline(env: Env, deviceId: string): Promise<boolean> {
     return false;
 }
 
+/* 后台所有时间统一以 +08:00（Asia/Shanghai）时区展示，输出 YYYY-MM-DD HH:mm:ss +08:00。 */
 function formatDate(timestamp: number | null): string {
     if (!timestamp) return "-";
-    const date = new Date(timestamp * 1000);
-    return date.toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    const shifted = new Date((timestamp + 8 * 3600) * 1000);
+    const pad = (n: number): string => String(n).padStart(2, "0");
+    return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())} ` +
+        `${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}:${pad(shifted.getUTCSeconds())} +08:00`;
 }
 
 function activationPage(): Response {
@@ -463,6 +471,30 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
     const activeCount = deviceList.filter((d) => d.status === "active").length;
     const pendingCount = pendings.length;
 
+    // 最近 hook 推送记录（管理后台「Hook 日志」）
+    const hookLogs = await listHookNotifyLogs(env, { limit: 50 }).catch(() => []);
+    let hookLogsRows = "";
+    if (hookLogs.length === 0) {
+        hookLogsRows = `<tr><td colspan="6" class="empty-state">暂无 hook 推送记录。Agent 结束或 bridge notify 触发后会在此显示。</td></tr>`;
+    } else {
+        for (const log of hookLogs) {
+            const resultBadge = log.result === "sent"
+                ? `<span class="badge badge-active">✓ 已送达</span>`
+                : log.result === "offline"
+                    ? `<span class="badge" style="color:#d29922;border:1px solid rgba(210,153,34,0.3);background:rgba(210,153,34,0.1);">● 离线</span>`
+                    : `<span class="badge" style="color:#f85149;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.1);">✗ 失败</span>`;
+            hookLogsRows += `
+            <tr>
+                <td><span class="code-mono">${escapeHtml(log.device_id)}</span></td>
+                <td>${formatDate(log.created_at)}</td>
+                <td style="max-width:180px;word-break:break-all;">${escapeHtml(log.title)}</td>
+                <td style="max-width:300px;word-break:break-all;"><span style="color:var(--text-muted);">${escapeHtml(log.content)}</span></td>
+                <td>${log.online ? '🟢 在线' : '⚪ 离线'}</td>
+                <td>${resultBadge}</td>
+            </tr>`;
+        }
+    }
+
     let devicesRows = "";
     let deviceOptions = "";
     if (deviceList.length === 0) {
@@ -653,6 +685,53 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             <div class="gallery-grid">
                 ${galleryHtml}
             </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">🚀 在线发送 Hook（测试推送）</div>
+            </div>
+            <div class="image-studio">
+                <div class="upload-pane" style="grid-column:1/-1;">
+                    <div class="form-group" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;">
+                        <div>
+                            <label class="form-label">目标设备</label>
+                            <select id="hookTargetDevice" class="form-select">${deviceOptions}</select>
+                        </div>
+                        <div>
+                            <label class="form-label">标题</label>
+                            <input id="hookTitle" type="text" class="form-input" maxlength="32" value="Agent done">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">内容</label>
+                        <textarea id="hookContent" class="form-input" rows="3" maxlength="2000" placeholder="要推送到设备屏幕显示的通知内容"></textarea>
+                    </div>
+                    <button type="button" id="hookSendBtn" class="btn btn-primary" style="padding:0.75rem;font-size:1rem;" onclick="pushHookNotify()">
+                        🔔 立即发送到设备
+                    </button>
+                    <div id="hookStatus" style="display:none;padding:0.75rem;border-radius:6px;font-size:0.85rem;"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">🔔 Hook 日志（最近 50 条推送）</div>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>设备 ID</th>
+                        <th>推送时间</th>
+                        <th>标题</th>
+                        <th>内容</th>
+                        <th>设备在线</th>
+                        <th>结果</th>
+                    </tr>
+                </thead>
+                <tbody>${hookLogsRows}</tbody>
+            </table>
         </div>
 
         <div class="card">
@@ -985,6 +1064,63 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             }
         }
 
+        // ---------------- 在线发送 Hook（测试推送） ----------------
+        async function pushHookNotify() {
+            const deviceId = document.getElementById("hookTargetDevice").value;
+            const title = document.getElementById("hookTitle").value || "Agent done";
+            const content = document.getElementById("hookContent").value.trim();
+            const btn = document.getElementById("hookSendBtn");
+            const statusBox = document.getElementById("hookStatus");
+
+            if (!deviceId) { alert("请先选择目标设备！"); return; }
+            if (!content) { alert("请输入要推送的内容！"); return; }
+
+            btn.disabled = true;
+            btn.innerText = "正在发送...";
+            statusBox.style.display = "none";
+            try {
+                const res = await fetch("/admin/hook/push", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ device_id: deviceId, title, content })
+                });
+                const result = await res.json();
+                statusBox.style.display = "block";
+                if (result.ok) {
+                    if (result.sent) {
+                        statusBox.style.background = "rgba(46, 160, 67, 0.15)";
+                        statusBox.style.border = "1px solid rgba(46, 160, 67, 0.3)";
+                        statusBox.style.color = "#3fb950";
+                        statusBox.innerHTML = "✅ <strong>已发送到设备</strong>（设备在线）。请到设备「Kiro Passport」页面查看。";
+                    } else if (result.online) {
+                        statusBox.style.background = "rgba(235, 179, 56, 0.15)";
+                        statusBox.style.border = "1px solid rgba(235, 179, 56, 0.3)";
+                        statusBox.style.color = "#d29922";
+                        statusBox.innerHTML = "⚠️ 设备在线但未送达（可能页面未就绪）。";
+                    } else {
+                        statusBox.style.background = "rgba(235, 179, 56, 0.15)";
+                        statusBox.style.border = "1px solid rgba(235, 179, 56, 0.3)";
+                        statusBox.style.color = "#d29922";
+                        statusBox.innerHTML = "⚠️ 设备当前处于<strong>离线</strong>状态。已记录到 Hook 日志，设备上线后可重发。";
+                    }
+                } else {
+                    statusBox.style.background = "rgba(248, 81, 73, 0.15)";
+                    statusBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
+                    statusBox.style.color = "#f85149";
+                    statusBox.innerHTML = "❌ 发送失败: " + (result.error || "未知错误");
+                }
+            } catch (err) {
+                statusBox.style.display = "block";
+                statusBox.style.background = "rgba(248, 81, 73, 0.15)";
+                statusBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
+                statusBox.style.color = "#f85149";
+                statusBox.innerHTML = "❌ 网络请求失败: " + err;
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "🔔 立即发送到设备";
+            }
+        }
+
         async function deleteImage(imageId) {
             if (!confirm("确定要删除此图片吗？")) return;
             try {
@@ -1048,6 +1184,56 @@ async function adminPushImageWeb(request: Request, env: Env): Promise<Response> 
     }
 
     return json({ ok: true, image_id: imageId, sent, online });
+}
+
+/* 管理后台「在线发送 Hook」：以 admin 登录态向设备推送一条通知，无需 Hook token。
+ * 与 pushNotify 走同一条 DO 通道并落地 hook_notify_log，方便在没有 agent 环境时自测。 */
+async function adminHookPush(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const body = await request.json<{ device_id: string; title?: string; content?: string }>().catch(() => null);
+    if (!body || !isDeviceId(body.device_id) || typeof body.content !== "string" || !body.content) {
+        return json({ error: "invalid hook payload" }, 400);
+    }
+    const sanitize = (value: unknown, maxLength: number, fallback: string): string => {
+        if (typeof value !== "string") return fallback;
+        return ([...value.replace(/[^ -~]/gu, "").slice(0, maxLength)]).join("") || fallback;
+    };
+    const title = sanitize(body.title, 32, "Agent");
+    const notifyId = crypto.randomUUID();
+    const ts = Math.floor(Date.now() / 1000);
+
+    let sent = false;
+    let online = false;
+    let relayOk = false;
+    try {
+        const relay = env.PASSPORTS.get(env.PASSPORTS.idFromName(body.device_id));
+        const res = await relay.fetch("https://passport.internal/internal/notify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Passport-Device-Id": body.device_id },
+            body: JSON.stringify({ id: notifyId, title, content: body.content, ts }),
+        });
+        relayOk = res.ok;
+        if (res.ok) {
+            const data = await res.json<{ sent?: boolean; online?: boolean }>().catch(() => null);
+            sent = Boolean(data?.sent);
+            online = Boolean(data?.online);
+        }
+    } catch (err) {
+        console.error("Admin hook push failed", err);
+    }
+
+    // 写入 hook 日志（与管理后台 Hook 日志一致）
+    try {
+        await writeHookNotifyLog(env, {
+            id: notifyId, device_id: body.device_id, session_id: null,
+            title, content: body.content,
+            result: relayOk ? (sent ? "sent" : "offline") : "error",
+            online: online ? 1 : 0, created_at: ts,
+        });
+    } catch (err) { console.error("Admin hook log write failed", err); }
+
+    return json({ ok: true, sent, online, relay_ok: relayOk });
 }
 
 async function adminDeleteImageWeb(request: Request, env: Env): Promise<Response> {
@@ -1667,6 +1853,56 @@ async function createApproval(request: Request, env: Env, deviceId: string): Pro
         return json({ request_id: requestId, status: "pending", expires_at: expiresAt }, 202);
     }
     return json({ request_id: requestId, status: result.status, reason: result.reason }, 202);
+}
+
+async function pushNotify(request: Request, env: Env, deviceId: string): Promise<Response> {
+    if (!hasBearerSecret(request, env.HOOK_AUTH_SECRET)) return json({ error: "unauthorized" }, 401);
+    const body = await request.json<{ session_id?: string; title?: string; content?: string }>().catch(() => null);
+    if (!body || typeof body.content !== "string") return json({ error: "invalid notify body" }, 400);
+    const sanitize = (value: unknown, maxLength: number, fallback: string): string => {
+        if (typeof value !== "string") return fallback;
+        return ([...value.replace(/[^ -~]/gu, "").slice(0, maxLength)]).join("") || fallback;
+    };
+    const title = sanitize(body.title, 32, "Agent");
+    const notifyId = crypto.randomUUID();
+    const ts = Math.floor(Date.now() / 1000);
+
+    const relay = env.PASSPORTS.get(env.PASSPORTS.idFromName(deviceId));
+    const relayResponse = await relay.fetch("https://passport.internal/internal/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Passport-Device-Id": deviceId },
+        body: JSON.stringify({ id: notifyId, title, content: body.content, ts }),
+    });
+    if (!relayResponse.ok) {
+        // Record the failed push for auditing.
+        try {
+            await writeHookNotifyLog(env, {
+                id: notifyId, device_id: deviceId, session_id: body.session_id ?? null,
+                title, content: body.content, result: "error", online: 0, created_at: ts,
+            });
+        } catch (err) { console.error("notify log write (error) failed", err); }
+        return json({ error: "relay unavailable" }, 503);
+    }
+
+    // Persist the push outcome (delivered / device online) for the admin dashboard.
+    try {
+        let sent = false;
+        let online = false;
+        try {
+            const data = await relayResponse.json<{ sent?: boolean; online?: boolean }>();
+            sent = Boolean(data?.sent);
+            online = Boolean(data?.online);
+        } catch {}
+        const result: "sent" | "offline" = sent ? "sent" : "offline";
+        await writeHookNotifyLog(env, {
+            id: notifyId, device_id: deviceId, session_id: body.session_id ?? null,
+            title, content: body.content, result, online: online ? 1 : 0, created_at: ts,
+        });
+        return json({ ok: true, sent, online });
+    } catch (err) {
+        console.error("Hook notify log write failed", err);
+        return json({ ok: false, error: "log_failed" }, 500);
+    }
 }
 
 async function getApproval(request: Request, env: Env, requestId: string): Promise<Response> {
