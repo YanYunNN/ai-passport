@@ -176,6 +176,116 @@ def extract_hook_payload() -> Tuple[str, str]:
     return sanitize_tool(tool_name), sanitize_summary(summary)
 
 
+# Allow longer notification detail text than the 71-char approval summary.
+NOTIFY_TITLE_MAX = 40
+# Max bytes the whole notify WS frame may occupy (~1024) minus JSON framing.
+NOTIFY_MAX = 900
+
+
+def sanitize_notify_text(raw: str, max_length: int, fallback: str) -> str:
+    """Sanitize free-form text for the device notify field.
+
+    The ESP32 firmware notify parser only accepts printable ASCII (0x20..0x7E)
+    without double quotes or backslashes. We map non-ASCII to spaces and trim.
+    """
+    if not raw:
+        raw = fallback
+    cleaned = ""
+    for char in raw:
+        code = ord(char)
+        if 0x20 <= code <= 0x7E and char not in ('"', '\\'):
+            cleaned += char
+        elif char in ('"', "'", '`'):
+            cleaned += "'"
+        elif char == '\\':
+            cleaned += "/"
+        elif char in ('\r', '\n', '\t'):
+            cleaned += " "
+        elif code > 0x7E:
+            cleaned += " "
+        else:
+            cleaned += " "
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        cleaned = fallback
+    return cleaned[:max_length]
+
+
+def extract_notify_text() -> str:
+    """Extract the agent's final message from a Kiro Stop-hook stdin payload.
+
+    Handles both structured JSON payloads and a raw trailing text. Returns an
+    empty string when nothing usable is found (caller then falls back).
+    """
+    try:
+        if sys.stdin.isatty():
+            return ""
+        stdin_text = sys.stdin.read().strip()
+        if not stdin_text:
+            return ""
+        try:
+            payload = json.loads(stdin_text)
+        except json.JSONDecodeError:
+            return stdin_text
+        if not isinstance(payload, dict):
+            return str(payload)
+        # Kiro/Claude-style Stop hook field names, in priority order.
+        for key in (
+            "final_assistant_message", "assistant_message", "stop_message",
+            "message", "text", "content", "result", "output", "answer",
+            "summary", "last_message",
+        ):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+            if isinstance(value, list):
+                # Some hooks nest [{ "type": "text", "text": "..." }]
+                for block in value:
+                    if isinstance(block, dict) and isinstance(block.get("text"), str):
+                        return block["text"]
+        return ""
+    except Exception as e:
+        print(f"[Warning] Failed reading notify stdin: {e}", file=sys.stderr)
+        return ""
+
+
+def push_notify(
+    relay_url: str,
+    device_id: str,
+    hook_token: str,
+    title: str,
+    content: str,
+    timeout: float = 10.0,
+) -> Tuple[bool, str, Dict[str, Any]]:
+    """POST an agent notification (notify) to the Cloudflare Relay for the device."""
+    relay_url = relay_url.rstrip("/")
+    if not hook_token:
+        return False, "missing_hook_token", {"error": "HOOK_AUTH_SECRET / hook_token is not configured"}
+    if not device_id or not DEVICE_ID_PATTERN.match(device_id):
+        return False, "invalid_device_id", {"error": f"Invalid or missing device_id: {device_id}"}
+
+    title = sanitize_notify_text(title, NOTIFY_TITLE_MAX, "Agent")
+    content = sanitize_notify_text(content, NOTIFY_MAX, "Agent finished.")
+    if not content:
+        content = "Agent finished."
+
+    headers = {"Authorization": f"Bearer {hook_token}"}
+    url = f"{relay_url}/v1/devices/{device_id}/notify"
+    payload = {"title": title, "content": content}
+    print(
+        f"[Passport Bridge] Sending agent notification to {device_id} via {relay_url} (title: {title}, {len(payload['content'])} bytes)...",
+        file=sys.stderr,
+    )
+    status_code, resp = http_request(url, method="POST", headers=headers, data=payload, timeout=timeout)
+    if status_code not in (200, 202):
+        err = resp.get("error") or f"HTTP {status_code}"
+        print(f"[Passport Bridge] Failed to send notification: {err}", file=sys.stderr)
+        return False, f"notify_failed_{err}", resp
+    print(f"[Passport Bridge] ✅ Agent notification delivered (sent={resp.get('sent')}, online={resp.get('online')}).",
+          file=sys.stderr)
+    return True, "ok", resp
+
+
 def http_request(
     url: str,
     method: str = "GET",
@@ -309,10 +419,34 @@ def cmd_hook(args: argparse.Namespace, config: Dict[str, Any]) -> int:
     """Handle hook invocation from Kiro."""
     kind = args.kind.lower()
 
-    # Informational hooks
-    if kind in ("busy", "idle"):
-        # Informational state updates are non-blocking
+    if kind == "busy":
+        # Informational state updates are non-blocking. A future iteration can
+        # mark the device "busy"; for now there is no relay state channel, so
+        # this remains a local no-op.
         return 0
+
+    if kind == "idle":
+        # Agent finished a turn: push the agent's final output to the device.
+        relay_url = args.relay_url or config.get("relay_url") or DEFAULT_RELAY_URL
+        device_id = args.device_id or config.get("device_id")
+        hook_token = args.token or config.get("hook_token")
+        if not device_id:
+            print("[Passport Bridge] ⚠️ Error: No device_id configured. Run: python3 tools/kiro_passport_bridge.py config --device-id <ID>", file=sys.stderr)
+            return 1
+        if not hook_token:
+            print("[Passport Bridge] ⚠️ Error: No hook_token configured. Run: python3 tools/kiro_passport_bridge.py config --token <SECRET>", file=sys.stderr)
+            return 1
+
+        content = args.message or extract_notify_text()
+        title = args.title or "Agent done"
+        ok, reason, details = push_notify(
+            relay_url=relay_url,
+            device_id=device_id,
+            hook_token=hook_token,
+            title=title,
+            content=content or "Agent finished.",
+        )
+        return 0 if ok else 1
 
     if kind != "pretool":
         print(f"[Passport Bridge] Unhandled hook kind: {kind}", file=sys.stderr)
@@ -383,6 +517,30 @@ def cmd_request(args: argparse.Namespace, config: Dict[str, Any]) -> int:
 
     print(json.dumps({"allowed": allowed, "reason": reason, "details": details}, indent=2))
     return 0 if allowed else 1
+
+
+def cmd_notify(args: argparse.Namespace, config: Dict[str, Any]) -> int:
+    """Manually push an agent result message to the device."""
+    relay_url = args.relay_url or config.get("relay_url") or DEFAULT_RELAY_URL
+    device_id = args.device_id or config.get("device_id")
+    hook_token = args.token or config.get("hook_token")
+
+    if not device_id:
+        print("Error: device_id is required. Provide --device-id or configure one.", file=sys.stderr)
+        return 1
+    if not hook_token:
+        print("Error: hook_token is required. Provide --token or configure one.", file=sys.stderr)
+        return 1
+
+    ok, reason, details = push_notify(
+        relay_url=relay_url,
+        device_id=device_id,
+        hook_token=hook_token,
+        title=args.title,
+        content=args.message,
+    )
+    print(json.dumps({"ok": ok, "reason": reason, "details": details}, indent=2))
+    return 0 if ok else 1
 
 
 def cmd_config(args: argparse.Namespace, config: Dict[str, Any]) -> int:
@@ -468,10 +626,20 @@ def main() -> int:
     hook_parser.add_argument("--kind", choices=["pretool", "busy", "idle"], default="pretool", help="Hook kind")
     hook_parser.add_argument("--tool", help="Override tool name")
     hook_parser.add_argument("--summary", help="Override summary text")
+    hook_parser.add_argument("--message", help="Override agent final message (idle/notify)")
+    hook_parser.add_argument("--title", help="Override notify title (idle/notify)")
     hook_parser.add_argument("--timeout", type=int, default=30, help="Approval timeout in seconds")
     hook_parser.add_argument("--device-id", help="Target device ID")
     hook_parser.add_argument("--token", help="Hook auth secret token")
     hook_parser.add_argument("--relay-url", help="Relay server URL")
+
+    # notify command (manual agent-result push)
+    notify_parser = subparsers.add_parser("notify", help="Push an agent result message to the device")
+    notify_parser.add_argument("--message", required=True, help="Agent result text")
+    notify_parser.add_argument("--title", default="Agent done", help="Notification title")
+    notify_parser.add_argument("--device-id", help="Target device ID")
+    notify_parser.add_argument("--token", help="Hook auth secret token")
+    notify_parser.add_argument("--relay-url", help="Relay server URL")
 
     # request command
     req_parser = subparsers.add_parser("request", help="Manually submit test approval request")
@@ -502,6 +670,8 @@ def main() -> int:
         return cmd_hook(args, config)
     elif args.command == "request":
         return cmd_request(args, config)
+    elif args.command == "notify":
+        return cmd_notify(args, config)
     elif args.command == "config":
         return cmd_config(args, config)
     elif args.command == "status":
