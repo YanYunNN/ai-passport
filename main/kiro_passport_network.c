@@ -34,6 +34,11 @@ static size_t s_b64_carry_len = 0;
 static char s_ctrl_rx_buffer[1024];
 static size_t s_ctrl_rx_len = 0;
 
+/* 本机通知：静态分配（无 PSRAM），由 s_notify_lock 保护。
+ * content 缓冲 320 字节，最大约 319 个可打印 ASCII 字符。 */
+static kiro_passport_notify_info_t s_notify;
+static SemaphoreHandle_t s_notify_lock = NULL;
+
 bool kiro_passport_network_get_image(kiro_passport_image_info_t *out_info)
 {
     if (!out_info || s_active_image_size == 0) return false;
@@ -46,6 +51,25 @@ bool kiro_passport_network_get_image(kiro_passport_image_info_t *out_info)
     strlcpy(out_info->title, s_active_image_title, sizeof(out_info->title));
     if (s_image_lock) xSemaphoreGive(s_image_lock);
     return true;
+}
+
+bool kiro_passport_network_get_notify(kiro_passport_notify_info_t *out_info)
+{
+    if (!out_info) return false;
+    if (!s_notify_lock) s_notify_lock = xSemaphoreCreateMutex();
+    if (s_notify_lock) xSemaphoreTake(s_notify_lock, portMAX_DELAY);
+    bool present = s_notify.present;
+    if (present) *out_info = s_notify;
+    if (s_notify_lock) xSemaphoreGive(s_notify_lock);
+    return present;
+}
+
+void kiro_passport_network_clear_notify(void)
+{
+    if (!s_notify_lock) s_notify_lock = xSemaphoreCreateMutex();
+    if (s_notify_lock) xSemaphoreTake(s_notify_lock, portMAX_DELAY);
+    s_notify.present = false; /* version 保持不变，供新通知递增检测 */
+    if (s_notify_lock) xSemaphoreGive(s_notify_lock);
 }
 
 #define KIRO_NETWORK_NAMESPACE "passport"
@@ -103,6 +127,18 @@ static bool safe_value(const char *value, size_t max_length)
         unsigned char character = (unsigned char)*cursor;
         if (character < 0x21 || character > 0x7e || character == '"' ||
             character == '\\' || character == '\r' || character == '\n') return false;
+    }
+    return true;
+}
+
+/* 校验可打印 ASCII（字符 0x20-0x7E，不含 '"' 与 '\'），空或超长视为无效。 */
+static bool printable_notify_text(const char *value, size_t buffer_size)
+{
+    if (!value || !value[0] || strlen(value) >= buffer_size) return false;
+    for (const char *cursor = value; *cursor; cursor++) {
+        unsigned char character = (unsigned char)*cursor;
+        if (character < 0x20 || character > 0x7e || character == '"' ||
+            character == '\\') return false;
     }
     return true;
 }
@@ -371,6 +407,36 @@ static void image_stream_feed(const char *data, size_t len, bool is_first, bool 
     if (s_image_lock) xSemaphoreGive(s_image_lock);
 }
 
+/* 解析一帧 type:"notify" 消息。返回 true 表示消息是合法通知并已存储。 */
+static bool parse_notify(const char *message)
+{
+    char id[sizeof(s_notify.id)];
+    char title[sizeof(s_notify.title)];
+    char content[sizeof(s_notify.content)];
+    if (!extract_json_string(message, "id", id, sizeof(id), NULL, NULL) ||
+        !extract_json_string(message, "title", title, sizeof(title), NULL, NULL) ||
+        !extract_json_string(message, "content", content, sizeof(content), NULL, NULL)) {
+        return false;
+    }
+    if (!printable_notify_text(id, sizeof(id)) || !printable_notify_text(title, sizeof(title)) ||
+        !printable_notify_text(content, sizeof(content))) {
+        return false;
+    }
+
+    if (!s_notify_lock) s_notify_lock = xSemaphoreCreateMutex();
+    if (s_notify_lock) xSemaphoreTake(s_notify_lock, portMAX_DELAY);
+    snprintf(s_notify.id, sizeof(s_notify.id), "%s", id);
+    snprintf(s_notify.title, sizeof(s_notify.title), "%s", title);
+    snprintf(s_notify.content, sizeof(s_notify.content), "%s", content);
+    s_notify.version++;
+    s_notify.present = true;
+    if (s_notify_lock) xSemaphoreGive(s_notify_lock);
+
+    ESP_LOGI(TAG, "收到通知: id=%s, title=%s, len=%zu, v=%lu", s_notify.id, s_notify.title,
+             strlen(s_notify.content), (unsigned long)s_notify.version);
+    return true;
+}
+
 static void process_message(const char *message)
 {
     if (!message) return;
@@ -438,6 +504,11 @@ static void process_message(const char *message)
         return;
     }
     if (strstr(message, "\"screencast_stop\"")) {
+        return;
+    }
+
+    if (strstr(message, "\"type\":\"notify\"") || strstr(message, "\"type\": \"notify\"")) {
+        if (!parse_notify(message)) ESP_LOGW(TAG, "忽略无效通知消息");
         return;
     }
 

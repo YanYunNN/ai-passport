@@ -68,6 +68,23 @@ typedef struct {
 /* 获取当前接收到的图片信息，若无图片返回 false */
 bool kiro_passport_network_get_image(kiro_passport_image_info_t *out_info);
 
+/* 内存预算约束：ESP32-C3 无 PSRAM，通知在全局静态区中保存。
+ * content 使用 320 字节缓冲（最大约 319 个可打印 ASCII 字符，由 LVGL 换行显示），
+ * title 使用 48 字节缓冲（设计上限约 40 字符）。 */
+typedef struct {
+    char id[37];
+    char title[48];
+    char content[320];
+    uint32_t version; /* 每次收到新通知递增 */
+    bool present;
+} kiro_passport_notify_info_t;
+
+/* 获取最近一次的通知快照，若无已接收通知返回 false */
+bool kiro_passport_network_get_notify(kiro_passport_notify_info_t *out_info);
+
+/* 清除当前通知的 present 标志（version 保持不变），用于用户关闭通知 */
+void kiro_passport_network_clear_notify(void);
+
 /* 发送自定义文本消息到已连接的 WebSocket (成功返回发送字节数，失败返回 -1) */
 int kiro_passport_network_send_text(const char *message);
 
