@@ -13,6 +13,7 @@ import { createRequestIndex, getRequestIndex } from "./db";
 import type { Env } from "./env";
 import { PassportRelay } from "./passport-relay";
 import { isDeviceId, parseApprovalInput, REQUEST_ID_PATTERN } from "./protocol";
+import { handleSimulatorBinProxy, handleSimulatorPresets, simulatorPage } from "./simulator";
 
 export { PassportRelay };
 
@@ -71,6 +72,13 @@ export default {
         try {
             const url = new URL(request.url);
             if (request.method === "GET" && url.pathname === "/healthz") return json({ ok: true });
+            if (request.method === "GET" && url.pathname === "/simulator") return simulatorPage();
+            if (request.method === "GET" && url.pathname === "/api/simulator/bin-proxy") {
+                return handleSimulatorBinProxy(request);
+            }
+            if (request.method === "GET" && url.pathname === "/api/simulator/presets") {
+                return handleSimulatorPresets();
+            }
 
             if (request.method === "GET" && (url.pathname === "/admin" || url.pathname === "/admin/devices")) {
                 return adminDashboardPage(request, env);
@@ -524,6 +532,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem;">已登录: <strong>${escapeHtml(username)}</strong></p>
             </div>
             <div class="header-actions">
+                <a href="/simulator" class="btn btn-accent" target="_blank">🎮 Web 模拟器</a>
                 <a href="/admin" class="btn" style="background: #21262d; border: 1px solid var(--border); color: var(--text);">🔄 刷新</a>
                 <a href="/admin/pair" class="btn btn-primary">➕ 配对新设备</a>
             </div>
