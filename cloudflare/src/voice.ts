@@ -2,7 +2,7 @@
 // audio and chatting with an AI (Grok via xAI API), plus the ASR pipeline
 // (Whisper via Cloudflare Workers AI). TTS goes through the Edge TTS proxy
 // Worker on tts.yanyun.asia (OpenAI-compatible POST /v1/audio/speech).
-import { hasBearerSecret, verifyAdminBasicAuth } from "./auth";
+import { bearerToken, hasBearerSecret, verifyAdminBasicAuth, verifyDeviceCredential } from "./auth";
 import type { Env } from "./env";
 
 const json = (body: unknown, status = 200): Response =>
@@ -13,6 +13,12 @@ const json = (body: unknown, status = 200): Response =>
 
 async function voiceAuthorized(request: Request, env: Env): Promise<boolean> {
     if (hasBearerSecret(request, env.HOOK_AUTH_SECRET)) return true;
+    // 固件 Chat 用 X-Device-Id + Bearer 设备凭证调用 ASR/Chat/TTS。
+    const deviceId = request.headers.get("X-Device-Id");
+    const credential = bearerToken(request);
+    if (deviceId && credential && (await verifyDeviceCredential(env, deviceId, credential))) {
+        return true;
+    }
     return (await verifyAdminBasicAuth(request, env)) !== null;
 }
 
