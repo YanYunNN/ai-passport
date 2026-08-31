@@ -34,10 +34,10 @@ Kiro agent 完成(Stop hook)
 ```json
 {"v":1,"type":"notify","device_id":"passport-XXXXXXXXXXXX",
  "session_id":"<32hex>","id":"<uuid>","title":"Agent done",
- "content":"<可打印 ASCII，≤~900>","ts":1234567890}
+ "content":"<文本，可含中文，按 UTF-8 字节截断，整帧 ≤1000>","ts":1234567890}
 ```
 
-所有字段为可打印 ASCII（`0x20-0x7E`，不含 `"` `\`），与固件现有解析器同源安全约束。`content` 若超长，Worker 侧会以 `...` 截断到整帧 ≤1000 字节。
+字段约束为**字节安全**（可打印 ASCII 或多字节 UTF-8，不含 `"`、`\`、控制符）——UTF-8 字节不含 `"`/`\`，不会破坏固件的非转义 JSON 解析。`content` 若超长，Worker 侧会按 UTF-8 字节边界用 `...` 截断到整帧 ≤1000 字节（约 280 个汉字），绝不把一个汉字切成半个。
 
 ## 3. 部署 Worker（一次性）
 
@@ -143,6 +143,7 @@ bridge 会读取 hook stdin 的 JSON payload，按优先级取 `final_assistant_
    - [ ] 按 **OK 短按**，通知清除，页面回到默认 `High-risk Kiro tools appear here.`。
    - [ ] 断开 relay / 设备离线时 `notify` 返回 `sent:false`，且设备不受影响。
    - [ ] 在 Kiro 里让 agent 完成一轮回复（触发 `Stop`），观察设备收到 agent 最终文本。
+   - [ ] push 一条**中文**通知（`curl ... -d '{"title":"任务完成","content":"今天天气很好..."}'`），设备正常显示中文、无乱码、不显示半个汉字。
    - [ ] 审批流程（高风险 tool 的 allow/deny）未被本功能破坏：验证一次鼠标 OK/DOWN 通过。
 
 ## 7. 常见问题
@@ -152,5 +153,5 @@ bridge 会读取 hook stdin 的 JSON payload，按优先级取 `final_assistant_
 | 设备不显示任何 notify | 设备不在「Kiro Passport」页面 / 通知版本未刷新；确认 `notify` API 返回 `sent:true` 且设备在线 |
 | `notify` API 401 | `hook_token` 未配置或与 `HOOK_AUTH_SECRET` 不一致；`tools/kiro_passport_bridge.py config --token` |
 | `sent:false`/`online:false` | 设备离线；检查 Wi-Fi、NTP、WSS 连接 |
-| 中文内容乱码 | 固件 notify 仅支持可打印 ASCII，超出部分被替换为空格；agent 文本需 ASCII（或后续升级 UTF-8） |
+| 中文内容乱码 | 旧固件只支持可打印 ASCII；升级到支持 UTF-8 中文的固件 + Worker + bridge（三者需同时更新）后，中文正常显示，超长按字截断 |
 | hook 不触发 | 检查 Kiro `Stop` hook 是否被启用、bridge 能否运行（`python3 tools/kiro_passport_bridge.py hook --kind idle`） |
