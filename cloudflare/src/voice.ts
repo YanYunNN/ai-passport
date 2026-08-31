@@ -476,6 +476,12 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
                 console.error("Edge TTS failed", detail);
                 throw new VoiceError(`TTS 服务暂不可用: ${detail.slice(0, 120)}`, 503);
             }
+            // 固件 Chat 用 Accept: audio/mpeg 直接拿 MP3 字节流，避免 base64 大缓冲。
+            if (request.headers.get("Accept")?.includes("audio/mpeg")) {
+                return new Response(audio, {
+                    headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-store" },
+                });
+            }
             return json({ ok: true, source: "edgetts", audio: `data:audio/mpeg;base64,${bytesToBase64(audio)}` });
         }
 

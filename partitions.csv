@@ -1,6 +1,8 @@
 # Name,     Type, SubType, Offset,    Size,      Flags
-# Reserve nearly all 8 MB for the factory app. Keeping NVS after the maximum
-# app range lets raw all-in-one upgrades preserve credentials and settings.
-factory,    app,  factory, 0x10000,   0x7e9000,
-nvs,        data, nvs,     0x7f9000, 0x6000,
-phy_init,   data, phy,     0x7ff000, 0x1000,
+# Factory app shrunk to make room for chatrec (Chat 语音助手的 flash 暂存区,
+# 流式写录音 PCM 与 TTS MP3,避免 C3 无 PSRAM 的大缓冲分配)。NVS 偏移保持不变,
+# 保证 all-in-one 升级后设备配对凭证仍在原位置。
+factory,    app,  factory, 0x10000,   0x4F0000,
+chatrec,    data, 0x40,    0x500000,  0x80000,
+nvs,        data, nvs,     0x7f9000,  0x6000,
+phy_init,   data, phy,     0x7ff000,  0x1000,
