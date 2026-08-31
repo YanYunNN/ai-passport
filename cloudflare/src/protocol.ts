@@ -133,13 +133,32 @@ function printableAscii(value: unknown, maxLength: number): value is string {
         /^[ -!#-\[\]-~]+$/.test(value);
 }
 
+/**
+ * UTF-8-aware variant of `printableAscii` for presentation fields (e.g. an
+ * approval `summary` that may be Chinese). Keeps printable ASCII plus multi-byte
+ * code points, rejects `"`, `\`, DEL and C0 control chars. `maxBytes` bounds the
+ * encoded UTF-8 byte length so it matches the firmware's byte-sized buffers
+ * (e.g. SUMMARY_MAX-1 = 71); Chinese is 3 bytes per code point here.
+ */
+function printableUtf8(value: unknown, maxBytes: number): value is string {
+    if (typeof value !== "string" || value.length === 0) return false;
+    for (const character of value) {
+        const code = character.codePointAt(0)!;
+        // Reject NUL/C0 control, DEL, `"`, and `\`.
+        if (code === 0 || code < 0x20 || code === 0x7f || code === 0x22 || code === 0x5c) {
+            return false;
+        }
+    }
+    return new TextEncoder().encode(value).byteLength <= maxBytes;
+}
+
 export function parseApprovalInput(value: unknown): ApprovalInput | null {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const object = value as Record<string, unknown>;
     if (Object.keys(object).length !== 3 || !Object.hasOwn(object, "tool") ||
         !Object.hasOwn(object, "summary") || !Object.hasOwn(object, "ttl_seconds")) return null;
     if (!printableAscii(object.tool, 31) || !TOOL_PATTERN.test(object.tool) ||
-        !printableAscii(object.summary, 71) || typeof object.ttl_seconds !== "number" ||
+        !printableUtf8(object.summary, 71) || typeof object.ttl_seconds !== "number" ||
         !Number.isInteger(object.ttl_seconds) || object.ttl_seconds < 1 || object.ttl_seconds > 300) {
         return null;
     }
@@ -176,21 +195,46 @@ const MAX_NOTIFY_BYTES = 1000;
 
 /**
  * Build the exact "notify" payload. Truncates `content` (and validates every
- * other field) so the serialized message always fits and stays printable-ASCII
- * and NUL-safe. Throws if a fixed/generated field makes the message impossible.
+ * other field) so the serialized message always fits and stays NUL-safe and
+ * JSON-unescaped safe. Throws if a fixed/generated field makes it impossible.
+ *
+ * Fields are restricted to characters that are byte-safe in the firmware's
+ * unescaped grammar: printable ASCII plus multi-byte UTF-8 (>=0x80, i.e.
+ * Chinese), with `"` (0x22), `\` (0x5c) and control characters rejected so the
+ * payload can never break the firmware parser or carry NUL bytes.
  */
 export function serializeDeviceNotify(notify: Omit<DeviceNotify, "type" | "v">): string {
-    // Same narrow sheet as `printableAscii`: space..~ excluding `"` (0x22) and
-    // `\` (0x5c), so the unescaped payload can never break the firmware parser.
-    const sanitize = (value: string, maxLength: number, fallback: string): string => {
-        const cleaned = [...value.replace(/[^ -!#-\[\]-~]/gu, "")];
-        return (cleaned.length > 0 ? cleaned.join("") : fallback).slice(0, maxLength);
+    // Same narrow sheet as `printableAscii` but UTF-8-aware: keep printable
+    // ASCII and multi-byte code points, reject `"`, `\`, and C0 control chars.
+    const keep = (character: string): boolean => {
+        const code = character.codePointAt(0)!;
+        return code >= 0x80 || (code >= 0x20 && code <= 0x7e &&
+            character !== '"' && character !== "\\");
+    };
+    // Truncate a code-point array to fit `maxBytes` of UTF-8 without splitting a
+    // multi-byte sequence. `encode` is a local byte counter for these helpers.
+    const encode = (value: string): number => new TextEncoder().encode(value).byteLength;
+    const truncateBytes = (codePoints: string[], maxBytes: number): string => {
+        const out: string[] = [];
+        let bytes = 0;
+        for (const character of codePoints) {
+            const charBytes = encode(character);
+            if (bytes + charBytes > maxBytes) break;
+            bytes += charBytes;
+            out.push(character);
+        }
+        return out.join("");
+    };
+    const sanitizeBytes = (value: string, maxBytes: number, fallback: string): string => {
+        const codePoints = [...value].filter(keep);
+        const cleaned = truncateBytes(codePoints, maxBytes);
+        return cleaned.length > 0 ? cleaned : fallback;
     };
 
-    const deviceId = sanitize(notify.device_id, 31, "");
-    const sessionId = sanitize(notify.session_id, 64, "");
-    const id = sanitize(notify.id, 64, "");
-    const title = sanitize(notify.title, 32, "Agent");
+    const deviceId = sanitizeBytes(notify.device_id, 31, "");
+    const sessionId = sanitizeBytes(notify.session_id, 63, "");
+    const id = sanitizeBytes(notify.id, 36, "");
+    const title = sanitizeBytes(notify.title, 47, "Agent");
     if (!deviceId || !sessionId || !id || !Number.isSafeInteger(notify.ts)) {
         throw new Error("Invalid notify payload: missing or non-sanitizable fields");
     }
@@ -199,29 +243,33 @@ export function serializeDeviceNotify(notify: Omit<DeviceNotify, "type" | "v">):
     const prefix = `{"v":1,"type":"notify","device_id":"${deviceId}",` +
         `"session_id":"${sessionId}","id":"${id}","title":"${title}","content":"`;
     const suffix = `","ts":${notify.ts}}`;
-    const prefixBytes = new TextEncoder().encode(prefix).byteLength;
-    const suffixBytes = new TextEncoder().encode(suffix).byteLength;
+    const prefixBytes = encode(prefix);
+    const suffixBytes = encode(suffix);
     const reserved = prefixBytes + suffixBytes;
     if (reserved > MAX_NOTIFY_BYTES) throw new Error("Notify header exceeds the device buffer limit");
 
     const room = MAX_NOTIFY_BYTES - reserved;
-    let content = [...notify.content].filter((character) => /[ -!#-\[\]-~]/.test(character)).join("");
-    const encode = (value: string): number => new TextEncoder().encode(value).byteLength;
-    if (encode(content) > room) {
-        // Keep the message printable-ASCII and NUL-safe while fitting: trim the
-        // content (one code unit at a time) and append an ASCII "..." crop marker.
+    let contentCodes = [...notify.content].filter(keep);
+    if (encode(contentCodes.join("")) > room) {
+        // Crop the content (one code point at a time) and append an ASCII "..."
+        // marker so it fits without splitting a UTF-8 sequence.
         const ellipsis = "...".slice(0, Math.max(0, Math.min(room - 1, 3)));
-        const ellipsisBytes = encode(ellipsis);
-        const available = room - ellipsisBytes;
-        let last = content.length;
-        while (last > 0 && encode(content.slice(0, last)) > available) last--;
-        content = content.slice(0, last) + ellipsis;
+        const available = room - encode(ellipsis);
+        const cropped = truncateBytes(contentCodes, Math.max(0, available));
+        contentCodes = [...Array.from(cropped), ...Array.from(ellipsis)];
     }
+    const content = contentCodes.join("");
 
     const payload = `${prefix}${content}${suffix}`;
-    const bytes = new TextEncoder().encode(payload);
-    if (bytes.byteLength <= 0 || bytes.byteLength > MAX_NOTIFY_BYTES || /[^\x20-\x7e]/.test(payload) || payload.includes("\u0000")) {
-        throw new Error("Serialized notify exceeds device buffer limit or is not printable ASCII");
+    const bytes = encode(payload);
+    // Allow printable ASCII and multi-byte UTF-8 (>=0x80, i.e. Chinese); reject
+    // any C0 control byte or NUL that could break the firmware's unescaped parser.
+    const hasForbiddenByte = payload.includes("\u0000") || [...payload].some((character) => {
+        const code = character.codePointAt(0)!;
+        return code < 0x20 || code === 0x7f;
+    });
+    if (bytes <= 0 || bytes > MAX_NOTIFY_BYTES || hasForbiddenByte) {
+        throw new Error("Serialized notify exceeds device buffer limit or contains forbidden bytes");
     }
     return payload;
 }
