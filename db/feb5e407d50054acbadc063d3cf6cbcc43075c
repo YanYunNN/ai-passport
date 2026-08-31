@@ -1,0 +1,52 @@
+cloudflare/migrations/0007_device_events.sql
+  s_2e8c6d3d8db0e8::t_eb6038018b98ab 1-14
+cloudflare/migrations/0008_wallpaper_notes.sql
+  s_2e8c6d3d8db0e8::t_b4885e0d8e1493 1-7
+cloudflare/src/index.ts
+  s_2e8c6d3d8db0e8::t_e5e2ec494e8d8a 1255,1260,1265,1270,1548,1641,1899-1935,1941-1946
+  s_2e8c6d3d8db0e8::t_0842478a040452 1215
+  s_2e8c6d3d8db0e8::t_481fe291ba80fa 576-595
+  s_2e8c6d3d8db0e8::t_87b056c166c067 132-134,940-1010,1012-1054,1070-1096,1202
+  s_2e8c6d3d8db0e8::t_67dba2b298d630 837-910,1551-1591,1878-1882,1936-1940,1947-2107
+  s_2e8c6d3d8db0e8::t_11a07ba6a326d0 12,135-137,1097-1098,1100-1107,1109-1119,1122-1124,1126-1182,1185-1201
+  s_2e8c6d3d8db0e8::t_2a7f9e37b367e6 2140
+  s_2e8c6d3d8db0e8::t_6325555dc93d8f 244,1430-1466,1883-1888,1898
+  s_2e8c6d3d8db0e8::t_30ea77237f3891 2659
+  s_2e8c6d3d8db0e8::t_b100ac3344e881 2109-2139,2141-2182
+  s_2e8c6d3d8db0e8::t_dcdc1d3c96b8ef 2525-2533,2536-2542,2547,2551,2561-2616,2618-2658,2660-2671
+  s_2e8c6d3d8db0e8::t_3c875e06cdc875 2410
+  s_2e8c6d3d8db0e8::t_b527e216076a25 640-836,911-914,1843-1860,1874-1877
+  s_2e8c6d3d8db0e8::t_0a1a8fbf661df9 17,138-146,184-188
+  s_2e8c6d3d8db0e8::t_538e31a8cf3afe 1213-1214,1216-1220
+cloudflare/src/env.ts
+  s_2e8c6d3d8db0e8::t_fba7b2365f827d 9-12
+cloudflare/src/wallpaper.ts
+  s_2e8c6d3d8db0e8::t_8c8dc6fb945a07 117-127
+  s_2e8c6d3d8db0e8::t_1dadb712d8df9f 1-18,20-116,128-130,132-231
+  s_2e8c6d3d8db0e8::t_9995d3ed741f97 19,131
+cloudflare/wrangler.toml
+  s_2e8c6d3d8db0e8::t_cbf4ee011c61c7 7-12
+cloudflare/src/db.ts
+  s_2e8c6d3d8db0e8::t_6e78ac1630cb03 122-170
+cloudflare/src/passport-relay.ts
+  s_2e8c6d3d8db0e8::t_f260b30a493aa3 2,282-283,285,329,331-332,338,342-344
+  s_2e8c6d3d8db0e8::t_d5bf1965ff2c1e 284,330,333-337,339-341
+cloudflare/package.json
+  s_2e8c6d3d8db0e8::t_352782dcdf5d42 18-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "dbfeb5e407d50054acbadc063d3cf6cbcc43075c",
+  "prompts": {},
+  "sessions": {
+    "s_2e8c6d3d8db0e8": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_9lx2fh88p9wh",
+        "model": "auto(free)"
+      },
+      "human_author": "YanYunNNX <YanYunNNX@163.com>"
+    }
+  }
+}
