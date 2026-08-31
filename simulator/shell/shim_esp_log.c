@@ -13,11 +13,26 @@
 #include "esp_err.h"
 #include "sim_api.h"
 
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
 static vprintf_like_t s_vprintf = NULL;
+
+/* 串行化所有日志输出: 音效 worker 等后台线程与主线程并发 vprintf 会破坏
+ * msvcrt FILE* 内部状态, 随机 SIGSEGV(游戏运行几秒后"闪退"的真凶之一)。 */
+static pthread_mutex_t s_log_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void sim_log_lock(void)
+{
+    pthread_mutex_lock(&s_log_lock);
+}
+
+void sim_log_unlock(void)
+{
+    pthread_mutex_unlock(&s_log_lock);
+}
 
 static int default_vprintf(const char *fmt, va_list args)
 {
@@ -51,6 +66,9 @@ vprintf_like_t esp_log_set_vprintf(vprintf_like_t func)
 /* 服务表入口：固件模块的 esp_log_printf 胶水最终转调到这里。 */
 void esp_log_vprintf(int level, const char *tag, const char *fmt, va_list args)
 {
+    /* 一次日志的三次 vprintf 整体加锁, 避免与后台线程(如 game_audio worker)交错 */
+    sim_log_lock();
+
     /* 前缀：独立调用，构造自己的 va_list（与 IDF log_format_text.c 一致） */
     emit("%c (%u) %s: ", esp_log_level_name(level)[0], (unsigned)uptime_ms(),
          tag ? tag : "");
@@ -60,6 +78,8 @@ void esp_log_vprintf(int level, const char *tag, const char *fmt, va_list args)
     fn(fmt, args);
 
     emit("\n");
+
+    sim_log_unlock();
 }
 
 /* 外壳自身（含 autotest）使用的变参封装 */

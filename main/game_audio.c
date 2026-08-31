@@ -122,12 +122,15 @@ static void synth_sfx(game_sfx_t sfx)
 
 static void audio_worker_task(void *arg)
 {
-    (void)arg;
+    /* 队列在任务创建时绑定, 不随全局 s_sfx_queue 变化:
+     * 模拟器的 vTaskDelete 不终止线程, 旧 worker 会残留; 若每轮都读全局,
+     * 重进游戏页后旧 worker 会读到重建的新队列, 与当前 worker 并发处理音效。 */
+    QueueHandle_t queue = (QueueHandle_t)arg;
     game_sfx_t sfx;
     int idle_count = 0;
 
     for (;;) {
-        if (xQueueReceive(s_sfx_queue, &sfx, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (xQueueReceive(queue, &sfx, pdMS_TO_TICKS(100)) == pdTRUE) {
             idle_count = 0;
             if (sfx != GAME_SFX_NONE) {
                 synth_sfx(sfx);
@@ -149,7 +152,7 @@ void game_audio_init(void)
         s_sfx_queue = xQueueCreate(8, sizeof(game_sfx_t));
     }
     if (!s_audio_task) {
-        xTaskCreate(audio_worker_task, "game_audio", 3072, NULL, 4, &s_audio_task);
+        xTaskCreate(audio_worker_task, "game_audio", 3072, s_sfx_queue, 4, &s_audio_task);
     }
 }
 

@@ -24,6 +24,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* shim_esp_log.c 导出：日志输出互斥锁（autotest 的 printf 与后台 worker 的 vprintf 并发安全） */
+extern void sim_log_lock(void);
+extern void sim_log_unlock(void);
+
 /* ---------------- 平台加载器封装（Windows: LoadLibrary / 其它: dlopen） ---------------- */
 #if defined(_WIN32)
 #include <windows.h>
@@ -383,10 +387,12 @@ int main(int argc, char **argv)
         if (autotest) {
             for (size_t i = 0; i < AUTOTEST_COUNT; i++) {
                 if (AUTOTEST[i].frame == frame) {
+                    sim_log_lock();
                     printf("[autotest] frame %d: %s %s\n", frame,
                            AUTOTEST[i].down ? "press" : "release",
                            AUTOTEST[i].sdl_key == SDLK_DOWN ? "DOWN" :
                            AUTOTEST[i].sdl_key == SDLK_RETURN ? "OK" : "?");
+                    sim_log_unlock();
                     fw->key(AUTOTEST[i].sdl_key, AUTOTEST[i].down);
                 }
             }

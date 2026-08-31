@@ -14,7 +14,7 @@
 
 #define BIRD_X          64
 #define BIRD_R          12
-#define HIT_R           2       // TEMP-REPRO: 临时极小判定, 只为让小鸟持续飞行复现崩溃
+#define HIT_R           9       // 判定半径: 比视觉(12)小 3px, 休闲向容错, 擦边不判死
 #define READY_Y         150.0f
 #define GROUND_Y        280
 #define GAP             150     // 缺口更宽, 更好穿
