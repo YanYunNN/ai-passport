@@ -119,6 +119,55 @@ export interface HookNotifyLogRow {
     created_at: number;
 }
 
+export type DeviceEventType = "online" | "offline";
+
+export interface DeviceEventRow {
+    id: number;
+    device_id: string;
+    event: DeviceEventType;
+    created_at: number;
+}
+
+/**
+ * Records a device connection event (heartbeat). Consecutive events of the same
+ * type within 60s are deduplicated so reconnect flaps do not flood the table.
+ */
+export async function writeDeviceEvent(
+    env: Env,
+    deviceId: string,
+    event: DeviceEventType,
+    createdAt = Math.floor(Date.now() / 1000),
+): Promise<void> {
+    const last = await env.DB.prepare(
+        "SELECT event, created_at FROM device_events WHERE device_id = ?1 ORDER BY created_at DESC LIMIT 1",
+    ).bind(deviceId).first<{ event: DeviceEventType; created_at: number }>();
+    if (last && last.event === event && createdAt - last.created_at < 60) return;
+    await env.DB.prepare(
+        "INSERT INTO device_events (device_id, event, created_at) VALUES (?1, ?2, ?3)",
+    ).bind(deviceId, event, createdAt).run();
+}
+
+/** Returns connection events for the last `windowSeconds` (newest first). */
+export async function listDeviceEvents(
+    env: Env,
+    opts: { deviceId?: string; since?: number; limit?: number } = {},
+): Promise<DeviceEventRow[]> {
+    const since = opts.since ?? 0;
+    const limit = Math.max(1, Math.min(500, opts.limit ?? 200));
+    if (opts.deviceId) {
+        const rows = await env.DB.prepare(
+            "SELECT id, device_id, event, created_at FROM device_events " +
+            "WHERE device_id = ?1 AND created_at >= ?2 ORDER BY created_at DESC LIMIT ?3",
+        ).bind(opts.deviceId, since, limit).all<DeviceEventRow>();
+        return rows.results;
+    }
+    const rows = await env.DB.prepare(
+        "SELECT id, device_id, event, created_at FROM device_events " +
+        "WHERE created_at >= ?1 ORDER BY created_at DESC LIMIT ?2",
+    ).bind(since, limit).all<DeviceEventRow>();
+    return rows.results;
+}
+
 /**
  * Records a hook-notify push to a target device. The Worker calls this after the
  * Durable Object has attempted the push so the admin dashboard can audit what was

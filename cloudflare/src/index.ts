@@ -9,11 +9,12 @@ import {
     verifyAdminBasicAuth,
     verifyDeviceCredential,
 } from "./auth";
-import { createRequestIndex, getRequestIndex, listHookNotifyLogs, writeHookNotifyLog } from "./db";
+import { createRequestIndex, getRequestIndex, listDeviceEvents, listHookNotifyLogs, writeHookNotifyLog, type DeviceEventRow, type HookNotifyLogRow } from "./db";
 import type { Env } from "./env";
 import { PassportRelay } from "./passport-relay";
 import { isDeviceId, parseApprovalInput, REQUEST_ID_PATTERN, type ApprovalInput } from "./protocol";
 import { handleSimulatorBinProxy, handleSimulatorPresets, simulatorPage } from "./simulator";
+import { renderWallpaperJpeg, weatherCodeLabel } from "./wallpaper";
 
 export { PassportRelay };
 
@@ -128,6 +129,21 @@ export default {
             if (request.method === "POST" && url.pathname === "/admin/hook/push") {
                 return adminHookPush(request, env);
             }
+            if (request.method === "GET" && url.pathname === "/admin/dashboard-data") {
+                return adminDashboardData(request, env);
+            }
+            if (request.method === "GET" && url.pathname === "/admin/monitoring") {
+                return adminMonitoringWeb(request, env);
+            }
+            if (request.method === "GET" && url.pathname === "/admin/wallpaper/preview") {
+                return adminWallpaperPreviewWeb(request, env);
+            }
+            if (request.method === "POST" && url.pathname === "/admin/wallpaper/push") {
+                return adminWallpaperPushWeb(request, env);
+            }
+            if (request.method === "POST" && url.pathname === "/admin/wallpaper/notes") {
+                return adminWallpaperNotesWeb(request, env);
+            }
 
             if (request.method === "GET" && url.pathname === "/activate") return activationPage();
             if (request.method === "POST" && url.pathname === "/activate") return approveEnrollment(request, env);
@@ -163,6 +179,13 @@ export default {
         } catch (error) {
             console.error("Unhandled relay error", error);
             return json({ error: "relay unavailable" }, 503);
+        }
+    },
+    async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
+        try {
+            await generateAndPushWallpaper(env);
+        } catch (err) {
+            console.error("Wallpaper scheduled push failed", err);
         }
     },
 };
@@ -218,6 +241,7 @@ function renderNav(active: string | null): string {
         { id: "overview", label: "📊 概览" },
         { id: "snapshot", label: "📸 远程快照" },
         { id: "images", label: "🖼️ 图片推送" },
+        { id: "wallpaper", label: "📟 信息壁纸" },
         { id: "requests", label: "📨 审批推送" },
         { id: "notify", label: "🔔 通知推送" },
         { id: "devices", label: "📱 设备管理" },
@@ -549,6 +573,26 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 @media (max-width: 560px) {
     .push-grid { grid-template-columns: 1fr; }
 }
+/* 表格长文本: 固定最大行高 + 省略号, hover 用 title 展示全文 */
+.cell-clamp {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.4;
+    word-break: break-word;
+    white-space: normal;
+}
+.cell-clamp-1 {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
+    white-space: normal;
+}
 .form-group { display: flex; flex-direction: column; gap: 0.35rem; }
 .form-input, .form-select {
     background: #0d1117;
@@ -593,6 +637,281 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .gallery-actions { display: flex; gap: 0.5rem; margin-top: auto; padding-top: 0.5rem; }
 
 .footer { text-align: center; color: var(--text-muted); font-size: 0.78rem; padding: 2.5rem 1rem 1.5rem; }
+
+/* ============ 视觉升级层 (Design System) ============ */
+:root {
+    --bg: #080a10;
+    --card-bg: #0e1117;
+    --border: rgba(148, 163, 184, 0.14);
+    --text: #e7ecf3;
+    --text-muted: #8b94a3;
+    --accent: #6366f1;
+    --accent-hover: #818cf8;
+    --accent-soft: rgba(99, 102, 241, 0.16);
+    --primary: #4f46e5;
+    --primary-hover: #6366f1;
+    --radius: 12px;
+    --shadow-card: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -12px rgba(0,0,0,0.6);
+    --glow: 0 0 24px rgba(99, 102, 241, 0.25);
+}
+* { scrollbar-width: thin; scrollbar-color: rgba(148,163,184,0.3) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.25); border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.4); border: 2px solid transparent; background-clip: content-box; }
+::selection { background: rgba(99,102,241,0.35); color: #fff; }
+body {
+    background-color: var(--bg);
+    background-image:
+        radial-gradient(1100px 520px at 12% -12%, rgba(99,102,241,0.14), transparent 60%),
+        radial-gradient(900px 480px at 92% -8%, rgba(6,182,212,0.10), transparent 55%),
+        radial-gradient(700px 500px at 50% 115%, rgba(139,92,246,0.08), transparent 60%);
+    letter-spacing: 0.01em;
+}
+.container { padding-top: 2.25rem; }
+.topnav {
+    background: rgba(8, 10, 16, 0.72);
+    backdrop-filter: blur(18px) saturate(1.4);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4);
+    border-bottom: 1px solid rgba(148,163,184,0.12);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset;
+}
+.brand { font-size: 1.08rem; }
+.brand span {
+    background: linear-gradient(92deg, #818cf8, #c084fc 55%, #22d3ee);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.nav-tab { border-radius: 9px; font-weight: 550; letter-spacing: 0.01em; }
+.nav-tab:hover { background: rgba(255,255,255,0.07); color: var(--text); transform: translateY(-1px); }
+.nav-tab.active {
+    background: linear-gradient(180deg, rgba(99,102,241,0.22), rgba(99,102,241,0.10));
+    border-color: rgba(129,140,248,0.35);
+    color: #c7d2fe;
+    box-shadow: 0 0 16px rgba(99,102,241,0.18) inset, 0 0 20px rgba(99,102,241,0.10);
+}
+.nav-btn { background: rgba(148,163,184,0.08); border-color: rgba(148,163,184,0.16); }
+.nav-btn:hover { background: rgba(148,163,184,0.14); border-color: rgba(148,163,184,0.3); }
+.page-head h1 { font-size: 1.5rem; letter-spacing: -0.02em; }
+
+/* 页面切换: 子元素依次上浮 (轻量 CSS 动画) */
+.page.active > * { animation: fadeUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.page.active > *:nth-child(2) { animation-delay: 0.05s; }
+.page.active > *:nth-child(3) { animation-delay: 0.10s; }
+.page.active > *:nth-child(4) { animation-delay: 0.15s; }
+.page.active > *:nth-child(5) { animation-delay: 0.20s; }
+.page.active > *:nth-child(6) { animation-delay: 0.25s; }
+@keyframes fadeUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+}
+
+/* 卡片 */
+.card {
+    background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.012)), var(--card-bg);
+    border: 1px solid rgba(148,163,184,0.12);
+    border-radius: 14px;
+    box-shadow: var(--shadow-card);
+    transition: transform 0.22s cubic-bezier(0.22,1,0.36,1), border-color 0.22s ease, box-shadow 0.22s ease;
+}
+.card:hover { border-color: rgba(148,163,184,0.24); box-shadow: 0 2px 4px rgba(0,0,0,0.4), 0 16px 40px -16px rgba(0,0,0,0.7); }
+.card-header { padding: 1.05rem 1.3rem; background: rgba(255,255,255,0.015); }
+.card-title { font-size: 1.05rem; letter-spacing: -0.01em; }
+
+/* 统计卡片 */
+.stat-card {
+    background: linear-gradient(160deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015)), #0e1117;
+    border: 1px solid rgba(148,163,184,0.12);
+    border-radius: 14px;
+    box-shadow: var(--shadow-card);
+}
+.stat-card::after {
+    height: 2.5px;
+    background: linear-gradient(90deg, rgba(99,102,241,0.9), rgba(34,211,238,0.5), transparent 80%);
+    opacity: 1;
+}
+.stat-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-card), var(--glow); }
+.stat-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 11px;
+    font-size: 1.25rem;
+    background: linear-gradient(140deg, rgba(99,102,241,0.25), rgba(34,211,238,0.12));
+    border: 1px solid rgba(129,140,248,0.25);
+    box-shadow: 0 0 18px rgba(99,102,241,0.15) inset;
+    margin-bottom: 0.9rem;
+}
+.stat-label { text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.08em; }
+.stat-value { font-size: 2rem; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+
+/* 快捷操作 */
+.quick-card {
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.01)), var(--card-bg);
+    box-shadow: var(--shadow-card);
+}
+.quick-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(129,140,248,0.45);
+    box-shadow: var(--shadow-card), 0 0 28px rgba(99,102,241,0.12);
+}
+.quick-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    font-size: 1.5rem;
+    background: linear-gradient(140deg, rgba(99,102,241,0.18), rgba(6,182,212,0.10));
+    border: 1px solid rgba(148,163,184,0.16);
+}
+
+/* 按钮 */
+.btn { border-radius: 9px; font-weight: 550; }
+.btn:active { transform: translateY(1px) scale(0.99); }
+.btn-primary {
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    border-color: rgba(255,255,255,0.14);
+    box-shadow: 0 4px 16px -4px rgba(79,70,229,0.55), 0 1px 2px rgba(0,0,0,0.3);
+}
+.btn-primary:hover {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    box-shadow: 0 6px 20px -4px rgba(99,102,241,0.65);
+    transform: translateY(-1px);
+}
+.btn-accent { background: linear-gradient(135deg, #0ea5e9, #6366f1); }
+.btn-accent:hover { transform: translateY(-1px); box-shadow: 0 6px 20px -4px rgba(14,165,233,0.5); }
+.btn-danger:hover { transform: translateY(-1px); }
+.btn:focus-visible, .nav-tab:focus-visible, .quick-card:focus-visible, a:focus-visible, button:focus-visible {
+    outline: 2px solid rgba(129,140,248,0.7);
+    outline-offset: 2px;
+}
+
+/* 表格 */
+th { background: rgba(148,163,184,0.06); color: var(--text-muted); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.06em; }
+tr:hover td { background: rgba(129,140,248,0.05); }
+td { transition: background 0.15s ease; }
+
+/* 徽章 / 状态点 */
+.badge { border-radius: 999px; }
+.badge-active { color: #4ade80; background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.28); }
+.badge-revoked { color: #f87171; background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.28); }
+.dot { position: relative; }
+.dot-online { background: #34d399; box-shadow: 0 0 8px #34d399; animation: pulseDot 2s ease infinite; }
+@keyframes pulseDot {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0.45); }
+    50% { box-shadow: 0 0 0 5px rgba(52,211,153,0); }
+}
+
+/* 表单 */
+.form-input, .form-select {
+    background: rgba(255,255,255,0.03);
+    border-color: rgba(148,163,184,0.18);
+    border-radius: 9px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.form-input:hover, .form-select:hover { border-color: rgba(148,163,184,0.32); }
+.form-input:focus, .form-select:focus {
+    border-color: rgba(129,140,248,0.65);
+    box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+    background: rgba(255,255,255,0.045);
+}
+
+/* 推送结果提示弹出动画 */
+#pushResult, #hookStatus, #statusAlert, #castAlert { animation: popIn 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes popIn {
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+}
+
+/* 屏幕预览框光晕 + 图库 */
+.screen-frame { border-color: rgba(148,163,184,0.25); box-shadow: 0 0 0 1px rgba(148,163,184,0.08), 0 12px 32px -8px rgba(0,0,0,0.7), 0 0 32px rgba(99,102,241,0.08); }
+.gallery-item { border-radius: 12px; box-shadow: 0 2px 10px -4px rgba(0,0,0,0.5); }
+.gallery-item:hover { transform: translateY(-3px); box-shadow: 0 10px 26px -8px rgba(0,0,0,0.7); }
+.footer { color: var(--text-muted); opacity: 0.8; }
+
+/* 设备心跳监控 */
+.monitor-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.9rem;
+    padding: 1.1rem 1.25rem 0.4rem;
+}
+.monitor-stats .stat-card { padding: 1rem; }
+.monitor-chart { padding: 0.8rem 1.25rem 0.4rem; }
+.monitor-chart canvas {
+    width: 100%;
+    height: 160px;
+    display: block;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(148,163,184,0.1);
+}
+.chart-hint { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.4rem; text-align: center; }
+.monitor-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.2rem;
+    padding: 0.8rem 1.25rem 1.25rem;
+}
+@media (max-width: 680px) {
+    .monitor-body { grid-template-columns: 1fr; }
+}
+.monitor-subtitle {
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+}
+.mon-device-row, .mon-event-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.42rem 0.5rem;
+    border-radius: 8px;
+    font-size: 0.82rem;
+}
+.mon-device-row:hover, .mon-event-row:hover { background: rgba(129,140,248,0.06); }
+.mon-uptime-bar {
+    flex: 1;
+    min-width: 60px;
+    height: 6px;
+    border-radius: 4px;
+    background: rgba(148,163,184,0.14);
+    overflow: hidden;
+}
+.mon-uptime-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #6366f1, #22d3ee);
+    transition: width 0.4s ease;
+}
+.mon-pct {
+    width: 48px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+}
+.mon-event-badge {
+    padding: 0.08rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.mon-event-online { background: rgba(34,197,94,0.14); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+.mon-event-offline { background: rgba(239,68,68,0.14); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+
+/* 减少动态效果偏好 */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
 </style>
 </head>
 <body>
@@ -618,101 +937,287 @@ function escapeHtml(value: string): string {
     return value.replaceAll(/[&<>"']/gu, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] ?? character);
 }
 
-async function adminDashboardPage(request: Request, env: Env): Promise<Response> {
-    const username = await verifyAdminBasicAuth(request, env);
-    if (!username) return adminUnauthorizedPage();
+type DeviceWithOnline = DeviceRow & { online: boolean };
 
+function renderHookLogRows(hookLogs: HookNotifyLogRow[]): string {
+    if (hookLogs.length === 0) {
+        return `<tr><td colspan="6" class="empty-state">暂无 hook 推送记录。Agent 结束或 bridge notify 触发后会在此显示。</td></tr>`;
+    }
+    let rows = "";
+    for (const log of hookLogs) {
+        const resultBadge = log.result === "sent"
+            ? `<span class="badge badge-active">✓ 已送达</span>`
+            : log.result === "offline"
+                ? `<span class="badge" style="color:#d29922;border:1px solid rgba(210,153,34,0.3);background:rgba(210,153,34,0.1);">● 离线</span>`
+                : `<span class="badge" style="color:#f85149;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.1);">✗ 失败</span>`;
+        rows += `
+        <tr>
+            <td><span class="code-mono">${escapeHtml(log.device_id)}</span></td>
+            <td>${formatDate(log.created_at)}</td>
+            <td class="cell-clamp-1" title="${escapeHtml(log.title)}" style="max-width:180px;">${escapeHtml(log.title)}</td>
+            <td class="cell-clamp" title="${escapeHtml(log.content)}" style="max-width:300px;"><span style="color:var(--text-muted);">${escapeHtml(log.content)}</span></td>
+            <td>${log.online ? '🟢 在线' : '⚪ 离线'}</td>
+            <td>${resultBadge}</td>
+        </tr>`;
+    }
+    return rows;
+}
+
+function renderDeviceOptions(deviceList: DeviceWithOnline[]): string {
+    if (deviceList.length === 0) return `<option value="">请先配对设备</option>`;
+    let options = "";
+    for (const d of deviceList) {
+        options += `<option value="${escapeHtml(d.device_id)}">${escapeHtml(d.device_id)} (${d.online ? '🟢 在线' : '⚪ 离线'})</option>`;
+    }
+    return options;
+}
+
+function renderDeviceRows(deviceList: DeviceWithOnline[]): string {
+    if (deviceList.length === 0) {
+        return `<tr><td colspan="6" class="empty-state">暂无已绑定的设备。点击上方「配对新设备」开始添加。</td></tr>`;
+    }
+    let rows = "";
+    for (const d of deviceList) {
+        const statusBadge = d.status === "active"
+            ? `<span class="badge badge-active">Active</span>`
+            : `<span class="badge badge-revoked">Revoked</span>`;
+        const onlineDot = d.online
+            ? `<span class="badge badge-active"><span class="dot dot-online"></span> 在线</span>`
+            : `<span class="badge" style="color: var(--text-muted);"><span class="dot dot-offline"></span> 离线</span>`;
+        rows += `
+        <tr>
+            <td><span class="code-mono">${escapeHtml(d.device_id)}</span></td>
+            <td>${onlineDot}</td>
+            <td>${statusBadge}</td>
+            <td>v${d.credential_version}</td>
+            <td>${formatDate(d.created_at)}</td>
+            <td>
+                <div class="actions-cell">
+                    ${d.status === "active" ? `
+                    <form method="post" action="/admin/devices/revoke" onsubmit="return confirm('确定要撤销设备 ${escapeHtml(d.device_id)} 吗？');">
+                        <input type="hidden" name="device_id" value="${escapeHtml(d.device_id)}">
+                        <button type="submit" class="btn btn-sm btn-danger">撤销</button>
+                    </form>` : ""}
+                    <form method="post" action="/admin/devices/delete" onsubmit="return confirm('确定要彻底删除设备 ${escapeHtml(d.device_id)} 吗？');">
+                        <input type="hidden" name="device_id" value="${escapeHtml(d.device_id)}">
+                        <button type="submit" class="btn btn-sm" style="background: #21262d; color: var(--text-muted); border: 1px solid var(--border);">删除</button>
+                    </form>
+                </div>
+            </td>
+        </tr>`;
+    }
+    return rows;
+}
+
+function renderPushLogRows(pushLogs: ApprovalLogRow[]): string {
+    if (pushLogs.length === 0) {
+        return `<tr><td colspan="6" class="empty-state">暂无审批推送记录。使用上方表单向设备推送第一条审批请求。</td></tr>`;
+    }
+    const reasonLabels: Record<string, string> = {
+        user: "用户拒绝",
+        policy: "策略拒绝",
+        timeout: "超时未决定",
+        offline: "设备离线",
+        session_lost: "连接断开",
+        protocol_error: "协议错误",
+    };
+    let rows = "";
+    for (const log of pushLogs) {
+        let badge: string;
+        if (log.status === "allow") badge = `<span class="badge badge-active">✅ 已批准</span>`;
+        else if (log.status === "deny") badge = `<span class="badge badge-revoked">❌ 已拒绝</span>`;
+        else badge = `<span class="badge" style="background: rgba(31,111,235,0.15); color: #58a6ff; border: 1px solid rgba(31,111,235,0.3);">⏳ 待审批</span>`;
+        const resultText = log.status === "pending"
+            ? "等待设备决定"
+            : (reasonLabels[log.reason ?? ""] ?? log.reason ?? "—");
+        rows += `
+        <tr>
+            <td><span class="code-mono" style="font-size: 0.75rem;">${formatDate(log.created_at)}</span></td>
+            <td><span class="code-mono">${escapeHtml(log.device_id)}</span></td>
+            <td><span class="code-mono">${escapeHtml(log.tool)}</span></td>
+            <td title="${escapeHtml(log.summary)}" style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(log.summary)}</td>
+            <td>${badge}</td>
+            <td style="color: var(--text-muted); font-size: 0.8rem;">${escapeHtml(resultText)}</td>
+        </tr>`;
+    }
+    return rows;
+}
+
+async function loadDashboardData(env: Env): Promise<{
+    totalCount: number;
+    onlineCount: number;
+    activeCount: number;
+    pendingCount: number;
+    deviceList: DeviceWithOnline[];
+    pushLogs: ApprovalLogRow[];
+    hookLogs: HookNotifyLogRow[];
+}> {
     const devices = (await env.DB.prepare(
         "SELECT device_id, status, credential_version, created_at, rotated_at FROM devices ORDER BY created_at DESC"
     ).all<DeviceRow>()).results;
-
     const now = nowSeconds();
     const pendings = (await env.DB.prepare(
         "SELECT enrollment_id, device_id, status, expires_at, created_at FROM device_enrollments WHERE status = 'pending' AND expires_at > ?1 ORDER BY created_at DESC"
     ).bind(now).all<PendingEnrollmentRow>()).results;
+    const pushLogs = (await env.DB.prepare(
+        "SELECT request_id, device_id, tool, summary, status, reason, created_at, decided_at, expires_at " +
+        "FROM approval_requests ORDER BY created_at DESC LIMIT 50"
+    ).all<ApprovalLogRow>()).results;
+    const deviceList = await Promise.all(devices.map(async (d) => {
+        const online = await checkDeviceOnline(env, d.device_id);
+        return { ...d, online };
+    }));
+    const hookLogs = await listHookNotifyLogs(env, { limit: 50 }).catch(() => []);
+    return {
+        totalCount: deviceList.length,
+        onlineCount: deviceList.filter((d) => d.online).length,
+        activeCount: deviceList.filter((d) => d.status === "active").length,
+        pendingCount: pendings.length,
+        deviceList,
+        pushLogs,
+        hookLogs,
+    };
+}
+
+async function adminDashboardData(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const data = await loadDashboardData(env);
+    return json({
+        stats: {
+            total: data.totalCount,
+            online: data.onlineCount,
+            active: data.activeCount,
+            pending: data.pendingCount,
+        },
+        deviceRows: renderDeviceRows(data.deviceList),
+        pushLogRows: renderPushLogRows(data.pushLogs),
+        hookLogRows: renderHookLogRows(data.hookLogs),
+        ts: nowSeconds(),
+    });
+}
+
+interface MonitorDevice {
+    device_id: string;
+    online_now: boolean;
+    last_seen: number | null;
+    online_events_24h: number;
+    offline_events_24h: number;
+    uptime_pct_24h: number;
+}
+
+/** 由时间先后排列的在线/离线事件推导出 [since, now] 窗口内的在线区间。 */
+function onlineIntervals(events: DeviceEventRow[], since: number, now: number): Array<[number, number]> {
+    const sorted = [...events].sort((a, b) => a.created_at - b.created_at);
+    const intervals: Array<[number, number]> = [];
+    let start: number | null = null;
+    for (const ev of sorted) {
+        if (ev.event === "online") {
+            start = ev.created_at;
+        } else if (ev.event === "offline" && start !== null) {
+            intervals.push([Math.max(start, since), Math.min(ev.created_at, now)]);
+            start = null;
+        }
+    }
+    if (start !== null) intervals.push([Math.max(start, since), now]);
+    return intervals;
+}
+
+function intervalOverlap(a: [number, number], b: [number, number]): number {
+    const start = Math.max(a[0], b[0]);
+    const end = Math.min(a[1], b[1]);
+    return end > start ? end - start : 0;
+}
+
+const MONITOR_WINDOW_SECONDS = 24 * 3600;
+
+async function adminMonitoringWeb(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+
+    const now = nowSeconds();
+    const since = now - MONITOR_WINDOW_SECONDS;
+
+    const devices = (await env.DB.prepare(
+        "SELECT device_id, status FROM devices ORDER BY created_at DESC"
+    ).all<{ device_id: string; status: string }>()).results;
+    const deviceList = await Promise.all(devices.map(async (d) => {
+        const online = await checkDeviceOnline(env, d.device_id);
+        return { device_id: d.device_id, online_now: online };
+    }));
+    const onlineNowIds = new Set(deviceList.filter((d) => d.online_now).map((d) => d.device_id));
+
+    const events = await listDeviceEvents(env, { since });
+    const byDevice = new Map<string, DeviceEventRow[]>();
+    for (const ev of events) {
+        if (!byDevice.has(ev.device_id)) byDevice.set(ev.device_id, []);
+        byDevice.get(ev.device_id)!.push(ev);
+    }
+
+    const monitorDevices: MonitorDevice[] = devices.map((d) => {
+        const evs = byDevice.get(d.device_id) ?? [];
+        const intervals = onlineIntervals(evs, since, now);
+        let onlineSeconds = 0;
+        for (const iv of intervals) onlineSeconds += iv[1] - iv[0];
+        return {
+            device_id: d.device_id,
+            online_now: onlineNowIds.has(d.device_id),
+            last_seen: evs.length ? evs[0].created_at : null,
+            online_events_24h: evs.filter((e) => e.event === "online").length,
+            offline_events_24h: evs.filter((e) => e.event === "offline").length,
+            uptime_pct_24h: Math.round((onlineSeconds / MONITOR_WINDOW_SECONDS) * 1000) / 10,
+        };
+    });
+
+    // 按小时统计舰队在线率（24 个桶）
+    const deviceCount = Math.max(1, devices.length);
+    const hourlySeconds = new Array<number>(24).fill(0);
+    for (const d of devices) {
+        const evs = byDevice.get(d.device_id) ?? [];
+        const intervals = onlineIntervals(evs, since, now);
+        for (let h = 0; h < 24; h++) {
+            const hs = now - (24 - h) * 3600;
+            let s = 0;
+            for (const iv of intervals) s += intervalOverlap(iv, [hs, hs + 3600]);
+            hourlySeconds[h] += s;
+        }
+    }
+    const hourly = hourlySeconds.map((s) => Math.round((s / 3600 / deviceCount) * 1000) / 10);
+
+    const fleetUptime = devices.length === 0
+        ? 0
+        : Math.round((monitorDevices.reduce((sum, d) => sum + d.uptime_pct_24h, 0) / devices.length) * 10) / 10;
+
+    return json({
+        now,
+        fleet: {
+            total: devices.length,
+            online_now: deviceList.filter((d) => d.online_now).length,
+            uptime_pct_24h: fleetUptime,
+            offline_events_24h: monitorDevices.reduce((sum, d) => sum + d.offline_events_24h, 0),
+        },
+        hourly,
+        devices: monitorDevices,
+        recent_events: events.slice(0, 30).map((e) => ({ device_id: e.device_id, event: e.event, created_at: e.created_at })),
+    });
+}
+
+async function adminDashboardPage(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return adminUnauthorizedPage();
 
     const images = (await env.DB.prepare(
         "SELECT image_id, device_id, title, image_data, created_at FROM device_images ORDER BY created_at DESC LIMIT 12"
     ).all<DeviceImageRow>()).results;
 
-    const pushLogs = (await env.DB.prepare(
-        "SELECT request_id, device_id, tool, summary, status, reason, created_at, decided_at, expires_at " +
-        "FROM approval_requests ORDER BY created_at DESC LIMIT 50"
-    ).all<ApprovalLogRow>()).results;
-
-    const deviceList = await Promise.all(devices.map(async (d) => {
-        const online = await checkDeviceOnline(env, d.device_id);
-        return { ...d, online };
-    }));
-
-    const totalCount = deviceList.length;
-    const onlineCount = deviceList.filter((d) => d.online).length;
-    const activeCount = deviceList.filter((d) => d.status === "active").length;
-    const pendingCount = pendings.length;
-
-    // 最近 hook 推送记录（管理后台「Hook 日志」）
-    const hookLogs = await listHookNotifyLogs(env, { limit: 50 }).catch(() => []);
-    let hookLogsRows = "";
-    if (hookLogs.length === 0) {
-        hookLogsRows = `<tr><td colspan="6" class="empty-state">暂无 hook 推送记录。Agent 结束或 bridge notify 触发后会在此显示。</td></tr>`;
-    } else {
-        for (const log of hookLogs) {
-            const resultBadge = log.result === "sent"
-                ? `<span class="badge badge-active">✓ 已送达</span>`
-                : log.result === "offline"
-                    ? `<span class="badge" style="color:#d29922;border:1px solid rgba(210,153,34,0.3);background:rgba(210,153,34,0.1);">● 离线</span>`
-                    : `<span class="badge" style="color:#f85149;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.1);">✗ 失败</span>`;
-            hookLogsRows += `
-            <tr>
-                <td><span class="code-mono">${escapeHtml(log.device_id)}</span></td>
-                <td>${formatDate(log.created_at)}</td>
-                <td style="max-width:180px;word-break:break-all;">${escapeHtml(log.title)}</td>
-                <td style="max-width:300px;word-break:break-all;"><span style="color:var(--text-muted);">${escapeHtml(log.content)}</span></td>
-                <td>${log.online ? '🟢 在线' : '⚪ 离线'}</td>
-                <td>${resultBadge}</td>
-            </tr>`;
-        }
-    }
-
-    let devicesRows = "";
-    let deviceOptions = "";
-    if (deviceList.length === 0) {
-        devicesRows = `<tr><td colspan="6" class="empty-state">暂无已绑定的设备。点击上方「配对新设备」开始添加。</td></tr>`;
-        deviceOptions = `<option value="">请先配对设备</option>`;
-    } else {
-        for (const d of deviceList) {
-            const statusBadge = d.status === "active"
-                ? `<span class="badge badge-active">Active</span>`
-                : `<span class="badge badge-revoked">Revoked</span>`;
-            const onlineDot = d.online
-                ? `<span class="badge badge-active"><span class="dot dot-online"></span> 在线</span>`
-                : `<span class="badge" style="color: var(--text-muted);"><span class="dot dot-offline"></span> 离线</span>`;
-
-            deviceOptions += `<option value="${escapeHtml(d.device_id)}">${escapeHtml(d.device_id)} (${d.online ? '🟢 在线' : '⚪ 离线'})</option>`;
-
-            devicesRows += `
-            <tr>
-                <td><span class="code-mono">${escapeHtml(d.device_id)}</span></td>
-                <td>${onlineDot}</td>
-                <td>${statusBadge}</td>
-                <td>v${d.credential_version}</td>
-                <td>${formatDate(d.created_at)}</td>
-                <td>
-                    <div class="actions-cell">
-                        ${d.status === "active" ? `
-                        <form method="post" action="/admin/devices/revoke" onsubmit="return confirm('确定要撤销设备 ${escapeHtml(d.device_id)} 吗？');">
-                            <input type="hidden" name="device_id" value="${escapeHtml(d.device_id)}">
-                            <button type="submit" class="btn btn-sm btn-danger">撤销</button>
-                        </form>` : ""}
-                        <form method="post" action="/admin/devices/delete" onsubmit="return confirm('确定要彻底删除设备 ${escapeHtml(d.device_id)} 吗？');">
-                            <input type="hidden" name="device_id" value="${escapeHtml(d.device_id)}">
-                            <button type="submit" class="btn btn-sm" style="background: #21262d; color: var(--text-muted); border: 1px solid var(--border);">删除</button>
-                        </form>
-                    </div>
-                </td>
-            </tr>`;
-        }
-    }
+    const data = await loadDashboardData(env);
+    const { totalCount, onlineCount, activeCount, pendingCount } = data;
+    const pushLogs = data.pushLogs;
+    const hookLogs = data.hookLogs;
+    const devicesRows = renderDeviceRows(data.deviceList);
+    const deviceOptions = renderDeviceOptions(data.deviceList);
+    const hookLogsRows = renderHookLogRows(data.hookLogs);
+    const pushLogRows = renderPushLogRows(data.pushLogs);
 
     let galleryHtml = "";
     if (images.length === 0) {
@@ -736,38 +1241,6 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
         }
     }
 
-    let pushLogRows = "";
-    if (pushLogs.length === 0) {
-        pushLogRows = `<tr><td colspan="6" class="empty-state">暂无审批推送记录。使用上方表单向设备推送第一条审批请求。</td></tr>`;
-    } else {
-        const reasonLabels: Record<string, string> = {
-            user: "用户拒绝",
-            policy: "策略拒绝",
-            timeout: "超时未决定",
-            offline: "设备离线",
-            session_lost: "连接断开",
-            protocol_error: "协议错误",
-        };
-        for (const log of pushLogs) {
-            let badge: string;
-            if (log.status === "allow") badge = `<span class="badge badge-active">✅ 已批准</span>`;
-            else if (log.status === "deny") badge = `<span class="badge badge-revoked">❌ 已拒绝</span>`;
-            else badge = `<span class="badge" style="background: rgba(31,111,235,0.15); color: #58a6ff; border: 1px solid rgba(31,111,235,0.3);">⏳ 待审批</span>`;
-            const resultText = log.status === "pending"
-                ? "等待设备决定"
-                : (reasonLabels[log.reason ?? ""] ?? log.reason ?? "—");
-            pushLogRows += `
-            <tr>
-                <td><span class="code-mono" style="font-size: 0.75rem;">${formatDate(log.created_at)}</span></td>
-                <td><span class="code-mono">${escapeHtml(log.device_id)}</span></td>
-                <td><span class="code-mono">${escapeHtml(log.tool)}</span></td>
-                <td style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(log.summary)}</td>
-                <td>${badge}</td>
-                <td style="color: var(--text-muted); font-size: 0.8rem;">${escapeHtml(resultText)}</td>
-            </tr>`;
-        }
-    }
-
     const content = `
         <section class="page active" data-page="overview">
             <div class="page-head">
@@ -779,22 +1252,22 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 <div class="stat-card">
                     <div class="stat-icon">📱</div>
                     <div class="stat-label">总设备数</div>
-                    <div class="stat-value">${totalCount}</div>
+                    <div class="stat-value" id="statTotal">${totalCount}</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-icon">🟢</div>
                     <div class="stat-label">在线设备</div>
-                    <div class="stat-value" style="color: var(--online);">${onlineCount}</div>
+                    <div class="stat-value" id="statOnline" style="color: var(--online);">${onlineCount}</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-icon">✅</div>
                     <div class="stat-label">活跃设备</div>
-                    <div class="stat-value">${activeCount}</div>
+                    <div class="stat-value" id="statActive">${activeCount}</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-icon">⏳</div>
                     <div class="stat-label">待处理配对</div>
-                    <div class="stat-value" style="color: #58a6ff;">${pendingCount}</div>
+                    <div class="stat-value" id="statPending" style="color: #58a6ff;">${pendingCount}</div>
                 </div>
             </div>
 
@@ -954,6 +1427,43 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             </div>
         </section>
 
+        <!-- 📟 信息壁纸 (Info Wallpaper) -->
+        <section class="page" data-page="wallpaper">
+            <div class="page-head">
+                <h1>📟 信息壁纸</h1>
+                <p class="page-desc">云端生成 240×320 信息屏（大时钟 + 天气 + 日程备注），经图片通道推送到设备 · 每小时自动更新</p>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">实时预览</div>
+                    <div class="header-actions">
+                        <button type="button" class="btn btn-sm nav-btn" onclick="refreshWallpaper()">🔄 刷新预览</button>
+                        <button type="button" class="btn btn-sm btn-primary" onclick="pushWallpaper()">🚀 推送到设备</button>
+                    </div>
+                </div>
+                <div class="image-studio">
+                    <div class="preview-pane">
+                        <div class="screen-frame" style="width:240px;height:320px;">
+                            <img id="wallpaperImg" alt="wallpaper preview" style="width:240px;height:320px;object-fit:cover;display:block;">
+                        </div>
+                    </div>
+                    <div class="upload-pane">
+                        <div class="form-group">
+                            <label class="form-label">目标设备（留空 = 全部在线设备）</label>
+                            <select id="wallpaperDevice" class="form-select">${deviceOptions}</select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">今日日程 / 备注（最多 3 行，建议英文数字）</label>
+                            <textarea id="wallpaperNotes" class="form-input" rows="4" placeholder="Water plants&#10;Call mom&#10;Read book"></textarea>
+                        </div>
+                        <button type="button" class="btn" style="background:#21262d;border:1px solid var(--border);" onclick="saveWallpaperNotes()">💾 保存备注</button>
+                        <div id="wallpaperStatus" style="display:none;padding:0.75rem;border-radius:6px;font-size:0.85rem;"></div>
+                        <p class="desc" style="font-size:0.78rem;margin:0.4rem 0 0;">壁纸内容：大时钟 + 日期 + 天气（Open-Meteo 免费接口，城市在 WALLPAPER_CITY 配置）+ 备注。每小时整点自动推送一次。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- 🔔 审批推送 (Approval Push Center) -->
         <section class="page" data-page="requests">
             <div class="page-head">
@@ -1035,8 +1545,50 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                             <th>管理操作</th>
                         </tr>
                     </thead>
-                    <tbody>${devicesRows}</tbody>
+                    <tbody id="devicesBody">${devicesRows}</tbody>
                 </table>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">📈 设备心跳监控 (24h)</div>
+                    <div id="monitorUpdatedAt" class="badge" style="background: rgba(148,163,184,0.12); color: var(--text-muted);">等待数据...</div>
+                </div>
+                <div class="monitor-stats">
+                    <div class="stat-card">
+                        <div class="stat-icon">🟢</div>
+                        <div class="stat-label">当前在线</div>
+                        <div class="stat-value" id="monOnline">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📶</div>
+                        <div class="stat-label">24h 在线率</div>
+                        <div class="stat-value" id="monUptime">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⚠️</div>
+                        <div class="stat-label">24h 掉线次数</div>
+                        <div class="stat-value" id="monOffline">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📱</div>
+                        <div class="stat-label">设备总数</div>
+                        <div class="stat-value" id="monTotal">-</div>
+                    </div>
+                </div>
+                <div class="monitor-chart">
+                    <canvas id="onlineRateChart" height="160"></canvas>
+                    <div class="chart-hint">舰队 24h 在线率（按小时）· 悬停查看具体数值</div>
+                </div>
+                <div class="monitor-body">
+                    <div class="monitor-col">
+                        <div class="monitor-subtitle">设备明细（24h 在线时长占比）</div>
+                        <div id="monitorDeviceRows"><div class="empty-state" style="padding:1rem;">加载中...</div></div>
+                    </div>
+                    <div class="monitor-col">
+                        <div class="monitor-subtitle">最近心跳事件</div>
+                        <div id="monitorEventList"><div class="empty-state" style="padding:1rem;">加载中...</div></div>
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -1086,7 +1638,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                             <th>结果</th>
                         </tr>
                     </thead>
-                    <tbody>${hookLogsRows}</tbody>
+                    <tbody id="hookLogBody">${hookLogsRows}</tbody>
                 </table>
             </div>
         </section>
@@ -1288,6 +1840,24 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             initCastWebSocket();
         });
 
+        // ---------------- 概览统计数字滚动动画 ----------------
+        let statsAnimated = false;
+        function animateStats() {
+            document.querySelectorAll('[data-page="overview"] .stat-value').forEach((el) => {
+                const target = parseInt(el.textContent.replace(/[^0-9]/g, ""), 10);
+                if (Number.isNaN(target)) return;
+                const duration = 800;
+                const start = performance.now();
+                function tick(now) {
+                    const p = Math.min((now - start) / duration, 1);
+                    const eased = 1 - Math.pow(1 - p, 3);
+                    el.textContent = Math.round(target * eased);
+                    if (p < 1) requestAnimationFrame(tick);
+                }
+                requestAnimationFrame(tick);
+            });
+        }
+
         // ----------------- 顶部导航 Tab 分区 (Top Navigation Tabs) -----------------
         function switchTab(name) {
             document.querySelectorAll(".nav-tab").forEach((tab) => {
@@ -1301,6 +1871,21 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     castStarted = true;
                     initCastWebSocket();
                 }
+                // 概览页首次展示时滚动统计数字
+                if (isActive && name === "overview" && !statsAnimated) {
+                    statsAnimated = true;
+                    animateStats();
+                }
+                // 设备页首次展示时加载心跳监控
+                if (isActive && name === "devices" && !monitoringLoaded) {
+                    monitoringLoaded = true;
+                    fetchMonitoring();
+                }
+                // 信息壁纸页首次展示时生成预览
+                if (isActive && name === "wallpaper" && !wallpaperLoaded) {
+                    wallpaperLoaded = true;
+                    refreshWallpaper();
+                }
             });
             try { history.replaceState(null, "", "#" + name); } catch {}
         }
@@ -1310,7 +1895,291 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
         });
 
         const initialTab = (location.hash || "").slice(1);
-        switchTab(["snapshot", "images", "requests", "notify", "devices"].includes(initialTab) ? initialTab : "overview");
+        switchTab(["snapshot", "images", "wallpaper", "requests", "notify", "devices"].includes(initialTab) ? initialTab : "overview");
+
+        // ---------------- 后台数据自动刷新 (15s 轮询) ----------------
+        const DASHBOARD_POLL_INTERVAL_MS = 15000;
+        let dashboardPollTimer = null;
+
+        async function pollDashboardData() {
+            if (document.hidden) return;
+            try {
+                const res = await fetch("/admin/dashboard-data", { headers: { "Accept": "application/json" } });
+                if (res.status === 401) {
+                    // 登录失效后停止轮询，避免无意义请求
+                    if (dashboardPollTimer) { clearInterval(dashboardPollTimer); dashboardPollTimer = null; }
+                    return;
+                }
+                if (!res.ok) return;
+                const data = await res.json();
+                const stats = data.stats || {};
+                const setStat = (id, v) => {
+                    const el = document.getElementById(id);
+                    if (el && typeof v === "number") el.textContent = String(v);
+                };
+                setStat("statTotal", stats.total);
+                setStat("statOnline", stats.online);
+                setStat("statActive", stats.active);
+                setStat("statPending", stats.pending);
+                if (data.deviceRows) {
+                    const body = document.getElementById("devicesBody");
+                    if (body && body.innerHTML !== data.deviceRows) body.innerHTML = data.deviceRows;
+                }
+                if (data.pushLogRows) {
+                    const body = document.getElementById("pushLogBody");
+                    if (body && body.innerHTML !== data.pushLogRows) body.innerHTML = data.pushLogRows;
+                }
+                if (data.hookLogRows) {
+                    const body = document.getElementById("hookLogBody");
+                    if (body && body.innerHTML !== data.hookLogRows) body.innerHTML = data.hookLogRows;
+                }
+                // 设备页激活时同步刷新心跳监控
+                const activePage = document.querySelector(".page.active");
+                if (activePage && activePage.dataset.page === "devices") {
+                    fetchMonitoring();
+                }
+            } catch {}
+        }
+
+        dashboardPollTimer = setInterval(pollDashboardData, DASHBOARD_POLL_INTERVAL_MS);
+        // 首屏渲染后 3 秒先拉一次，与页面初始数据对齐
+        setTimeout(pollDashboardData, 3000);
+
+        // ---------------- 设备心跳监控 (Heartbeat Monitoring) ----------------
+        let monitoringLoaded = false;
+        let monitoringBusy = false;
+        let monChartData = null;
+
+        function fmtAgo(ts, now) {
+            if (!ts) return "从未";
+            const diff = Math.max(0, now - ts);
+            if (diff < 60) return "刚刚";
+            if (diff < 3600) return Math.floor(diff / 60) + " 分钟前";
+            if (diff < 86400) return Math.floor(diff / 3600) + " 小时前";
+            return Math.floor(diff / 86400) + " 天前";
+        }
+
+        async function fetchMonitoring() {
+            if (monitoringBusy) return;
+            monitoringBusy = true;
+            try {
+                const res = await fetch("/admin/monitoring", { headers: { "Accept": "application/json" } });
+                if (!res.ok) return;
+                const data = await res.json();
+                renderMonitoring(data);
+            } catch {} finally {
+                monitoringBusy = false;
+            }
+        }
+
+        function renderMonitoring(data) {
+            const now = data.now;
+            const setText = (id, v) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = String(v);
+            };
+            setText("monOnline", data.fleet.online_now);
+            setText("monUptime", data.fleet.uptime_pct_24h + "%");
+            setText("monOffline", data.fleet.offline_events_24h);
+            setText("monTotal", data.fleet.total);
+            const updated = document.getElementById("monitorUpdatedAt");
+            if (updated) updated.textContent = "更新于 " + new Date(now * 1000).toLocaleTimeString();
+
+            const devBox = document.getElementById("monitorDeviceRows");
+            if (devBox) {
+                let html = "";
+                for (const d of data.devices) {
+                    const dot = d.online_now
+                        ? '<span class="dot dot-online"></span>'
+                        : '<span class="dot dot-offline"></span>';
+                    html += '<div class="mon-device-row">' + dot +
+                        '<span class="code-mono" style="font-size:0.78rem;">' + d.device_id + '</span>' +
+                        '<div class="mon-uptime-bar"><div class="mon-uptime-fill" style="width:' + d.uptime_pct_24h + '%"></div></div>' +
+                        '<span class="mon-pct">' + d.uptime_pct_24h + '%</span>' +
+                        '<span style="color:var(--text-muted);font-size:0.72rem;white-space:nowrap;">' + fmtAgo(d.last_seen, now) + '</span>' +
+                        '</div>';
+                }
+                if (!data.devices.length) html = '<div class="empty-state" style="padding:1rem;">暂无设备</div>';
+                devBox.innerHTML = html;
+            }
+
+            const evBox = document.getElementById("monitorEventList");
+            if (evBox) {
+                let html = "";
+                for (const e of data.recent_events) {
+                    const on = e.event === "online";
+                    html += '<div class="mon-event-row">' +
+                        '<span class="mon-event-badge ' + (on ? "mon-event-online" : "mon-event-offline") + '">' + (on ? "▲ 上线" : "▼ 离线") + '</span>' +
+                        '<span class="code-mono" style="font-size:0.72rem;">' + e.device_id + '</span>' +
+                        '<span style="color:var(--text-muted);font-size:0.72rem;margin-left:auto;white-space:nowrap;">' + new Date(e.created_at * 1000).toLocaleTimeString() + '</span>' +
+                        '</div>';
+                }
+                if (!data.recent_events.length) html = '<div class="empty-state" style="padding:1rem;">暂无事件（设备连接后自动记录）</div>';
+                evBox.innerHTML = html;
+            }
+
+            drawOnlineRateChart(data.hourly || [], now);
+        }
+
+        function drawOnlineRateChart(hourly, now, hoverIdx) {
+            const canvas = document.getElementById("onlineRateChart");
+            if (!canvas) return;
+            monChartData = { hourly: hourly, now: now };
+            const dpr = window.devicePixelRatio || 1;
+            const cssW = Math.max(canvas.clientWidth || 900, 320);
+            const cssH = 160;
+            canvas.width = Math.round(cssW * dpr);
+            canvas.height = Math.round(cssH * dpr);
+            const ctx = canvas.getContext("2d");
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, cssW, cssH);
+            const padL = 30, padR = 10, padT = 12, padB = 20;
+            const w = cssW - padL - padR, h = cssH - padT - padB;
+            const x = (i) => padL + (i / 23) * w;
+            const y = (v) => padT + h - (v / 100) * h;
+
+            ctx.font = "10px ui-monospace, SFMono-Regular, Consolas, monospace";
+            ctx.lineWidth = 1;
+            for (const gv of [0, 25, 50, 75, 100]) {
+                ctx.strokeStyle = "rgba(148,163,184,0.12)";
+                ctx.beginPath(); ctx.moveTo(padL, y(gv)); ctx.lineTo(cssW - padR, y(gv)); ctx.stroke();
+                ctx.fillStyle = "rgba(148,163,184,0.65)";
+                ctx.fillText(gv + "%", 4, y(gv) + 3);
+            }
+
+            ctx.beginPath();
+            ctx.moveTo(x(0), y(hourly[0] || 0));
+            for (let i = 1; i < 24; i++) ctx.lineTo(x(i), y(hourly[i] || 0));
+            ctx.lineTo(x(23), padT + h); ctx.lineTo(x(0), padT + h); ctx.closePath();
+            const grad = ctx.createLinearGradient(0, padT, 0, padT + h);
+            grad.addColorStop(0, "rgba(99,102,241,0.4)");
+            grad.addColorStop(1, "rgba(99,102,241,0.02)");
+            ctx.fillStyle = grad; ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(x(0), y(hourly[0] || 0));
+            for (let i = 1; i < 24; i++) ctx.lineTo(x(i), y(hourly[i] || 0));
+            ctx.strokeStyle = "#818cf8";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            for (let i = 0; i < 24; i += 6) {
+                const t = new Date((now - (23 - i) * 3600) * 1000);
+                const label = String(t.getHours()).padStart(2, "0") + ":00";
+                ctx.fillStyle = "rgba(148,163,184,0.7)";
+                ctx.fillText(label, x(i) - 14, cssH - 6);
+            }
+
+            if (typeof hoverIdx === "number") {
+                ctx.strokeStyle = "rgba(129,140,248,0.6)";
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath(); ctx.moveTo(x(hoverIdx), padT); ctx.lineTo(x(hoverIdx), padT + h); ctx.stroke();
+                ctx.setLineDash([]);
+                const val = String(hourly[hoverIdx] || 0) + "%";
+                ctx.font = "10px ui-monospace, SFMono-Regular, Consolas, monospace";
+                const tw = ctx.measureText(val).width + 10;
+                const tx = Math.min(Math.max(x(hoverIdx) - tw / 2, 2), cssW - tw - 2);
+                ctx.fillStyle = "rgba(8,10,16,0.92)";
+                ctx.fillRect(tx, 2, tw, 16);
+                ctx.fillStyle = "#c7d2fe";
+                ctx.fillText(val, tx + 5, 14);
+            }
+        }
+
+        const monChartCanvas = document.getElementById("onlineRateChart");
+        if (monChartCanvas) {
+            monChartCanvas.addEventListener("mousemove", (e) => {
+                if (!monChartData) return;
+                const rect = monChartCanvas.getBoundingClientRect();
+                const padL = 30, padR = 10;
+                const w = (monChartCanvas.clientWidth || rect.width) - padL - padR;
+                const i = Math.round(((e.clientX - rect.left - padL) / w) * 23);
+                if (i < 0 || i > 23) { monChartCanvas.style.cursor = "default"; return; }
+                monChartCanvas.style.cursor = "crosshair";
+                drawOnlineRateChart(monChartData.hourly, monChartData.now, i);
+            });
+            monChartCanvas.addEventListener("mouseleave", () => {
+                if (monChartData) drawOnlineRateChart(monChartData.hourly, monChartData.now);
+            });
+            window.addEventListener("resize", () => {
+                if (monChartData) drawOnlineRateChart(monChartData.hourly, monChartData.now);
+            });
+        }
+
+        // ---------------- 信息壁纸 (Info Wallpaper) ----------------
+        let wallpaperLoaded = false;
+
+        function wallpaperStatus(kind, text) {
+            const box = document.getElementById("wallpaperStatus");
+            if (!box) return;
+            box.style.display = "block";
+            if (kind === "success") {
+                box.style.background = "rgba(46, 160, 67, 0.15)";
+                box.style.border = "1px solid rgba(46, 160, 67, 0.3)";
+                box.style.color = "#3fb950";
+            } else if (kind === "error") {
+                box.style.background = "rgba(248, 81, 73, 0.15)";
+                box.style.border = "1px solid rgba(248, 81, 73, 0.3)";
+                box.style.color = "#f85149";
+            } else {
+                box.style.background = "rgba(56, 139, 253, 0.1)";
+                box.style.border = "1px solid rgba(56, 139, 253, 0.3)";
+                box.style.color = "#58a6ff";
+            }
+            box.innerText = text;
+        }
+
+        async function refreshWallpaper() {
+            try {
+                const res = await fetch("/admin/wallpaper/preview", { headers: { "Accept": "application/json" } });
+                const data = await res.json();
+                if (!data.ok) throw new Error(data.error || "preview failed");
+                const img = document.getElementById("wallpaperImg");
+                if (img) img.src = data.dataUrl;
+                const notesBox = document.getElementById("wallpaperNotes");
+                if (notesBox && !notesBox.value && data.notes) notesBox.value = data.notes.join("\\n");
+            } catch (err) {
+                wallpaperStatus("error", "预览失败: " + err);
+            }
+        }
+
+        async function pushWallpaper() {
+            const deviceId = document.getElementById("wallpaperDevice").value;
+            try {
+                const res = await fetch("/admin/wallpaper/push", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ device_id: deviceId || undefined })
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    wallpaperStatus("success", "✅ 已推送 " + data.pushed.length + " 台设备" + (deviceId ? "" : "（全部在线设备）"));
+                } else {
+                    wallpaperStatus("error", "❌ 推送失败: " + (data.error || "未知错误"));
+                }
+            } catch (err) {
+                wallpaperStatus("error", "❌ 推送失败: " + err);
+            }
+        }
+
+        async function saveWallpaperNotes() {
+            const text = document.getElementById("wallpaperNotes").value;
+            try {
+                const res = await fetch("/admin/wallpaper/notes", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ text: text })
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    wallpaperStatus("success", "✅ 备注已保存，点「刷新预览」即可看到效果");
+                } else {
+                    wallpaperStatus("error", "❌ 保存失败");
+                }
+            } catch (err) {
+                wallpaperStatus("error", "❌ 保存失败: " + err);
+            }
+        }
 
         // ----------------- 图片推送工作台 (Image Studio) -----------------
         let currentBase64 = "";
@@ -1538,7 +2407,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 alert("请填写推送内容 (summary)！");
                 return;
             }
-            if (summary.length > 71 || /["\\]/.test(summary)) {
+            if (summary.length > 71 || /["\\\\]/.test(summary)) {
                 alert("推送内容最长 71 字符，且不能包含引号或反斜杠");
                 return;
             }
@@ -1653,34 +2522,33 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
     return htmlPage("管理控制台", content, 200, undefined, renderNav("overview"));
 }
 
-async function adminPushImageWeb(request: Request, env: Env): Promise<Response> {
-    const username = await verifyAdminBasicAuth(request, env);
-    if (!username) return json({ error: "unauthorized" }, 401);
-    const body = await request.json<{ device_id: string; title?: string; image_data: string }>().catch(() => null);
-    if (!body || !isDeviceId(body.device_id) || typeof body.image_data !== "string" || !body.image_data) {
-        return json({ error: "invalid image data" }, 400);
-    }
+/** 存储图片到历史并尝试实时推送到设备（在线则经 WebSocket 下发）。 */
+async function pushImageToDevice(
+    env: Env,
+    deviceId: string,
+    title: string,
+    rawBase64: string,
+): Promise<{ ok: boolean; image_id: string; sent: boolean; online: boolean; error?: string }> {
+    let clean = rawBase64;
+    if (clean.includes(",")) clean = clean.split(",")[1];
     const imageId = crypto.randomUUID();
     const now = nowSeconds();
-    const title = (body.title || "Image").slice(0, 64);
-
-    let rawBase64 = body.image_data;
-    if (rawBase64.includes(",")) {
-        rawBase64 = rawBase64.split(",")[1];
+    try {
+        await env.DB.prepare(
+            "INSERT INTO device_images (image_id, device_id, title, image_data, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        ).bind(imageId, deviceId, title.slice(0, 64), clean, now).run();
+    } catch (err) {
+        console.error("Store image failed", err);
+        return { ok: false, image_id: "", sent: false, online: false, error: "store_failed" };
     }
-
-    await env.DB.prepare(
-        "INSERT INTO device_images (image_id, device_id, title, image_data, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-    ).bind(imageId, body.device_id, title, rawBase64, now).run();
-
     let sent = false;
     let online = false;
     try {
-        const relay = env.PASSPORTS.get(env.PASSPORTS.idFromName(body.device_id));
+        const relay = env.PASSPORTS.get(env.PASSPORTS.idFromName(deviceId));
         const res = await relay.fetch("https://passport.internal/internal/send-image", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ imageId, title, data: rawBase64 }),
+            body: JSON.stringify({ imageId, title, data: clean }),
         });
         if (res.ok) {
             const data = await res.json<{ sent?: boolean; online?: boolean }>();
@@ -1690,8 +2558,117 @@ async function adminPushImageWeb(request: Request, env: Env): Promise<Response> 
     } catch (err) {
         console.error("Relay send-image failed", err);
     }
+    return { ok: true, image_id: imageId, sent, online };
+}
 
-    return json({ ok: true, image_id: imageId, sent, online });
+async function adminPushImageWeb(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const body = await request.json<{ device_id: string; title?: string; image_data: string }>().catch(() => null);
+    if (!body || !isDeviceId(body.device_id) || typeof body.image_data !== "string" || !body.image_data) {
+        return json({ error: "invalid image data" }, 400);
+    }
+    const result = await pushImageToDevice(env, body.device_id, body.title || "Image", body.image_data);
+    if (!result.ok) return json({ error: result.error ?? "store failed" }, 500);
+    return json({ ok: true, image_id: result.image_id, sent: result.sent, online: result.online });
+}
+
+/* ---------------- 信息壁纸 (Info Wallpaper) ---------------- */
+
+const WALLPAPER_DEFAULT_CITY = "Shanghai";
+const WALLPAPER_NOTES_KEY = "notes";
+
+async function loadWallpaperNotes(env: Env): Promise<string[]> {
+    try {
+        const row = await env.DB.prepare("SELECT value FROM wallpaper_notes WHERE key = ?1")
+            .bind(WALLPAPER_NOTES_KEY).first<{ value: string }>();
+        return row ? row.value.split("\n").slice(0, 3) : [];
+    } catch {
+        return [];
+    }
+}
+
+async function saveWallpaperNotes(env: Env, text: string): Promise<void> {
+    const now = nowSeconds();
+    await env.DB.prepare(
+        "INSERT INTO wallpaper_notes (key, value, updated_at) VALUES (?1, ?2, ?3) " +
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+    ).bind(WALLPAPER_NOTES_KEY, text.slice(0, 300), now).run();
+}
+
+/** 拉取 Open-Meteo 当前天气（免费、无需 key）；失败返回 null，壁纸降级显示。 */
+async function fetchCurrentWeather(env: Env): Promise<{ tempC: number; text: string } | null> {
+    const lat = env.WALLPAPER_LAT || "31.2304";
+    const lon = env.WALLPAPER_LON || "121.4737";
+    try {
+        const res = await fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&timezone=auto`,
+            { headers: { "User-Agent": "kiro-passport-relay" } },
+        );
+        if (!res.ok) return null;
+        const data = await res.json<{ current?: { temperature_2m?: number; weather_code?: number } }>();
+        if (typeof data.current?.temperature_2m !== "number") return null;
+        return { tempC: data.current.temperature_2m, text: weatherCodeLabel(data.current.weather_code ?? -1) };
+    } catch (err) {
+        console.error("Wallpaper weather fetch failed", err);
+        return null;
+    }
+}
+
+async function generateAndPushWallpaper(env: Env, deviceId?: string): Promise<{ pushed: string[] }> {
+    const [notes, weather] = await Promise.all([loadWallpaperNotes(env), fetchCurrentWeather(env)]);
+    const jpegBase64 = renderWallpaperJpeg({
+        now: new Date(),
+        city: env.WALLPAPER_CITY || WALLPAPER_DEFAULT_CITY,
+        weather,
+        notes,
+    });
+    let targets: string[];
+    if (deviceId) {
+        targets = [deviceId];
+    } else {
+        const rows = (await env.DB.prepare(
+            "SELECT device_id FROM devices WHERE status = 'active'",
+        ).all<{ device_id: string }>()).results;
+        targets = rows.map((r) => r.device_id);
+    }
+    const pushed: string[] = [];
+    for (const id of targets) {
+        const result = await pushImageToDevice(env, id, "Info Wallpaper", jpegBase64);
+        if (result.ok) pushed.push(id);
+    }
+    return { pushed };
+}
+
+async function adminWallpaperPreviewWeb(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const [notes, weather] = await Promise.all([loadWallpaperNotes(env), fetchCurrentWeather(env)]);
+    const jpegBase64 = renderWallpaperJpeg({
+        now: new Date(),
+        city: env.WALLPAPER_CITY || WALLPAPER_DEFAULT_CITY,
+        weather,
+        notes,
+    });
+    return json({ ok: true, dataUrl: `data:image/jpeg;base64,${jpegBase64}`, notes, weather, city: env.WALLPAPER_CITY || WALLPAPER_DEFAULT_CITY });
+}
+
+async function adminWallpaperPushWeb(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const body = await request.json<{ device_id?: string }>().catch(() => ({ device_id: undefined }));
+    const deviceId = body.device_id && isDeviceId(body.device_id) ? body.device_id : undefined;
+    const result = await generateAndPushWallpaper(env, deviceId);
+    return json({ ok: true, pushed: result.pushed });
+}
+
+async function adminWallpaperNotesWeb(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const body = await request.json<{ text?: string }>().catch(() => null);
+    if (!body || typeof body.text !== "string") return json({ error: "invalid body" }, 400);
+    await saveWallpaperNotes(env, body.text);
+    return json({ ok: true });
 }
 
 /* 管理后台「在线发送 Hook」：以 admin 登录态向设备推送一条通知，无需 Hook token。

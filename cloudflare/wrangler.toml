@@ -4,6 +4,12 @@ compatibility_date = "2026-08-23"
 
 [vars]
 ADMIN_UI_USERNAME = "yanyun"
+# Info-wallpaper weather location (Open-Meteo); change lat/lon via env vars if needed.
+WALLPAPER_CITY = "Shanghai"
+
+[triggers]
+# Push the generated info wallpaper to all active devices hourly.
+crons = ["0 * * * *"]
 
 # Before the first remote deployment, replace this placeholder with the ID printed by:
 #   npx wrangler d1 create kiro-passport

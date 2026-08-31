@@ -6,6 +6,10 @@ export interface Env {
     ADMIN_UI_PASSWORD: string;
     DB: D1Database;
     PASSPORTS: DurableObjectNamespace<PassportRelay>;
+    // Optional info-wallpaper configuration (weather source city/coords).
+    WALLPAPER_LAT?: string;
+    WALLPAPER_LON?: string;
+    WALLPAPER_CITY?: string;
 }
 
 // Kept as a type-only import to avoid a runtime circular dependency.

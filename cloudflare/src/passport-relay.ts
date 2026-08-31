@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { claimTerminalState, forceDenyAfterUncertainAllow, terminalStateMatches, type ApprovalStatus, type DenyReason, writeTerminalAudit } from "./db";
+import { claimTerminalState, forceDenyAfterUncertainAllow, terminalStateMatches, type ApprovalStatus, type DenyReason, writeDeviceEvent, writeTerminalAudit } from "./db";
 import type { Env } from "./env";
 import {
     isDeviceId,
@@ -279,6 +279,10 @@ export class PassportRelay extends DurableObject<Env> {
         const attachment = this.attachmentFor(socket);
         this.sockets.delete(socket);
         await this.invalidateSession(attachment?.sessionId, false);
+        // 设备会话断开 -> 记录离线心跳事件（管理员/截屏查看器在前面已提前返回）
+        if (attachment?.sessionId) {
+            this.recordEvent(attachment.deviceId, "offline");
+        }
     }
 
     async webSocketError(socket: WebSocket): Promise<void> {
@@ -322,6 +326,22 @@ export class PassportRelay extends DurableObject<Env> {
         this.latestFrameSeq = undefined;
         const current = await this.loadState();
         await this.saveState({ ...current, deviceId: attachment.deviceId, currentSessionId: sessionId });
+        // 设备握手成功 -> 记录在线心跳事件
+        this.recordEvent(attachment.deviceId, "online");
+    }
+
+    /**
+     * 记录设备心跳事件（online/offline）。D1 写入放到后台执行（waitUntil），
+     * 避免把 D1 延迟带进 WebSocket 消息/关闭处理路径；失败不影响主流程。
+     */
+    private recordEvent(deviceId: string, event: "online" | "offline"): void {
+        try {
+            this.ctx.waitUntil(writeDeviceEvent(this.env, deviceId, event).catch((err) => {
+                console.error("Record device event failed", err);
+            }));
+        } catch (err) {
+            console.error("Record device event failed", err);
+        }
     }
 
     private async createRequest(request: Request): Promise<Response> {
