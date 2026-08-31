@@ -1,0 +1,26 @@
+main/game_audio.c
+  s_facd694f6ff0ac::t_347869de21b885 125-128,133,155
+simulator/shell/shell_main.c
+  s_facd694f6ff0ac::t_c0f03d8df27110 390,395
+  s_facd694f6ff0ac::t_b566255e767c0a 27-30
+main/demo_game_flappy.c
+  s_facd694f6ff0ac::t_e5e2395111c12c 17
+simulator/shell/shim_esp_log.c
+  s_facd694f6ff0ac::t_752c109342893c 16,23-36,69-71,81-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "3284246674ac373f7b06535f756bd20b782975c2",
+  "prompts": {},
+  "sessions": {
+    "s_facd694f6ff0ac": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_bmz9bbo56stw",
+        "model": "auto(free)"
+      },
+      "human_author": "YanYunNNX <YanYunNNX@163.com>"
+    }
+  }
+}
