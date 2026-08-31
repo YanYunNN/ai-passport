@@ -92,36 +92,45 @@ def sanitize_tool(raw_tool: str) -> str:
     return cleaned[:31]
 
 
+def _strip_forbidden(raw: str) -> str:
+    """Keep printable ASCII and multi-byte UTF-8 (Chinese), drop controls,
+    double quotes, backslashes. The firmware's unescaped parser is byte-safe
+    for UTF-8 because no UTF-8 byte equals `"` (0x22), `\` (0x5c) or 0x00."""
+    cleaned = ""
+    for char in raw:
+        code = ord(char)
+        if code in (0x22, 0x5C) or code < 0x20 or code == 0x7F:
+            continue  # drop forbidden: "  \  controls / DEL
+        if 0x20 <= code <= 0x7E:
+            cleaned += char
+        elif code > 0x7E:
+            cleaned += char  # keep Chinese / other multi-byte glyphs
+        else:
+            cleaned += " "
+    return cleaned
+
+
 def sanitize_summary(raw_summary: str) -> str:
     """
     Sanitize summary string according to ESP32 firmware constraints:
-    1..71 printable ASCII characters, without double quotes or backslashes.
+    byte-safe (printable ASCII or UTF-8), without double quotes or backslashes,
+    capped at 71 bytes to match the firmware's 72-byte summary buffer.
     """
     if not raw_summary:
         raw_summary = "High-risk tool execution"
 
-    # Replace forbidden chars: quotes, backslash, non-printable, non-ASCII
-    cleaned = ""
-    for char in raw_summary:
-        code = ord(char)
-        if 0x20 <= code <= 0x7E and char not in ('"', '\\'):
-            cleaned += char
-        elif char in ('"', "'", '`'):
-            cleaned += "'"
-        elif char == '\\':
-            cleaned += "/"
-        elif code > 0x7E:
-            # Transliterate or space
-            cleaned += " "
-        elif char in ('\r', '\n', '\t'):
-            cleaned += " "
-
-    # Collapse multiple spaces and strip
+    cleaned = _strip_forbidden(raw_summary)
+    # Collapse spaces and strip, preserving non-ASCII
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     if not cleaned:
         cleaned = "Operation request"
 
-    return cleaned[:71]
+    # Truncate on code-point boundary to stay within 71 UTF-8 bytes
+    # (matches the firmware's 72-byte summary buffer).
+    byte_limit = 71
+    while len(cleaned.encode("utf-8")) > byte_limit and cleaned:
+        cleaned = cleaned[:-1]
+    return cleaned
 
 
 def extract_hook_payload() -> Tuple[str, str]:
@@ -185,26 +194,15 @@ NOTIFY_MAX = 900
 def sanitize_notify_text(raw: str, max_length: int, fallback: str) -> str:
     """Sanitize free-form text for the device notify field.
 
-    The ESP32 firmware notify parser only accepts printable ASCII (0x20..0x7E)
-    without double quotes or backslashes. We map non-ASCII to spaces and trim.
+    The ESP32 firmware notify parser accepts printable ASCII plus multi-byte
+    UTF-8 (Chinese), rejecting only double quotes, backslashes and control
+    chars. We keep those bytes (no transliteration) and trim; the worker layer
+    further truncates by UTF-8 byte count so the frame stays within the device's
+    1000-byte control-buffer limit.
     """
     if not raw:
         raw = fallback
-    cleaned = ""
-    for char in raw:
-        code = ord(char)
-        if 0x20 <= code <= 0x7E and char not in ('"', '\\'):
-            cleaned += char
-        elif char in ('"', "'", '`'):
-            cleaned += "'"
-        elif char == '\\':
-            cleaned += "/"
-        elif char in ('\r', '\n', '\t'):
-            cleaned += " "
-        elif code > 0x7E:
-            cleaned += " "
-        else:
-            cleaned += " "
+    cleaned = _strip_forbidden(raw)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     if not cleaned:
         cleaned = fallback
