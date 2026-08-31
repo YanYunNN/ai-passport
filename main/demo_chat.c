@@ -305,10 +305,21 @@ static esp_err_t chat_asr(const char *url, const char *bearer, const char *devic
         } else {
             esp_http_client_fetch_headers(client);
             int status = esp_http_client_get_status_code(client);
-            char drain[128];
-            while (esp_http_client_read(client, drain, sizeof(drain)) > 0) {}
-            ESP_LOGI(TAG, "ASR http status=%d err=%d resp_len=%u ovf=%d",
-                     status, (int)err, (unsigned)resp.length, (int)resp.overflow);
+            resp.length = 0;
+            int rlen = 0;
+            while (resp.length + 1 < resp.capacity &&
+                   (rlen = esp_http_client_read(client, resp.data + resp.length,
+                                               (int)(resp.capacity - 1 - resp.length))) > 0) {
+                resp.length += (size_t)rlen;
+            }
+            if (resp.length < resp.capacity) {
+                resp.data[resp.length] = '\0';
+            } else {
+                resp.data[resp.capacity - 1] = '\0';
+                resp.overflow = true;
+            }
+            ESP_LOGI(TAG, "ASR http status=%d err=%d resp_len=%u ovf=%d resp=%.160s",
+                     status, (int)err, (unsigned)resp.length, (int)resp.overflow, resp.data);
             if (status < 200 || status >= 300 || resp.overflow) {
                 err = ESP_ERR_INVALID_RESPONSE;
             }
@@ -329,7 +340,7 @@ static esp_err_t chat_asr(const char *url, const char *bearer, const char *devic
     cJSON *root = cJSON_Parse(resp.data);
     const char *text = root ? cJSON_GetStringValue(cJSON_GetObjectItem(root, "text")) : NULL;
     ESP_LOGI(TAG, "ASR resp=%.160s text=%s", resp.data, text ? text : "(null)");
-    if (!text) {
+    if (!text || text[0] == '\0') {
         cJSON_Delete(root);
         free(response);
         free(filebuf);
