@@ -522,6 +522,14 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
             if (result != ESP_OK) fail_connection("启动后连接 Wi-Fi", result);
         }
     } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        /* Print the 802.11 disconnect reason on every drop: it is the fastest
+         * way to tell credential/EAP failures (reason 15 or 202) apart from
+         * "AP not found" (201) when diagnosing a corporate network. */
+        wifi_event_sta_disconnected_t *disconnected =
+            (wifi_event_sta_disconnected_t *)event_data;
+        if (disconnected) {
+            ESP_LOGW(TAG, "STA 断开连接, reason=%d", disconnected->reason);
+        }
         if (s_state == WIFI_MANAGER_CONNECTING && s_retry_count < WIFI_CONNECT_RETRY_LIMIT) {
             s_retry_count++;
             esp_err_t result = esp_wifi_connect();

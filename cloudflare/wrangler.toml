@@ -20,5 +20,5 @@ new_sqlite_classes = ["PassportRelay"]
 
 # The parent zone must be onboarded to Cloudflare. This creates the Worker custom domain.
 [[routes]]
-pattern = "ws.yanyun.fun"
+pattern = "ws.yanyun.asia"
 custom_domain = true

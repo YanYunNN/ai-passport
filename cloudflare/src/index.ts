@@ -12,7 +12,7 @@ import {
 import { createRequestIndex, getRequestIndex } from "./db";
 import type { Env } from "./env";
 import { PassportRelay } from "./passport-relay";
-import { isDeviceId, parseApprovalInput, REQUEST_ID_PATTERN } from "./protocol";
+import { isDeviceId, parseApprovalInput, REQUEST_ID_PATTERN, type ApprovalInput } from "./protocol";
 
 export { PassportRelay };
 
@@ -54,6 +54,18 @@ interface DeviceImageRow {
     title: string | null;
     image_data: string;
     created_at: number;
+}
+
+interface ApprovalLogRow {
+    request_id: string;
+    device_id: string;
+    tool: string;
+    summary: string;
+    status: string;
+    reason: string | null;
+    created_at: number;
+    decided_at: number | null;
+    expires_at: number;
 }
 
 const json = (body: unknown, status = 200, additionalHeaders?: HeadersInit): Response => {
@@ -98,6 +110,12 @@ export default {
             }
             if (request.method === "GET" && url.pathname === "/admin/screencast/latest") {
                 return adminScreencastLatest(request, env);
+            }
+            if (request.method === "POST" && url.pathname === "/admin/push") {
+                return adminPushWeb(request, env);
+            }
+            if (request.method === "GET" && url.pathname === "/admin/push/status") {
+                return adminPushStatusWeb(request, env);
             }
 
             if (request.method === "GET" && url.pathname === "/activate") return activationPage();
@@ -155,29 +173,67 @@ function formatDate(timestamp: number | null): string {
 }
 
 function activationPage(): Response {
-    return pairingPage(
-        "Pair Passport device",
-        "Enter the 6-digit code shown by your device. This legacy page approves immediately after submission.",
-        "/activate",
-        "Approve device",
-    );
-}
-
-function pairingPage(title: string, message: string, action: string, button: string): Response {
-    return htmlPage(title, `
+    return htmlPage("Pair Passport device", `
         <div class="nav-bar">
             <a href="/admin" class="nav-link">← 返回管理控制台</a>
         </div>
+        <p class="desc">Enter the 6-digit code shown by your device. This legacy page approves immediately after submission.</p>
+        <form method="post" action="/activate" class="pair-card">
+            <label for="user_code" class="form-label">设备 6 位配对码</label>
+            <input id="user_code" name="user_code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" spellcheck="false" maxlength="6" placeholder="000000" class="code-input" required autofocus>
+            <button type="submit" class="btn btn-primary btn-block">Approve device</button>
+        </form>
+    `);
+}
+
+function pairingPage(title: string, message: string, action: string, button: string, nav: string): Response {
+    return htmlPage(title, `
         <p class="desc">${message}</p>
         <form method="post" action="${action}" class="pair-card">
             <label for="user_code" class="form-label">设备 6 位配对码</label>
             <input id="user_code" name="user_code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" spellcheck="false" maxlength="6" placeholder="000000" class="code-input" required autofocus>
             <button type="submit" class="btn btn-primary btn-block">${button}</button>
         </form>
-    `);
+    `, 200, undefined, nav);
 }
 
-function htmlPage(title: string, content: string, status = 200, additionalHeaders?: HeadersInit): Response {
+function renderNav(active: string | null): string {
+    const tabs: Array<{ id: string; label: string }> = [
+        { id: "overview", label: "📊 概览" },
+        { id: "snapshot", label: "📸 远程快照" },
+        { id: "images", label: "🖼️ 图片推送" },
+        { id: "requests", label: "🔔 审批推送" },
+        { id: "devices", label: "📱 设备管理" },
+    ];
+    const tabHtml = tabs
+        .map((tab) => `<button type="button" class="nav-tab${active === tab.id ? " active" : ""}" data-tab="${tab.id}">${tab.label}</button>`)
+        .join("");
+    return `
+    <nav class="topnav">
+        <div class="topnav-inner">
+            <a href="/admin" class="brand">🛂 <span>Kiro Passport</span></a>
+            <div class="nav-tabs">${tabHtml}</div>
+            <div class="topnav-actions">
+                <a href="/admin" class="btn btn-sm nav-btn">🔄 刷新</a>
+                <a href="/admin/pair" class="btn btn-sm btn-primary">➕ 配对新设备</a>
+            </div>
+        </div>
+    </nav>`;
+}
+
+function renderSimpleNav(): string {
+    return `
+    <nav class="topnav">
+        <div class="topnav-inner">
+            <a href="/admin" class="brand">🛂 <span>Kiro Passport</span></a>
+            <div class="topnav-actions">
+                <a href="/admin" class="btn btn-sm nav-btn">← 返回管理控制台</a>
+            </div>
+        </div>
+    </nav>`;
+}
+
+function htmlPage(title: string, content: string, status = 200, additionalHeaders?: HeadersInit, nav = ""): Response {
     const body = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -195,38 +251,97 @@ function htmlPage(title: string, content: string, status = 200, additionalHeader
     --primary-hover: #2ea043;
     --accent: #1f6feb;
     --accent-hover: #388bfd;
+    --accent-soft: rgba(31, 111, 235, 0.14);
     --danger: #da3633;
     --danger-hover: #f85149;
     --online: #3fb950;
     --offline: #6e7681;
+    --radius: 10px;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background: var(--bg);
+    background-image:
+        radial-gradient(1200px 500px at 20% -10%, rgba(31, 111, 235, 0.08), transparent 60%),
+        radial-gradient(900px 420px at 90% 0%, rgba(35, 134, 54, 0.06), transparent 60%);
     color: var(--text);
     line-height: 1.5;
-    padding: 2rem 1rem;
+    min-height: 100vh;
 }
-.container {
+.container { max-width: 960px; margin: 0 auto; padding: 2rem 1rem 0.5rem; }
+
+/* Top navigation */
+.topnav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(13, 17, 23, 0.85);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+}
+.topnav-inner {
     max-width: 960px;
     margin: 0 auto;
-}
-header {
+    padding: 0.6rem 1rem;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: 2rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
-    flex-wrap: wrap;
     gap: 1rem;
+    flex-wrap: wrap;
 }
-h1 { font-size: 1.5rem; font-weight: 600; }
-.header-actions { display: flex; gap: 0.75rem; align-items: center; }
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+.brand span {
+    background: linear-gradient(90deg, #58a6ff, #3fb950);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.nav-tabs { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+.nav-tab {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    padding: 0.4rem 0.85rem;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.nav-tab:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+.nav-tab.active { background: var(--accent-soft); border-color: rgba(31,111,235,0.35); color: #58a6ff; }
+.topnav-actions { margin-left: auto; display: flex; gap: 0.5rem; align-items: center; }
+.nav-btn { background: #21262d; border: 1px solid var(--border); color: var(--text); }
+.nav-btn:hover { border-color: #484f58; }
+
+/* Page sections (tabbed) */
+.page { display: none; }
+.page.active { display: block; animation: pageIn 0.28s ease; }
+@keyframes pageIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+}
+.page-head { margin-bottom: 1.5rem; }
+.page-head h1 { font-size: 1.35rem; font-weight: 700; margin-bottom: 0.3rem; }
+.page-desc { color: var(--text-muted); font-size: 0.9rem; }
+.section-title { font-size: 0.9rem; font-weight: 600; color: var(--text-muted); margin: 0 0 0.9rem; }
+
+/* Legacy nav on public pairing pages */
 .nav-bar { margin-bottom: 1.5rem; }
 .nav-link { color: var(--accent); text-decoration: none; font-size: 0.9rem; }
 .nav-link:hover { text-decoration: underline; }
+
+/* Stats */
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -234,28 +349,65 @@ h1 { font-size: 1.5rem; font-weight: 600; }
     margin-bottom: 2rem;
 }
 .stat-card {
-    background: var(--card-bg);
+    background: linear-gradient(180deg, #1b222c 0%, var(--card-bg) 100%);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1.25rem;
+    border-radius: var(--radius);
+    padding: 1.3rem 1.4rem;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
+.stat-card::after {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), transparent 70%);
+    opacity: 0.6;
+}
+.stat-card:hover { border-color: #3d4650; transform: translateY(-2px); box-shadow: 0 10px 28px rgba(0,0,0,0.35); }
+.stat-icon { font-size: 1.5rem; margin-bottom: 0.6rem; }
 .stat-label { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.25rem; }
 .stat-value { font-size: 1.75rem; font-weight: 700; }
+
+/* Quick actions */
+.quick-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+.quick-card {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.15rem 1.25rem;
+    text-decoration: none;
+    color: var(--text);
+    transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+.quick-card:hover { border-color: rgba(31,111,235,0.6); transform: translateY(-2px); box-shadow: 0 10px 28px rgba(0,0,0,0.35); }
+.quick-icon { font-size: 1.7rem; }
+.quick-title { font-weight: 600; font-size: 0.95rem; }
+.quick-desc { color: var(--text-muted); font-size: 0.78rem; margin-top: 0.15rem; }
+
 .card {
     background: var(--card-bg);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius);
     overflow: hidden;
     margin-bottom: 2rem;
+    transition: border-color 0.2s ease;
 }
+.card:hover { border-color: #3d4650; }
 .card-header {
     padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--border);
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
 }
-.card-title { font-size: 1.1rem; font-weight: 600; }
+.card-title { font-size: 1.05rem; font-weight: 600; }
 table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }
 th, td { padding: 0.85rem 1.25rem; border-bottom: 1px solid var(--border); }
 th { background: #13171e; color: var(--text-muted); font-weight: 600; }
@@ -299,7 +451,7 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .btn-block { width: 100%; padding: 0.75rem; font-size: 1rem; margin-top: 1rem; }
 .actions-cell { display: flex; gap: 0.4rem; align-items: center; }
 .empty-state { padding: 2.5rem; text-align: center; color: var(--text-muted); }
-.pair-card { max-width: 420px; margin: 2rem auto; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 2rem; }
+.pair-card { max-width: 420px; margin: 1.25rem auto 2rem; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 2rem; }
 .form-label { display: block; margin-bottom: 0.5rem; font-weight: 500; }
 .code-input {
     width: 100%;
@@ -365,6 +517,20 @@ tr:hover td { background: rgba(255,255,255,0.02); }
     flex-direction: column;
     gap: 1rem;
 }
+.push-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1.25rem;
+}
+.push-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1rem;
+}
+@media (max-width: 560px) {
+    .push-grid { grid-template-columns: 1fr; }
+}
 .form-group { display: flex; flex-direction: column; gap: 0.35rem; }
 .form-input, .form-select {
     background: #0d1117;
@@ -388,7 +554,9 @@ tr:hover td { background: rgba(255,255,255,0.02); }
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    transition: border-color 0.2s ease, transform 0.2s ease;
 }
+.gallery-item:hover { border-color: #3d4650; transform: translateY(-2px); }
 .gallery-thumb {
     width: 100%;
     height: 180px;
@@ -405,12 +573,16 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .gallery-title { font-weight: 600; font-size: 0.85rem; word-break: break-all; }
 .gallery-date { font-size: 0.75rem; color: var(--text-muted); }
 .gallery-actions { display: flex; gap: 0.5rem; margin-top: auto; padding-top: 0.5rem; }
+
+.footer { text-align: center; color: var(--text-muted); font-size: 0.78rem; padding: 2.5rem 1rem 1.5rem; }
 </style>
 </head>
 <body>
+${nav}
 <div class="container">
     ${content}
 </div>
+<footer class="footer">Kiro Passport Relay · Cloudflare Worker · ws.yanyun.asia</footer>
 </body>
 </html>`;
     const headers = new Headers({
@@ -444,6 +616,11 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
     const images = (await env.DB.prepare(
         "SELECT image_id, device_id, title, image_data, created_at FROM device_images ORDER BY created_at DESC LIMIT 12"
     ).all<DeviceImageRow>()).results;
+
+    const pushLogs = (await env.DB.prepare(
+        "SELECT request_id, device_id, tool, summary, status, reason, created_at, decided_at, expires_at " +
+        "FROM approval_requests ORDER BY created_at DESC LIMIT 50"
+    ).all<ApprovalLogRow>()).results;
 
     const deviceList = await Promise.all(devices.map(async (d) => {
         const online = await checkDeviceOnline(env, d.device_id);
@@ -517,159 +694,309 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
         }
     }
 
-    const content = `
-        <header>
-            <div>
-                <h1>Kiro Passport Relay 管理控制台</h1>
-                <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem;">已登录: <strong>${escapeHtml(username)}</strong></p>
-            </div>
-            <div class="header-actions">
-                <a href="/admin" class="btn" style="background: #21262d; border: 1px solid var(--border); color: var(--text);">🔄 刷新</a>
-                <a href="/admin/pair" class="btn btn-primary">➕ 配对新设备</a>
-            </div>
-        </header>
+    let pushLogRows = "";
+    if (pushLogs.length === 0) {
+        pushLogRows = `<tr><td colspan="6" class="empty-state">暂无审批推送记录。使用上方表单向设备推送第一条审批请求。</td></tr>`;
+    } else {
+        const reasonLabels: Record<string, string> = {
+            user: "用户拒绝",
+            policy: "策略拒绝",
+            timeout: "超时未决定",
+            offline: "设备离线",
+            session_lost: "连接断开",
+            protocol_error: "协议错误",
+        };
+        for (const log of pushLogs) {
+            let badge: string;
+            if (log.status === "allow") badge = `<span class="badge badge-active">✅ 已批准</span>`;
+            else if (log.status === "deny") badge = `<span class="badge badge-revoked">❌ 已拒绝</span>`;
+            else badge = `<span class="badge" style="background: rgba(31,111,235,0.15); color: #58a6ff; border: 1px solid rgba(31,111,235,0.3);">⏳ 待审批</span>`;
+            const resultText = log.status === "pending"
+                ? "等待设备决定"
+                : (reasonLabels[log.reason ?? ""] ?? log.reason ?? "—");
+            pushLogRows += `
+            <tr>
+                <td><span class="code-mono" style="font-size: 0.75rem;">${formatDate(log.created_at)}</span></td>
+                <td><span class="code-mono">${escapeHtml(log.device_id)}</span></td>
+                <td><span class="code-mono">${escapeHtml(log.tool)}</span></td>
+                <td style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(log.summary)}</td>
+                <td>${badge}</td>
+                <td style="color: var(--text-muted); font-size: 0.8rem;">${escapeHtml(resultText)}</td>
+            </tr>`;
+        }
+    }
 
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-label">总设备数</div>
-                <div class="stat-value">${totalCount}</div>
+    const content = `
+        <section class="page active" data-page="overview">
+            <div class="page-head">
+                <h1>📊 概览</h1>
+                <p class="page-desc">已登录 <strong>${escapeHtml(username)}</strong> · Kiro Passport Relay 运行总览</p>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">在线设备</div>
-                <div class="stat-value" style="color: var(--online);">${onlineCount}</div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">📱</div>
+                    <div class="stat-label">总设备数</div>
+                    <div class="stat-value">${totalCount}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">🟢</div>
+                    <div class="stat-label">在线设备</div>
+                    <div class="stat-value" style="color: var(--online);">${onlineCount}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">✅</div>
+                    <div class="stat-label">活跃设备</div>
+                    <div class="stat-value">${activeCount}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">⏳</div>
+                    <div class="stat-label">待处理配对</div>
+                    <div class="stat-value" style="color: #58a6ff;">${pendingCount}</div>
+                </div>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">活跃设备</div>
-                <div class="stat-value">${activeCount}</div>
+
+            <h2 class="section-title">快速操作</h2>
+            <div class="quick-grid">
+                <a href="#" class="quick-card" onclick="switchTab('snapshot'); return false;">
+                    <span class="quick-icon">📸</span>
+                    <div>
+                        <div class="quick-title">远程屏幕快照</div>
+                        <div class="quick-desc">实时抓取设备 240×320 屏幕</div>
+                    </div>
+                </a>
+                <a href="#" class="quick-card" onclick="switchTab('images'); return false;">
+                    <span class="quick-icon">🖼️</span>
+                    <div>
+                        <div class="quick-title">推送图片</div>
+                        <div class="quick-desc">缩放裁剪并推送壁纸封面</div>
+                    </div>
+                </a>
+                <a href="#" class="quick-card" onclick="switchTab('requests'); return false;">
+                    <span class="quick-icon">🔔</span>
+                    <div>
+                        <div class="quick-title">审批推送</div>
+                        <div class="quick-desc">向设备推送审批请求并查看日志</div>
+                    </div>
+                </a>
+                <a href="/admin/pair" class="quick-card">
+                    <span class="quick-icon">➕</span>
+                    <div>
+                        <div class="quick-title">配对新设备</div>
+                        <div class="quick-desc">输入设备 6 位配对码</div>
+                    </div>
+                </a>
+                <a href="#" class="quick-card" onclick="switchTab('devices'); return false;">
+                    <span class="quick-icon">🔐</span>
+                    <div>
+                        <div class="quick-title">设备管理</div>
+                        <div class="quick-desc">撤销授权 / 轮换凭证 / 删除</div>
+                    </div>
+                </a>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">待处理配对</div>
-                <div class="stat-value" style="color: #58a6ff;">${pendingCount}</div>
-            </div>
-        </div>
+        </section>
 
         <!-- 📸 远程屏幕快照与截屏 (Remote Screen Capture Studio) -->
-        <div class="card">
-            <div class="card-header">
-                <div class="card-title">📸 远程屏幕快照与截屏 (Remote Snapshot - 240×320)</div>
-                <div id="castStatusBadge" class="badge" style="background: rgba(110, 118, 129, 0.2); color: var(--text-muted);">
-                    <span id="castStatusDot" class="dot dot-offline"></span> <span id="castStatusText">未连接</span>
-                </div>
+        <section class="page" data-page="snapshot">
+            <div class="page-head">
+                <h1>📸 远程屏幕快照</h1>
+                <p class="page-desc">实时抓取设备屏幕（240×320），支持自动轮询与保存高清截图</p>
             </div>
-            <div class="image-studio">
-                <div class="preview-pane">
-                    <div class="screen-frame" id="castFrame">
-                        <canvas id="castCanvas" width="240" height="320" style="image-rendering: pixelated;"></canvas>
-                        <div id="castPlaceholder" class="screen-placeholder" style="position: absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; background: rgba(13,17,23,0.85);">
-                            📱 板子屏幕快照<br><span style="font-size:0.75rem; color:#6e7681; margin-top:0.5rem;">点击「立即抓取屏幕快照」</span>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">远程屏幕快照与截屏 (Remote Snapshot - 240×320)</div>
+                    <div id="castStatusBadge" class="badge" style="background: rgba(110, 118, 129, 0.2); color: var(--text-muted);">
+                        <span id="castStatusDot" class="dot dot-offline"></span> <span id="castStatusText">未连接</span>
+                    </div>
+                </div>
+                <div class="image-studio">
+                    <div class="preview-pane">
+                        <div class="screen-frame" id="castFrame">
+                            <canvas id="castCanvas" width="240" height="320" style="image-rendering: pixelated;"></canvas>
+                            <div id="castPlaceholder" class="screen-placeholder" style="position: absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; background: rgba(13,17,23,0.85);">
+                                📱 板子屏幕快照<br><span style="font-size:0.75rem; color:#6e7681; margin-top:0.5rem;">点击「立即抓取屏幕快照」</span>
+                            </div>
+                        </div>
+                        <div id="castMetrics" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.75rem; display: flex; gap: 0.75rem;">
+                            <span id="castSliceCount">0/64 片</span>
+                            <span>•</span>
+                            <span id="castSeq">帧 #0</span>
+                            <span>•</span>
+                            <span id="castTime">未获取</span>
                         </div>
                     </div>
-                    <div id="castMetrics" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.75rem; display: flex; gap: 0.75rem;">
-                        <span id="castSliceCount">0/64 片</span>
-                        <span>•</span>
-                        <span id="castSeq">帧 #0</span>
-                        <span>•</span>
-                        <span id="castTime">未获取</span>
+                    <div class="upload-pane">
+                        <div class="form-group">
+                            <label class="form-label">选择目标设备</label>
+                            <select id="castTargetDevice" class="form-select">${deviceOptions}</select>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                            <button type="button" id="castCaptureBtn" class="btn btn-primary" style="flex: 1; padding: 0.85rem; font-size: 1rem; font-weight: 600;" onclick="requestCapture()">
+                                📸 立即抓取屏幕快照
+                            </button>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem; margin: 0.25rem 0;">
+                            <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--text-muted); cursor: pointer;">
+                                <input type="checkbox" id="autoSnapshotCheck" onchange="toggleAutoSnapshot()">
+                                <span>⏱️ 自动轮询快照 (每 5 秒刷新一次)</span>
+                            </label>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <button type="button" class="btn" style="background: #21262d; border: 1px solid var(--border); color: var(--text); flex: 1;" onclick="downloadScreenshot()">
+                                💾 保存高清截图 (PNG)
+                            </button>
+                            <button type="button" class="btn" style="background: #21262d; border: 1px solid var(--border); color: var(--text-muted);" onclick="reconnectCastWs()">
+                                🔄 刷新连接
+                            </button>
+                        </div>
+                        <div id="castAlert" style="display:none; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem;"></div>
                     </div>
-                </div>
-                <div class="upload-pane">
-                    <div class="form-group">
-                        <label class="form-label">选择目标设备</label>
-                        <select id="castTargetDevice" class="form-select">${deviceOptions}</select>
-                    </div>
-                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                        <button type="button" id="castCaptureBtn" class="btn btn-primary" style="flex: 1; padding: 0.85rem; font-size: 1rem; font-weight: 600;" onclick="requestCapture()">
-                            📸 立即抓取屏幕快照
-                        </button>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 0.5rem; margin: 0.25rem 0;">
-                        <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--text-muted); cursor: pointer;">
-                            <input type="checkbox" id="autoSnapshotCheck" onchange="toggleAutoSnapshot()">
-                            <span>⏱️ 自动轮询快照 (每 5 秒刷新一次)</span>
-                        </label>
-                    </div>
-                    <div style="display: flex; gap: 0.5rem;">
-                        <button type="button" class="btn" style="background: #21262d; border: 1px solid var(--border); color: var(--text); flex: 1;" onclick="downloadScreenshot()">
-                            💾 保存高清截图 (PNG)
-                        </button>
-                        <button type="button" class="btn" style="background: #21262d; border: 1px solid var(--border); color: var(--text-muted);" onclick="reconnectCastWs()">
-                            🔄 刷新连接
-                        </button>
-                    </div>
-                    <div id="castAlert" style="display:none; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem;"></div>
                 </div>
             </div>
-        </div>
+        </section>
 
-        <!-- 📸 图片工作台 (Image Studio) -->
-        <div class="card">
-            <div class="card-header">
-                <div class="card-title">📸 图片推送工作台 (Image Studio - 240×320)</div>
+        <!-- 🖼️ 图片推送工作台 (Image Studio) -->
+        <section class="page" data-page="images">
+            <div class="page-head">
+                <h1>🖼️ 图片推送工作台</h1>
+                <p class="page-desc">将本地图片缩放裁剪至 240×320 并实时推送到设备屏幕</p>
             </div>
-            <div class="image-studio">
-                <div class="preview-pane">
-                    <div class="screen-frame" id="screenFrame">
-                        <div class="screen-placeholder" id="placeholder">
-                            📱 240 × 320 预览<br><span style="font-size:0.75rem; color:#6e7681;">请选择要推送的图片</span>
-                        </div>
-                        <canvas id="previewCanvas" width="240" height="320" style="display:none;"></canvas>
-                    </div>
-                    <div id="sizeBadge" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.75rem;">大小: 0 KB</div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">图片推送 (Image Studio - 240×320)</div>
                 </div>
-                <div class="upload-pane">
+                <div class="image-studio">
+                    <div class="preview-pane">
+                        <div class="screen-frame" id="screenFrame">
+                            <div class="screen-placeholder" id="placeholder">
+                                📱 240 × 320 预览<br><span style="font-size:0.75rem; color:#6e7681;">请选择要推送的图片</span>
+                            </div>
+                            <canvas id="previewCanvas" width="240" height="320" style="display:none;"></canvas>
+                        </div>
+                        <div id="sizeBadge" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.75rem;">大小: 0 KB</div>
+                    </div>
+                    <div class="upload-pane">
+                        <div class="form-group">
+                            <label class="form-label">目标设备</label>
+                            <select id="targetDevice" class="form-select">${deviceOptions}</select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">图片标题 / 描述</label>
+                            <input id="imageTitle" type="text" class="form-input" placeholder="例如：今日封面、日程安排" maxlength="32" value="壁纸封面">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">选择本地图片 (自动缩放裁剪至 240×320)</label>
+                            <input id="filePicker" type="file" accept="image/*" class="form-input">
+                        </div>
+                        <button type="button" id="pushBtn" class="btn btn-primary" style="padding: 0.75rem; font-size: 1rem;" onclick="pushCurrentCanvas()">
+                            🚀 立即推送到设备屏幕
+                        </button>
+                        <div id="statusAlert" style="display:none; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">🖼️ 历史图片库</div>
+                </div>
+                <div class="gallery-grid">
+                    ${galleryHtml}
+                </div>
+            </div>
+        </section>
+
+        <!-- 🔔 审批推送 (Approval Push Center) -->
+        <section class="page" data-page="requests">
+            <div class="page-head">
+                <h1>🔔 审批推送</h1>
+                <p class="page-desc">向在线设备推送审批请求（tool/summary 显示在设备屏幕，用户按键决定），并查看全部推送日志</p>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">在线发推送 (Approval Push)</div>
+                </div>
+                <div class="push-form">
                     <div class="form-group">
                         <label class="form-label">目标设备</label>
-                        <select id="targetDevice" class="form-select">${deviceOptions}</select>
+                        <select id="pushDevice" class="form-select">${deviceOptions}</select>
+                    </div>
+                    <div class="push-grid">
+                        <div class="form-group">
+                            <label class="form-label">工具名称 (tool)</label>
+                            <input id="pushTool" type="text" class="form-input" maxlength="31" placeholder="shell.execute" value="shell.execute" spellcheck="false">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">有效期 (TTL)</label>
+                            <select id="pushTtl" class="form-select">
+                                <option value="60">60 秒</option>
+                                <option value="120" selected>120 秒</option>
+                                <option value="300">300 秒</option>
+                            </select>
+                        </div>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">图片标题 / 描述</label>
-                        <input id="imageTitle" type="text" class="form-input" placeholder="例如：今日封面、日程安排" maxlength="32" value="壁纸封面">
+                        <label class="form-label">推送内容 (summary)</label>
+                        <input id="pushSummary" type="text" class="form-input" maxlength="71" placeholder="Run deployment command" spellcheck="false">
+                        <p class="desc" style="margin: 0.35rem 0 0; font-size: 0.78rem;">提示：内容需为可打印 ASCII 字符（不含引号 / 反斜杠），设备屏幕会原样显示。</p>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">选择本地图片 (自动缩放裁剪至 240×320)</label>
-                        <input id="filePicker" type="file" accept="image/*" class="form-input">
-                    </div>
-                    <button type="button" id="pushBtn" class="btn btn-primary" style="padding: 0.75rem; font-size: 1rem;" onclick="pushCurrentCanvas()">
-                        🚀 立即推送到设备屏幕
+                    <button type="button" id="pushSendBtn" class="btn btn-primary" style="padding: 0.75rem; font-size: 1rem;" onclick="sendAdminPush()">
+                        🚀 立即推送审批请求
                     </button>
-                    <div id="statusAlert" style="display:none; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem;"></div>
+                    <div id="pushResult" style="display:none; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem; margin-top: 0.5rem;"></div>
                 </div>
             </div>
-        </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">📋 推送日志 (最近 ${pushLogs.length} 条)</div>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>设备 ID</th>
+                            <th>工具</th>
+                            <th>摘要</th>
+                            <th>状态</th>
+                            <th>结果</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pushLogBody">${pushLogRows}</tbody>
+                </table>
+            </div>
+        </section>
 
-        <div class="card">
-            <div class="card-header">
-                <div class="card-title">🖼️ 历史图片库</div>
+        <!-- 📱 已注册设备列表 -->
+        <section class="page" data-page="devices">
+            <div class="page-head">
+                <h1>📱 设备管理</h1>
+                <p class="page-desc">管理已注册设备：查看在线状态、撤销授权或彻底删除</p>
             </div>
-            <div class="gallery-grid">
-                ${galleryHtml}
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">已注册设备列表</div>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>设备 ID</th>
+                            <th>在线状态</th>
+                            <th>授权状态</th>
+                            <th>凭证版本</th>
+                            <th>注册时间</th>
+                            <th>管理操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>${devicesRows}</tbody>
+                </table>
             </div>
-        </div>
-
-        <div class="card">
-            <div class="card-header">
-                <div class="card-title">📱 已注册设备列表</div>
-            </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>设备 ID</th>
-                        <th>在线状态</th>
-                        <th>授权状态</th>
-                        <th>凭证版本</th>
-                        <th>注册时间</th>
-                        <th>管理操作</th>
-                    </tr>
-                </thead>
-                <tbody>${devicesRows}</tbody>
-            </table>
-        </div>
+        </section>
 
         <script>
         // ----------------- 远程屏幕快照与截屏 (Remote Snapshot Studio) -----------------
         let castWs = null;
         let castAutoTimer = null;
         let castCurrentSeq = 0;
+        let castStarted = false;
 
         const castCanvas = document.getElementById("castCanvas");
         const castCtx = castCanvas.getContext("2d");
@@ -861,9 +1188,29 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             initCastWebSocket();
         });
 
-        if (castTargetDevice.value) {
-            setTimeout(initCastWebSocket, 300);
+        // ----------------- 顶部导航 Tab 分区 (Top Navigation Tabs) -----------------
+        function switchTab(name) {
+            document.querySelectorAll(".nav-tab").forEach((tab) => {
+                tab.classList.toggle("active", tab.dataset.tab === name);
+            });
+            document.querySelectorAll(".page").forEach((page) => {
+                const isActive = page.dataset.page === name;
+                page.classList.toggle("active", isActive);
+                // 首次进入快照页时才建立 WebSocket，避免后台空连接
+                if (isActive && name === "snapshot" && !castStarted) {
+                    castStarted = true;
+                    initCastWebSocket();
+                }
+            });
+            try { history.replaceState(null, "", "#" + name); } catch {}
         }
+
+        document.querySelectorAll(".nav-tab").forEach((tab) => {
+            tab.addEventListener("click", () => switchTab(tab.dataset.tab));
+        });
+
+        const initialTab = (location.hash || "").slice(1);
+        switchTab(["snapshot", "images", "requests", "devices"].includes(initialTab) ? initialTab : "overview");
 
         // ----------------- 图片推送工作台 (Image Studio) -----------------
         let currentBase64 = "";
@@ -994,10 +1341,103 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 alert("网络请求失败: " + err);
             }
         }
+
+        // ----------------- 审批推送 (Approval Push Center) -----------------
+        const pushResultBox = document.getElementById("pushResult");
+
+        function showPushResult(kind, text) {
+            pushResultBox.style.display = "block";
+            if (kind === "success") {
+                pushResultBox.style.background = "rgba(46, 160, 67, 0.15)";
+                pushResultBox.style.border = "1px solid rgba(46, 160, 67, 0.3)";
+                pushResultBox.style.color = "#3fb950";
+            } else if (kind === "error") {
+                pushResultBox.style.background = "rgba(248, 81, 73, 0.15)";
+                pushResultBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
+                pushResultBox.style.color = "#f85149";
+            } else {
+                pushResultBox.style.background = "rgba(56, 139, 253, 0.1)";
+                pushResultBox.style.border = "1px solid rgba(56, 139, 253, 0.3)";
+                pushResultBox.style.color = "#58a6ff";
+            }
+            pushResultBox.innerText = text;
+        }
+
+        async function sendAdminPush() {
+            const deviceId = document.getElementById("pushDevice").value;
+            const tool = document.getElementById("pushTool").value.trim();
+            const summary = document.getElementById("pushSummary").value.trim();
+            const ttl = parseInt(document.getElementById("pushTtl").value, 10);
+            const btn = document.getElementById("pushSendBtn");
+            if (!deviceId) {
+                alert("请先选择目标设备！");
+                return;
+            }
+            if (!/^[A-Za-z0-9._:-]{1,31}$/.test(tool)) {
+                alert("工具名称仅允许字母、数字、._:-，最长 31 字符");
+                return;
+            }
+            if (!summary) {
+                alert("请填写推送内容 (summary)！");
+                return;
+            }
+            if (summary.length > 71 || /["\\]/.test(summary)) {
+                alert("推送内容最长 71 字符，且不能包含引号或反斜杠");
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerText = "正在推送...";
+            pushResultBox.style.display = "none";
+            try {
+                const res = await fetch("/admin/push", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ device_id: deviceId, tool: tool, summary: summary, ttl_seconds: ttl })
+                });
+                const result = await res.json();
+                if (!res.ok || !result.ok) {
+                    showPushResult("error", "❌ 推送失败: " + (result.error || ("HTTP " + res.status)));
+                    return;
+                }
+                let status = result.status;
+                let reason = result.reason || "";
+                if (status === "pending") {
+                    showPushResult("info", "⏳ 请求已推送到设备，等待用户按键决定...");
+                    for (let i = 0; i < 12; i++) {
+                        await new Promise((resolve) => setTimeout(resolve, 2000));
+                        try {
+                            const sr = await fetch("/admin/push/status?request_id=" + encodeURIComponent(result.request_id));
+                            if (sr.ok) {
+                                const s = await sr.json();
+                                if (s.status !== "pending") {
+                                    status = s.status;
+                                    reason = s.reason || "";
+                                    break;
+                                }
+                            }
+                        } catch {}
+                    }
+                }
+                const reasonText = reason ? (" (" + reason + ")") : "";
+                if (status === "allow") {
+                    showPushResult("success", "✅ 设备已批准该请求" + reasonText);
+                } else if (status === "deny") {
+                    showPushResult("error", "❌ 请求已拒绝 / 未送达" + reasonText);
+                } else {
+                    showPushResult("info", "⏳ 仍在等待设备决定，可稍后刷新页面查看日志结果。");
+                }
+            } catch (err) {
+                showPushResult("error", "❌ 网络请求失败: " + err);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "🚀 立即推送审批请求";
+            }
+        }
         </script>
     `;
 
-    return htmlPage("管理控制台", content);
+    return htmlPage("管理控制台", content, 200, undefined, renderNav("overview"));
 }
 
 async function adminPushImageWeb(request: Request, env: Env): Promise<Response> {
@@ -1133,7 +1573,7 @@ async function listDevicesApi(request: Request, env: Env): Promise<Response> {
 async function adminPairPage(request: Request, env: Env): Promise<Response> {
     const username = await verifyAdminBasicAuth(request, env);
     if (!username) return adminUnauthorizedPage();
-    return pairingPage("设备配对", "输入设备上显示的 6 位配对码。下一步会先显示待绑定设备，再确认绑定。", "/admin/pair", "下一步：确认设备");
+    return pairingPage("设备配对", "输入设备上显示的 6 位配对码。下一步会先显示待绑定设备，再确认绑定。", "/admin/pair", "下一步：确认设备", renderSimpleNav());
 }
 
 async function adminPair(request: Request, env: Env): Promise<Response> {
@@ -1162,7 +1602,7 @@ async function pairForm(request: Request): Promise<{ action: string; userCode: s
 }
 
 async function previewAdminPair(env: Env, subject: string, userCode: string | null): Promise<Response> {
-    if (!userCode) return pairingPage("设备配对", "请输入严格的 6 位数字配对码。", "/admin/pair", "下一步：确认设备");
+    if (!userCode) return pairingPage("设备配对", "请输入严格的 6 位数字配对码。", "/admin/pair", "下一步：确认设备", renderSimpleNav());
     const enrollment = await enrollmentForUserCode(env, userCode);
     if (!enrollment || !await isPendingEnrollment(env, enrollment)) {
         return pairUnavailablePage("该配对码无效、已过期或已被使用。", 400);
@@ -1170,9 +1610,6 @@ async function previewAdminPair(env: Env, subject: string, userCode: string | nu
     const confirmation = await issuePairConfirmation(env, enrollment, subject);
     const deviceId = escapeHtml(enrollment.device_id);
     return htmlPage("确认绑定", `
-        <div class="nav-bar">
-            <a href="/admin/pair" class="nav-link">← 重新输入配对码</a>
-        </div>
         <div class="pair-card" style="max-width: 480px;">
             <div class="notice">匹配到待绑定设备：<br><strong style="font-size: 1.2rem; font-family: monospace; display: block; margin-top: 0.5rem;">${deviceId}</strong></div>
             <p class="desc">请确认这是您的目标设备硬件。点击下方按钮立即完成绑定授权：</p>
@@ -1182,7 +1619,7 @@ async function previewAdminPair(env: Env, subject: string, userCode: string | nu
                 <button type="submit" class="btn btn-primary btn-block">✅ 确认并绑定该设备</button>
             </form>
         </div>
-    `);
+    `, 200, undefined, renderSimpleNav());
 }
 
 async function confirmAdminPair(
@@ -1203,7 +1640,7 @@ async function confirmAdminPair(
             <p class="desc">设备 <strong class="code-mono">${escapeHtml(result.deviceId)}</strong> 已通过授权并注册完成。</p>
             <a href="/admin" class="btn btn-primary btn-block">返回设备管理控制台</a>
         </div>
-    `);
+    `, 200, undefined, renderSimpleNav());
 }
 
 function adminUnauthorizedPage(): Response {
@@ -1224,7 +1661,7 @@ function pairUnavailablePage(message: string, status: number): Response {
             <a href="/admin/pair" class="btn btn-primary btn-block">输入其他配对码</a>
             <a href="/admin" class="btn btn-block" style="background: transparent; color: var(--text-muted); border: 1px solid var(--border); margin-top: 0.5rem;">返回控制台</a>
         </div>
-    `, status);
+    `, status, undefined, renderSimpleNav());
 }
 
 function base64UrlEncode(bytes: Uint8Array): string {
@@ -1621,12 +2058,15 @@ async function revokeDevice(request: Request, env: Env, deviceId: string): Promi
     return json({ device_id: deviceId, status: "revoked" });
 }
 
-async function createApproval(request: Request, env: Env, deviceId: string): Promise<Response> {
-    if (!hasBearerSecret(request, env.HOOK_AUTH_SECRET)) return json({ error: "unauthorized" }, 401);
-    const body = await request.json<unknown>().catch(() => null);
-    const input = parseApprovalInput(body);
-    if (!input) return json({ error: "invalid approval request" }, 400);
+type ApprovalCreateResult =
+    | { ok: true; requestId: string; status: "pending" | "allow" | "deny"; reason?: string }
+    | { ok: false; error: "pending-conflict" | "unavailable" };
 
+async function createApprovalRequest(
+    env: Env,
+    deviceId: string,
+    input: ApprovalInput,
+): Promise<ApprovalCreateResult> {
     const now = nowSeconds();
     const requestId = crypto.randomUUID();
     const expiresAt = now + input.ttlSeconds;
@@ -1647,17 +2087,70 @@ async function createApproval(request: Request, env: Env, deviceId: string): Pro
     });
     if (relayResponse.status === 409) {
         await env.DB.prepare("DELETE FROM approval_requests WHERE request_id = ?1").bind(requestId).run();
-        return json({ error: "approval already pending" }, 409);
+        return { ok: false, error: "pending-conflict" };
     }
     if (!relayResponse.ok) {
         await env.DB.prepare("DELETE FROM approval_requests WHERE request_id = ?1").bind(requestId).run();
-        return json({ error: "relay unavailable" }, 503);
+        return { ok: false, error: "unavailable" };
     }
     const result = await relayResponse.json<{ status: "pending" | "allow" | "deny"; reason?: string }>();
     if (result.status === "pending") {
-        return json({ request_id: requestId, status: "pending", expires_at: expiresAt }, 202);
+        return { ok: true, requestId, status: "pending" };
     }
-    return json({ request_id: requestId, status: result.status, reason: result.reason }, 202);
+    return { ok: true, requestId, status: result.status, reason: result.reason };
+}
+
+async function createApproval(request: Request, env: Env, deviceId: string): Promise<Response> {
+    if (!hasBearerSecret(request, env.HOOK_AUTH_SECRET)) return json({ error: "unauthorized" }, 401);
+    const body = await request.json<unknown>().catch(() => null);
+    const input = parseApprovalInput(body);
+    if (!input) return json({ error: "invalid approval request" }, 400);
+    const result = await createApprovalRequest(env, deviceId, input);
+    if (!result.ok) {
+        if (result.error === "pending-conflict") return json({ error: "approval already pending" }, 409);
+        return json({ error: "relay unavailable" }, 503);
+    }
+    if (result.status === "pending") {
+        return json({ request_id: result.requestId, status: "pending", expires_at: nowSeconds() + input.ttlSeconds }, 202);
+    }
+    return json({ request_id: result.requestId, status: result.status, reason: result.reason }, 202);
+}
+
+async function adminPushWeb(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const body = await request.json<unknown>().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "invalid body" }, 400);
+    const object = body as Record<string, unknown>;
+    if (typeof object.device_id !== "string" || !isDeviceId(object.device_id)) {
+        return json({ error: "invalid device_id" }, 400);
+    }
+    const deviceId = object.device_id;
+    const input = parseApprovalInput({ tool: object.tool, summary: object.summary, ttl_seconds: object.ttl_seconds });
+    if (!input) return json({ error: "invalid approval request" }, 400);
+    const result = await createApprovalRequest(env, deviceId, input);
+    if (!result.ok) {
+        if (result.error === "pending-conflict") return json({ error: "approval already pending" }, 409);
+        return json({ error: "relay unavailable" }, 503);
+    }
+    return json({ ok: true, request_id: result.requestId, status: result.status, reason: result.reason });
+}
+
+async function adminPushStatusWeb(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const url = new URL(request.url);
+    const requestId = url.searchParams.get("request_id");
+    if (!requestId || !REQUEST_ID_PATTERN.test(requestId)) return json({ error: "invalid request_id" }, 400);
+    const record = await getRequestIndex(env, requestId);
+    if (!record) return json({ error: "not found" }, 404);
+    return json({
+        request_id: record.request_id,
+        status: record.status,
+        reason: record.reason,
+        expires_at: record.expires_at,
+        decided_at: record.decided_at,
+    });
 }
 
 async function getApproval(request: Request, env: Env, requestId: string): Promise<Response> {

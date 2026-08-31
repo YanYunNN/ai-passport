@@ -6,8 +6,8 @@
 
 ## 0. 部署前条件
 
-1. Cloudflare 账户已启用 Workers、Durable Objects 与 D1，且 `yanyun.fun` 已托管到 Cloudflare。
-2. `ws.yanyun.fun` 没有与其他 Worker/Pages 冲突的路由。Worker Custom Domain 的 DNS 由 Cloudflare 代理；不要创建 DNS-only（灰云）记录。
+1. Cloudflare 账户已启用 Workers、Durable Objects 与 D1，且 `yanyun.asia` 已托管到 Cloudflare。
+2. `ws.yanyun.asia` 没有与其他 Worker/Pages 冲突的路由。Worker Custom Domain 的 DNS 由 Cloudflare 代理；不要创建 DNS-only（灰云）记录。
 3. 本机已安装 Node.js 22+、npm 和 Cloudflare 账户可用的 API Token。该 token 仅在开发机或 CI secret 中保存，至少授予此账户/zone 所需的 Workers Scripts、Workers Routes、D1、Durable Objects 编辑权限。
 4. 从本目录执行命令：
 
@@ -75,12 +75,12 @@ npm run deploy
 
 第一次部署会创建 `PassportRelay` Durable Object class。随后仅修改 DO 代码不需要新的 migration；如果未来重命名 class，必须先根据 Cloudflare 的 DO migration 文档显式迁移。
 
-`wrangler.toml` 已声明 Worker Custom Domain：`ws.yanyun.fun`。部署后在 Cloudflare Dashboard **Workers & Pages → kiro-passport-relay → Settings → Domains & Routes** 确认域名状态为 Active；若该域名的父 zone 未在当前账号，先将它移入/委派到 Cloudflare。
+`wrangler.toml` 已声明 Worker Custom Domain：`ws.yanyun.asia`。部署后在 Cloudflare Dashboard **Workers & Pages → kiro-passport-relay → Settings → Domains & Routes** 确认域名状态为 Active；若该域名的父 zone 未在当前账号，先将它移入/委派到 Cloudflare。
 
 验证公网 TLS 与 Worker：
 
 ```sh
-curl --fail --silent --show-error https://ws.yanyun.fun/healthz
+curl --fail --silent --show-error https://ws.yanyun.asia/healthz
 # 预期：{"ok":true}
 ```
 
@@ -91,7 +91,7 @@ curl --fail --silent --show-error https://ws.yanyun.fun/healthz
 `device_id` 是固件按 Wi-Fi STA MAC 生成的 `passport-` 加 12 位大写十六进制，例如 `passport-AABBCCDDEEFF`。先通过工厂日志/治具确认真实值，再注册：
 
 ```sh
-export RELAY=https://ws.yanyun.fun
+export RELAY=https://ws.yanyun.asia
 read -rs ADMIN_KEY; echo
 curl --fail --silent --show-error -X POST "$RELAY/v1/admin/devices" \
   -H "Authorization: Bearer $ADMIN_KEY" \
@@ -128,7 +128,7 @@ curl --fail --silent --show-error -X DELETE \
 当前固件只接受 origin 形式的 relay URL：
 
 ```text
-wss://ws.yanyun.fun
+wss://ws.yanyun.asia
 ```
 
 固件自动拼接 `/device/<device_id>`，因此**不要**写入 `/device/...` 路径或尾随 `/`。它还要求 credential 是可打印 ASCII；本 Worker 签发的 base64url credential 满足该要求。
@@ -137,7 +137,7 @@ wss://ws.yanyun.fun
 
 ```c
 kiro_passport_network_configure(
-    "wss://ws.yanyun.fun",
+    "wss://ws.yanyun.asia",
     "<one-time-device-credential>");
 ```
 
@@ -146,7 +146,7 @@ kiro_passport_network_configure(
 设备满足 Wi-Fi 和可信 NTP 时间后，页面应依次显示 `Connecting relay` 与 `Relay ready`。Worker 收到的 WSS 路径应为：
 
 ```text
-wss://ws.yanyun.fun/device/passport-AABBCCDDEEFF
+wss://ws.yanyun.asia/device/passport-AABBCCDDEEFF
 ```
 
 ## 6. Hook / Python 客户端联调
@@ -158,7 +158,7 @@ import os
 import time
 import requests
 
-BASE_URL = "https://ws.yanyun.fun"
+BASE_URL = "https://ws.yanyun.asia"
 DEVICE_ID = "passport-AABBCCDDEEFF"
 HEADERS = {"Authorization": f"Bearer {os.environ['KIRO_PASSPORT_HOOK_TOKEN']}"}
 
