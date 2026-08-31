@@ -19,3 +19,5 @@ cloudflare/node_modules
 .kiro/passport_config.json
 .kiro_passport.json
 cloudflare/.wrangler
+# Wrangler/Cloudflare auth home set for sandboxed deploys (holds OAuth credential).
+cloudflare/.wr-home/

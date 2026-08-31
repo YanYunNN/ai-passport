@@ -87,6 +87,20 @@ static HMP3Decoder s_mp3;
 static lv_obj_t *s_marquee_bar;
 static lv_obj_t *s_marquee_label;
 
+/* --- 内存优化（ESP32-C3 无 PSRAM）----------
+ * chat_asr/chat_ask/chat_play_mp3_stream 内的大 HTTP 请求/响应/MP3 缓冲原先声明在
+ * 各自函数栈上，导致 chat_task 峰值栈高达约 8KB，而进入 Chat 段时系统堆被 WiFi/TLS/
+ * LVGL 占用殆尽，8KB 的连续任务栈分配失败（日志"任务创建失败"）。
+ *
+ * 这些大缓冲既不能放任务栈（栈要小），也不能永久放静态区（.bss 会在启动时就永久
+ * 占据内存、进一步榨干本就紧张的系统堆）。因此改为在任务运行期间 transiently 用
+ * malloc 分配、用毕即 free：缓冲仅在整个 HTTP/播放处理期间短暂存在，不常驻堆，
+ * 也不会撑爆任务栈。这样 chat_task 只用 ~3KB 栈，创建任务成功率大幅提高。 */
+#define CHAT_HTTP_BODY_MAX 4096
+#define CHAT_HTTP_RESPONSE_MAX 2048
+#define CHAT_ASR_FILEBUF_MAX 2048
+#define CHAT_MP3_READBUF_MAX 8192
+
 static void chat_log_heap(const char *stage)
 {
     ESP_LOGI(TAG, "heap@%s: free=%lu min=%lu", stage,
@@ -235,8 +249,15 @@ static esp_err_t chat_asr(const char *url, const char *bearer, const char *devic
     uint8_t wav_header[44];
     chat_build_wav_header(wav_header, pcm_bytes);
 
-    char response[2048];
-    chat_http_response_t resp = { .data = response, .capacity = sizeof(response) };
+    /* transient heap：不撑任务栈，也不永久占堆（见文件顶部内存优化说明） */
+    char *response = malloc(CHAT_HTTP_RESPONSE_MAX);
+    uint8_t *filebuf = malloc(CHAT_ASR_FILEBUF_MAX);
+    if (!response || !filebuf) {
+        free(response);
+        free(filebuf);
+        return ESP_ERR_NO_MEM;
+    }
+    chat_http_response_t resp = { .data = response, .capacity = CHAT_HTTP_RESPONSE_MAX };
     const esp_http_client_config_t config = {
         .url = url,
         .method = HTTP_METHOD_POST,
@@ -246,7 +267,11 @@ static esp_err_t chat_asr(const char *url, const char *bearer, const char *devic
         .user_data = &resp,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) return ESP_ERR_NO_MEM;
+    if (!client) {
+        free(response);
+        free(filebuf);
+        return ESP_ERR_NO_MEM;
+    }
     esp_http_client_set_header(client, "Content-Type", "multipart/form-data; boundary=" CHAT_BOUNDARY);
     esp_http_client_set_header(client, "Authorization", bearer);
     esp_http_client_set_header(client, "X-Device-Id", device_id);
@@ -256,16 +281,15 @@ static esp_err_t chat_asr(const char *url, const char *bearer, const char *devic
     if (err == ESP_OK) {
         bool ok = esp_http_client_write(client, part1, sizeof(part1) - 1) >= 0 &&
                   esp_http_client_write(client, (const char *)wav_header, sizeof(wav_header)) >= 0;
-        uint8_t fb[2048];
         size_t off = 0;
         while (ok && off < pcm_bytes) {
             size_t n = pcm_bytes - off;
-            if (n > sizeof(fb)) n = sizeof(fb);
-            if (esp_partition_read(s_store, off, fb, n) != ESP_OK) {
+            if (n > CHAT_ASR_FILEBUF_MAX) n = CHAT_ASR_FILEBUF_MAX;
+            if (esp_partition_read(s_store, off, filebuf, n) != ESP_OK) {
                 ok = false;
                 break;
             }
-            if (esp_http_client_write(client, (const char *)fb, (int)n) < 0) {
+            if (esp_http_client_write(client, (const char *)filebuf, (int)n) < 0) {
                 ok = false;
                 break;
             }
@@ -285,16 +309,24 @@ static esp_err_t chat_asr(const char *url, const char *bearer, const char *devic
         }
     }
     esp_http_client_cleanup(client);
-    if (err != ESP_OK) return err;
+    if (err != ESP_OK) {
+        free(response);
+        free(filebuf);
+        return err;
+    }
 
     cJSON *root = cJSON_Parse(resp.data);
     const char *text = root ? cJSON_GetStringValue(cJSON_GetObjectItem(root, "text")) : NULL;
     if (!text) {
         cJSON_Delete(root);
+        free(response);
+        free(filebuf);
         return ESP_ERR_INVALID_RESPONSE;
     }
     strlcpy(recognized, text, recognized_cap);
     cJSON_Delete(root);
+    free(response);
+    free(filebuf);
     return ESP_OK;
 }
 
@@ -303,25 +335,32 @@ static esp_err_t chat_ask(const char *url, const char *bearer, const char *devic
                           const chat_message_t *messages, size_t count,
                           char *reply, size_t reply_cap)
 {
-    char body[4096];
+    /* transient heap：不撑任务栈，也不永久占堆（见文件顶部内存优化说明） */
+    char *body = malloc(CHAT_HTTP_BODY_MAX);
+    char *response = malloc(CHAT_HTTP_RESPONSE_MAX);
+    if (!body || !response) {
+        free(body);
+        free(response);
+        return ESP_ERR_NO_MEM;
+    }
+    const size_t body_cap = CHAT_HTTP_BODY_MAX;
     size_t pos = 0;
-    pos += (size_t)snprintf(body + pos, sizeof(body) - pos, "{\"messages\":[");
+    pos += (size_t)snprintf(body + pos, body_cap - pos, "{\"messages\":[");
     for (size_t i = 0; i < count; i++) {
-        int written = snprintf(body + pos, sizeof(body) - pos, "%s{\"role\":\"%s\",\"content\":\"",
+        int written = snprintf(body + pos, body_cap - pos, "%s{\"role\":\"%s\",\"content\":\"",
                                i ? "," : "", messages[i].role);
-        if (written < 0 || (size_t)written >= sizeof(body) - pos) return ESP_ERR_INVALID_SIZE;
+        if (written < 0 || (size_t)written >= body_cap - pos) { free(body); free(response); return ESP_ERR_INVALID_SIZE; }
         pos += (size_t)written;
-        pos += chat_json_escape(body + pos, sizeof(body) - pos, messages[i].content);
-        int tail = snprintf(body + pos, sizeof(body) - pos, "\"}");
-        if (tail < 0 || (size_t)tail >= sizeof(body) - pos) return ESP_ERR_INVALID_SIZE;
+        pos += chat_json_escape(body + pos, body_cap - pos, messages[i].content);
+        int tail = snprintf(body + pos, body_cap - pos, "\"}");
+        if (tail < 0 || (size_t)tail >= body_cap - pos) { free(body); free(response); return ESP_ERR_INVALID_SIZE; }
         pos += (size_t)tail;
     }
-    int last = snprintf(body + pos, sizeof(body) - pos, "]}");
-    if (last < 0 || (size_t)last >= sizeof(body) - pos) return ESP_ERR_INVALID_SIZE;
+    int last = snprintf(body + pos, body_cap - pos, "]}");
+    if (last < 0 || (size_t)last >= body_cap - pos) { free(body); free(response); return ESP_ERR_INVALID_SIZE; }
     pos += (size_t)last;
 
-    char response[2048];
-    chat_http_response_t resp = { .data = response, .capacity = sizeof(response) };
+    chat_http_response_t resp = { .data = response, .capacity = CHAT_HTTP_RESPONSE_MAX };
     const esp_http_client_config_t config = {
         .url = url,
         .method = HTTP_METHOD_POST,
@@ -331,7 +370,7 @@ static esp_err_t chat_ask(const char *url, const char *bearer, const char *devic
         .user_data = &resp,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) return ESP_ERR_NO_MEM;
+    if (!client) { free(body); free(response); return ESP_ERR_NO_MEM; }
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_header(client, "Authorization", bearer);
     esp_http_client_set_header(client, "X-Device-Id", device_id);
@@ -339,16 +378,24 @@ static esp_err_t chat_ask(const char *url, const char *bearer, const char *devic
     esp_err_t err = esp_http_client_perform(client);
     int status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
-    if (err != ESP_OK || status < 200 || status >= 300 || resp.overflow) return ESP_ERR_INVALID_RESPONSE;
+    if (err != ESP_OK || status < 200 || status >= 300 || resp.overflow) {
+        free(body);
+        free(response);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
 
     cJSON *root = cJSON_Parse(resp.data);
     const char *text = root ? cJSON_GetStringValue(cJSON_GetObjectItem(root, "reply")) : NULL;
     if (!text) {
         cJSON_Delete(root);
+        free(body);
+        free(response);
         return ESP_ERR_INVALID_RESPONSE;
     }
     strlcpy(reply, text, reply_cap);
     cJSON_Delete(root);
+    free(body);
+    free(response);
     return ESP_OK;
 }
 
@@ -402,14 +449,17 @@ static esp_err_t chat_play_mp3_stream(void)
     }
     bsp_audio_set_volume(app_settings_get_volume_percent());
     static int16_t pcm[1152 * 2];
-    uint8_t buf[8192];
+    uint8_t *buf = malloc(CHAT_MP3_READBUF_MAX);  /* transient heap：不撑任务栈也不常驻堆 */
+    if (!buf) return ESP_ERR_NO_MEM;
+    esp_err_t result = ESP_OK;
+    const size_t buf_cap = CHAT_MP3_READBUF_MAX;
     size_t buf_len = 0;
     size_t flash_off = 0;
     bool format_set = false;
 
     while (true) {
-        if (buf_len < sizeof(buf) && flash_off < s_mp3_len) {
-            size_t want = sizeof(buf) - buf_len;
+        if (buf_len < buf_cap && flash_off < s_mp3_len) {
+            size_t want = buf_cap - buf_len;
             if (want > s_mp3_len - flash_off) want = s_mp3_len - flash_off;
             if (esp_partition_read(s_store, CHAT_MP3_OFFSET + flash_off, buf + buf_len, want) != ESP_OK) {
                 break;
@@ -434,7 +484,8 @@ static esp_err_t chat_play_mp3_stream(void)
             if (!format_set) {
                 uint8_t channels = info.nChans > 1 ? 2 : 1;
                 if (bsp_audio_set_format((uint32_t)info.samprate, 16, channels) != ESP_OK) {
-                    return ESP_FAIL;
+                    result = ESP_FAIL;
+                    break;
                 }
                 format_set = true;
             }
@@ -454,7 +505,8 @@ static esp_err_t chat_play_mp3_stream(void)
             }
         }
     }
-    return ESP_OK;
+    free(buf);
+    return result;
 }
 
 static void chat_push_history(const char *role, const char *content)
@@ -536,6 +588,13 @@ static void chat_task(void *arg)
     for (;;) {
         chat_state_t st = s_state;
         if (st == CHAT_IDLE) {
+            /* 每 ~2s 打印一次任务栈高水位，便于验证栈大小是否足够。 */
+            static uint32_t idle_counter;
+            if ((++idle_counter % 40) == 0) {
+                ESP_LOGI(TAG, "stack high-water=%lu bytes (free heap=%lu)",
+                         (unsigned long)uxTaskGetStackHighWaterMark(NULL),
+                         (unsigned long)esp_get_free_heap_size());
+            }
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
@@ -709,7 +768,10 @@ void demo_chat_enter(void)
     s_state = CHAT_IDLE;
     s_stop_record = false;
     if (!s_task) {
-        if (xTaskCreate(chat_task, "demo_chat", 8192, NULL, 4, &s_task) != pdPASS) {
+        /* 大缓冲已移出任务栈（transient heap，见文件顶部说明），但实测 chat_task 空闲
+         * 循环也要 ~3.3KB 栈（含 LVGL/日志调用帧），故给足 4096 字节。系统堆此刻已有
+         * ~33KB 空闲，4KB 栈分配可稳定成功。 */
+        if (xTaskCreate(chat_task, "demo_chat", 4096, NULL, 4, &s_task) != pdPASS) {
             ESP_LOGE(TAG, "任务创建失败");
         }
     }

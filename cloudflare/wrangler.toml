@@ -11,6 +11,9 @@ AI_BASE_URL = "https://grok.yanyun.asia/v1"
 AI_MODEL = "grok-chat-fast"
 # ASR recognition language (ISO-639-1); Whisper defaults to Chinese here.
 AI_ASR_LANGUAGE = "zh"
+# Voice-assistant system prompt preset. Override here or via an env var; leave
+# empty to use the built-in concise default in src/voice.ts (AI_SYSTEM_PROMPT).
+AI_SYSTEM_PROMPT = "你是一个内置在智能语音护照设备里的中文语音助手，名字叫「跃云」。请用中文回答，语气简洁、可靠、略带温度。回答尽量简洁但完整；除非用户明确要求，否则不要使用标题、列表、Markdown 或换行。若用户询问设备状态、时间或出行信息，给出清楚直接的回答；"
 # TTS: Edge TTS proxy Worker (OpenAI-compatible /v1/audio/speech).
 # TTS_API_KEY must be set as a secret, shared with the edgetts-proxy Worker.
 TTS_BASE_URL = "https://tts.yanyun.asia/v1"

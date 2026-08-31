@@ -65,6 +65,11 @@ body {
 .sendbtn:disabled, .micbtn:disabled { opacity:0.5; cursor:not-allowed; }
 .speakbtn { background:none; border:1px solid var(--border); color:var(--muted); border-radius:999px; padding:0.15rem 0.6rem; font-size:0.75rem; cursor:pointer; margin-top:0.4rem; }
 .speakbtn:disabled { opacity:0.4; cursor:not-allowed; }
+.speakbtn.playing { color:#22d3ee; border-color:rgba(34,211,238,0.45); }
+.speakbtn.paused { color:#fbbf24; border-color:rgba(251,191,36,0.45); }
+.stopbtn { background:none; border:1px solid var(--border); color:var(--muted); border-radius:999px; padding:0.25rem 0.7rem; font-size:0.75rem; cursor:pointer; }
+.stopbtn:hover { color:#f87171; border-color:rgba(248,113,113,0.5); }
+.stopbtn[hidden] { display:none; }
 .hint { text-align:center; color:var(--muted); font-size:0.75rem; padding:0.4rem 1rem 0.8rem; }
 @media (max-width:560px){ .bubble{max-width:90%;} }
 `;
@@ -82,6 +87,7 @@ function voicePage(): Response {
 <div class="topbar">
     <div class="brand">🎙️ <span>Kiro Voice</span></div>
     <button class="status" id="ttsToggle" title="自动朗读 AI 回复">🔊 自动朗读</button>
+    <button class="stopbtn" id="stopBtn" title="停止朗读" hidden>⏹ 停止</button>
     <div class="status" id="statusPill">检测中…</div>
 </div>
 <div class="chat" id="chat">
@@ -108,12 +114,33 @@ function voicePage(): Response {
     let stopTimer = null;
     let busy = false;
     let autoplay = true;
+    // Playback state: the active Audio and the speak-button it is bound to.
+    let currentAudio = null;
+    let currentBtn = null;
 
     const ttsToggle = document.getElementById("ttsToggle");
+    const stopBtn = document.getElementById("stopBtn");
     ttsToggle.addEventListener("click", () => {
         autoplay = !autoplay;
         ttsToggle.textContent = autoplay ? "🔊 自动朗读" : "🔇 已静音";
     });
+
+    // 停止并重置当前朗读（无论播放中还是暂停）。幂等：无播放时直接返回。
+    function stopPlayback() {
+        if (currentAudio) {
+            currentAudio.pause();
+            currentAudio.currentTime = 0;
+            currentAudio = null;
+        }
+        if (currentBtn) {
+            currentBtn.textContent = "🔊";
+            currentBtn.classList.remove("playing", "paused");
+            currentBtn.title = "朗读";
+            currentBtn = null;
+        }
+        stopBtn.hidden = true;
+    }
+    stopBtn.addEventListener("click", stopPlayback);
 
     function appendBubble(text, kind) {
         const div = document.createElement("div");
@@ -193,7 +220,28 @@ function voicePage(): Response {
         }
     }
 
-    async function speak(text) {
+    // 朗读给定文本。btn 为绑定到该气泡上的朗读按钮，用于播放/暂停切换与状态展示。
+    // 再次点击同一按钮会在播放/暂停间切换；点击其它气泡或「停止」按钮会停止当前朗读。
+    async function speak(text, btn) {
+        // 同一按钮再次点击 → 播放/暂停切换。
+        if (currentAudio && currentBtn === btn) {
+            if (currentAudio.paused) {
+                currentAudio.play().catch(stopPlayback);
+                btn.textContent = "⏸";
+                btn.classList.remove("paused");
+                btn.classList.add("playing");
+                btn.title = "暂停";
+            } else {
+                currentAudio.pause();
+                btn.textContent = "▶";
+                btn.classList.remove("playing");
+                btn.classList.add("paused");
+                btn.title = "继续播放";
+            }
+            return;
+        }
+        // 切换到新音频：停掉上一段，再取新音频。
+        stopPlayback();
         try {
             const data = await api("/v1/voice/tts", {
                 method: "POST",
@@ -201,7 +249,16 @@ function voicePage(): Response {
                 body: JSON.stringify({ text: text })
             });
             const audio = new Audio(data.audio);
-            audio.play().catch(() => {});
+            currentAudio = audio;
+            currentBtn = btn;
+            btn.textContent = "⏸";
+            btn.classList.add("playing");
+            btn.classList.remove("paused");
+            btn.title = "暂停";
+            stopBtn.hidden = false;
+            audio.onended = stopPlayback;
+            audio.onerror = () => { stopPlayback(); appendBubble("朗读失败", "system"); };
+            audio.play().catch(stopPlayback);
         } catch (err) {
             appendBubble("朗读失败: " + err.message, "system");
         }
@@ -213,7 +270,7 @@ function voicePage(): Response {
         btn.className = "speakbtn";
         btn.textContent = "🔊";
         btn.title = "朗读";
-        btn.onclick = () => speak(text);
+        btn.onclick = () => speak(text, btn);
         div.appendChild(btn);
         return div;
     }
@@ -227,9 +284,9 @@ function voicePage(): Response {
                 body: JSON.stringify({ messages: history.slice(-12) })
             });
             loading.remove();
-            appendAiBubble(data.reply);
+            const div = appendAiBubble(data.reply);
             history.push({ role: "assistant", content: data.reply });
-            if (autoplay) speak(data.reply);
+            if (autoplay) speak(data.reply, div.querySelector("button"));
         } catch (err) {
             loading.remove();
             appendBubble("AI 调用失败: " + err.message, "system");
@@ -343,6 +400,9 @@ function validateMessages(value: unknown): ChatMessage[] | null {
 
 const AI_DEFAULT_BASE_URL = "https://grok.yanyun.asia/v1";
 const AI_DEFAULT_MODEL = "grok-chat-fast";
+// Built-in voice-assistant system prompt, used when AI_SYSTEM_PROMPT is not set.
+const AI_DEFAULT_SYSTEM_PROMPT =
+    "你是一个内置在智能语音护照设备里的中文语音助手，名字叫「跃云」。请用中文回答，语气简洁、可靠、略带温度。回答控制在 3 句话以内，适合在设备的窄屏上显示；除非用户明确要求，否则不要使用标题、列表、Markdown 或换行。若用户询问设备状态、时间或出行信息，给出清楚直接的回答；涉及安全或敏感话题时，给出审慎、负责的建议。";
 const TTS_MAX_TEXT = 800;
 // Edge TTS proxy Worker (OpenAI-compatible /v1/audio/speech) on tts.yanyun.asia;
 // it handles the Edge WebSocket handshake server-side, so plain HTTPS fetch works.
@@ -395,7 +455,7 @@ async function aiChat(env: Env, messages: ChatMessage[]): Promise<string> {
     const baseUrl = (env.AI_BASE_URL || AI_DEFAULT_BASE_URL).replace(/\/+$/u, "");
     const model = env.AI_MODEL || env.GROK_MODEL || AI_DEFAULT_MODEL;
     const payload: ChatMessage[] = [
-        { role: "system", content: "你是一个简洁、可靠的语音助手。默认用中文回答，除非用户要求其他语言。回答尽量简短（3 句话以内），适合在设备屏幕上显示。" },
+        { role: "system", content: env.AI_SYSTEM_PROMPT || AI_DEFAULT_SYSTEM_PROMPT },
         ...messages,
     ];
     let res: Response;
@@ -468,6 +528,7 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
             const text = typeof body?.text === "string" ? body.text.trim() : "";
             if (!text || text.length > TTS_MAX_TEXT) return json({ error: "invalid text" }, 400);
             let audio: Uint8Array;
+            const t0 = Date.now();
             try {
                 audio = await ttsEdge(env, text);
             } catch (err) {
@@ -476,6 +537,7 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
                 console.error("Edge TTS failed", detail);
                 throw new VoiceError(`TTS 服务暂不可用: ${detail.slice(0, 120)}`, 503);
             }
+            console.log(`[voice latency] tts(synthesis): ${Date.now() - t0}ms, chars=${text.length}`);
             // 固件 Chat 用 Accept: audio/mpeg 直接拿 MP3 字节流，避免 base64 大缓冲。
             if (request.headers.get("Accept")?.includes("audio/mpeg")) {
                 return new Response(audio, {
@@ -489,7 +551,9 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
             const body = await request.json<{ messages?: unknown }>().catch(() => null);
             const messages = validateMessages(body?.messages);
             if (!messages) return json({ error: "invalid messages" }, 400);
+            const t0 = Date.now();
             const reply = await aiChat(env, messages);
+            console.log(`[voice latency] chat: ${Date.now() - t0}ms`);
             return json({ ok: true, reply });
         }
 
