@@ -1,0 +1,32 @@
+cloudflare/wrangler.toml
+  s_a1631a2c780f8e::t_1bb4a604a351c9 10-11
+  s_a1631a2c780f8e::t_251ea9c2c2ca6f 14-17
+cloudflare/src/voice.ts
+  s_a1631a2c780f8e::t_bbebc22559edae 3-4,89,341-344,355-357,359-378,380-382,441-443,466,468-471,473
+  s_a1631a2c780f8e::t_d0704c91761d15 338-339
+cloudflare/src/env.ts
+  s_a1631a2c780f8e::t_19bea7511da550 20-23
+.gitignore
+  h_202830773be77d 21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "a88a0bf7f5db1c4f08980d4bd73cb2192fd306b5",
+  "prompts": {},
+  "humans": {
+    "h_202830773be77d": {
+      "author": "YanYunNNX <YanYunNNX@163.com>"
+    }
+  },
+  "sessions": {
+    "s_a1631a2c780f8e": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_huyeqgbwxscf",
+        "model": "auto(free)"
+      },
+      "human_author": "YanYunNNX <YanYunNNX@163.com>"
+    }
+  }
+}
