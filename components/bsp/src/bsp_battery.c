@@ -55,59 +55,55 @@ esp_err_t bsp_battery_init(void) {
     }
     ESP_LOGI(TAG, "检测到 CW2017 VERSION=0x%02X", ver);
 
-    // 检查芯片当前是否已经在正常运行
     uint8_t mode = 0;
-    bool need_restart = true;
-    if (cw_read(CW_REG_MODE, &mode, 1) == 0 && mode == CW_MODE_NORMAL) {
-        uint8_t soc_raw[2] = {0};
-        if (cw_read(CW_REG_SOC_H, soc_raw, 2) == 0 && soc_raw[0] > 0 && soc_raw[0] <= 100) {
-            need_restart = false;
-            ESP_LOGI(TAG, "CW2017 已处于正常工作态 (SOC=%d%%), 跳过复位", soc_raw[0]);
-        }
-    }
+    cw_read(CW_REG_MODE, &mode, 1);
+    ESP_LOGI(TAG, "CW2017 当前 MODE=0x%02X", mode);
 
-    if (need_restart) {
-        // CW2017 上电默认进入睡眠态。必须完整执行官方的 0x30 -> 0x00
-        // 模式切换，单独写 0x00 无法可靠唤醒经历过掉电的电量计。
-        // 保持芯片内置 Li-Poly profile，不写 UFG、0x0A 或自定义 profile，避免扰动算法状态。
-        if (cw_write(CW_REG_MODE, CW_MODE_RESTART) != 0 ||
-            cw_write(CW_REG_MODE, CW_MODE_NORMAL) != 0) {
+    // 若不在正常工作态 (0x00) 或 SOC 处于未就绪态 (0xFF)，执行官方唤醒时序
+    uint8_t soc_test[2] = {0xFF, 0xFF};
+    cw_read(CW_REG_SOC_H, soc_test, 2);
+
+    if (mode != CW_MODE_NORMAL || soc_test[0] > 100) {
+        ESP_LOGI(TAG, "CW2017 处于休眠或未就绪态 (mode=0x%02X, soc_raw=0x%02X), 执行唤醒...", mode, soc_test[0]);
+        if (cw_write(CW_REG_MODE, CW_MODE_RESTART) != 0) {
+            ESP_LOGW(TAG, "CW2017 写入 RESTART 警告");
+        }
+        vTaskDelay(pdMS_TO_TICKS(30));
+        if (cw_write(CW_REG_MODE, CW_MODE_NORMAL) != 0) {
             ESP_LOGE(TAG, "CW2017 模式唤醒失败");
             i2c_master_bus_rm_device(s_dev);
             s_dev = NULL;
             return ESP_FAIL;
         }
-
-        // 短暂轮询等待首次采样完成(最多等 400ms，每 40ms 检查一次)
-        for (int i = 0; i < 10; i++) {
-            vTaskDelay(pdMS_TO_TICKS(40));
-            uint8_t soc_raw[2] = {0};
-            if (cw_read(CW_REG_SOC_H, soc_raw, 2) == 0 && soc_raw[0] > 0 && soc_raw[0] <= 100) {
-                break;
-            }
-        }
-        ESP_LOGI(TAG, "CW2017 已从上电睡眠态切换至正常工作态");
     }
+
+    // 等待首次采样完成(最多等 500ms,每 50ms 检查一次)
+    for (int i = 0; i < 10; i++) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+        uint8_t soc_raw[2] = {0xFF, 0xFF};
+        if (cw_read(CW_REG_SOC_H, soc_raw, 2) == 0 && soc_raw[0] <= 100) {
+            break;
+        }
+    }
+    ESP_LOGI(TAG, "CW2017 就绪, 当前 SOC=%d%%, 电压=%dmV", bsp_battery_soc(), bsp_battery_mv());
     return ESP_OK;
 }
 
 int bsp_battery_soc(void) {
+    if (!s_dev) {
+        if (bsp_battery_init() != ESP_OK) return -1;
+    }
     uint8_t b[2] = { 0 };
     if (cw_read(CW_REG_SOC_H, b, 2) != 0) return -1;
     int soc = b[0];                       // 高字节即整数百分比
     if (soc > 100) return -1;             // 芯片未就绪时可能读到 0xFF
-
-    // 若读数为 0% 但当前电压正常(>3400mV)，说明 FastCali 初次计算尚未就绪
-    if (soc == 0) {
-        int mv = bsp_battery_mv();
-        if (mv > 3400) {
-            return -1;
-        }
-    }
     return soc;
 }
 
 int bsp_battery_mv(void) {
+    if (!s_dev) {
+        if (bsp_battery_init() != ESP_OK) return -1;
+    }
     uint8_t b[2] = { 0 };
     if (cw_read(CW_REG_VCELL_H, b, 2) != 0) return -1;
     uint32_t raw = ((uint32_t)b[0] << 8 | b[1]) & 0x3FFF;   // 14bit

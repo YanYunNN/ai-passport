@@ -30,9 +30,13 @@
 static const char *TAG = "demo_chat";
 
 #define CHAT_SAMPLE_RATE 16000
-/* 录音上限 4 秒 = 128KB PCM；flash 暂存区 0..CHAT_REC_MAX_BYTES。 */
+/* 录音上限 4 秒；flash 暂存区 0..CHAT_REC_MAX_BYTES。
+ * 注意：esp_partition_erase_range 要求 size 必须是 SPI_FLASH_SEC_SIZE(4096) 的整数倍，
+ * 否则直接返回 ESP_ERR_INVALID_SIZE。按 16k*2B/sample 算 4s=128000B，并非 4096 倍数，
+ * 会把整段 flash 擦除（录音/MP3 区）map回 ESP_ERR_INVALID_SIZE 而报"擦除失败"。
+ * 因此这里把字节数向上取整对齐到 4096（131072B ≈ 4.096s），录音循环仍用实际采样字节。 */
 #define CHAT_REC_MAX_SEC 4
-#define CHAT_REC_MAX_BYTES (CHAT_SAMPLE_RATE * 2 * CHAT_REC_MAX_SEC)
+#define CHAT_REC_MAX_BYTES 131072  /* 16kHz*16bit*4s≈128000B，向上对齐到 4096 倍数 131072 */
 /* TTS MP3 上限 160KB（≈1 分钟语音）；flash 暂存区从 CHAT_MP3_OFFSET 起。 */
 #define CHAT_MP3_MAX_BYTES (160 * 1024)
 #define CHAT_MP3_OFFSET CHAT_REC_MAX_BYTES
@@ -303,13 +307,20 @@ static esp_err_t chat_asr(const char *url, const char *bearer, const char *devic
             int status = esp_http_client_get_status_code(client);
             char drain[128];
             while (esp_http_client_read(client, drain, sizeof(drain)) > 0) {}
+            ESP_LOGI(TAG, "ASR http status=%d err=%d resp_len=%u ovf=%d",
+                     status, (int)err, (unsigned)resp.length, (int)resp.overflow);
             if (status < 200 || status >= 300 || resp.overflow) {
                 err = ESP_ERR_INVALID_RESPONSE;
             }
         }
     }
+    ESP_LOGI(TAG, "ASR open err=%d (errno) rec_len=%u free=%lu min=%lu",
+             (int)err, (unsigned)pcm_bytes,
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)esp_get_minimum_free_heap_size());
     esp_http_client_cleanup(client);
     if (err != ESP_OK) {
+        ESP_LOGE(TAG, "ASR 失败 err=%d", (int)err);
         free(response);
         free(filebuf);
         return err;
@@ -317,6 +328,7 @@ static esp_err_t chat_asr(const char *url, const char *bearer, const char *devic
 
     cJSON *root = cJSON_Parse(resp.data);
     const char *text = root ? cJSON_GetStringValue(cJSON_GetObjectItem(root, "text")) : NULL;
+    ESP_LOGI(TAG, "ASR resp=%.160s text=%s", resp.data, text ? text : "(null)");
     if (!text) {
         cJSON_Delete(root);
         free(response);
@@ -606,7 +618,12 @@ static void chat_task(void *arg)
             }
             /* 预擦除录音区（~2s），录音期间不再写/擦 flash，保证采样不丢。 */
             chat_set_status("准备录音…");
-            if (chat_store_erase(0, CHAT_REC_MAX_BYTES) != ESP_OK) {
+            esp_err_t erase_err = chat_store_erase(0, CHAT_REC_MAX_BYTES);
+            ESP_LOGI(TAG, "erase(off=%u,sz=%u) -> err=%d free=%lu min=%lu",
+                     (unsigned)0, (unsigned)(CHAT_REC_MAX_BYTES), (int)erase_err,
+                     (unsigned long)esp_get_free_heap_size(),
+                     (unsigned long)esp_get_minimum_free_heap_size());
+            if (erase_err != ESP_OK) {
                 chat_reset_to_idle("存储擦除失败");
                 continue;
             }
@@ -768,10 +785,10 @@ void demo_chat_enter(void)
     s_state = CHAT_IDLE;
     s_stop_record = false;
     if (!s_task) {
-        /* 大缓冲已移出任务栈（transient heap，见文件顶部说明），但实测 chat_task 空闲
-         * 循环也要 ~3.3KB 栈（含 LVGL/日志调用帧），故给足 4096 字节。系统堆此刻已有
-         * ~33KB 空闲，4KB 栈分配可稳定成功。 */
-        if (xTaskCreate(chat_task, "demo_chat", 4096, NULL, 4, &s_task) != pdPASS) {
+        /* 大缓冲已移出任务栈（transient heap），但 HTTPS ASR/TLS 链路深，实测 ASR 阶段
+         * 峰值栈 ~6-7KB，故给 8192 字节。创建只分配一个空栈体（不再是 8KB 里塞 14KB
+         * 缓冲），在 ~7KB 空闲堆下也能稳定创建其栈。 */
+        if (xTaskCreate(chat_task, "demo_chat", 8192, NULL, 4, &s_task) != pdPASS) {
             ESP_LOGE(TAG, "任务创建失败");
         }
     }

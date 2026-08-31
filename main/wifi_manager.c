@@ -18,6 +18,14 @@
 #define WIFI_PORTAL_MAX_FORM_LENGTH 320
 #define WIFI_CONNECT_RETRY_LIMIT 4
 
+/* 802.11 disconnect reasons that mean the credentials / EAP exchange were
+ * rejected rather than the AP simply being out of range. Retrying against the
+ * same network with the same bad credentials just burns time and re-triggers
+ * the RADIUS lockout counter, so these fail fast and fall through to scanning
+ * for another saved network. */
+#define WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT 15
+#define WIFI_REASON_802_1X_AUTH_FAILED     202 /* IEEE8021X_AUTH_FAILED */
+
 static const char *TAG = "wifi_manager";
 
 static bool s_initialized;
@@ -173,9 +181,13 @@ static void fail_connection(const char *operation, esp_err_t result)
 /* Keep the WPA2-Enterprise (EAP) state in sync with the station config that is
  * about to be used. The Wi-Fi driver only persists the plain station config to
  * flash, never the EAP credentials, so every connect path re-derives them from
- * the stored profile matching the configured SSID. Company networks that ask
- * for a login name use PEAP/MSCHAPv2; the stored identity is applied to both
- * the outer EAP identity and the inner MSCHAPv2 username. */
+ * the stored profile matching the configured SSID.
+ *
+ * Two outer methods are supported, both "username + password":
+ *  - PEAP (default): outer identity + inner MSCHAPv2 username come from the
+ *    stored login name (some RADIUS servers require them to be equal).
+ *  - TTLS: the stored login name is the outer identity; inner MSCHAPv2 is the
+ *    default phase-2 and also derives its username from the same field. */
 static esp_err_t sync_eap_mode(void)
 {
     wifi_config_t current = { 0 };
@@ -186,17 +198,37 @@ static esp_err_t sync_eap_mode(void)
         wifi_profile_t profile;
         if (wifi_nvs_load_profile((const char *)current.sta.ssid, &profile) == ESP_OK &&
             profile.enterprise) {
+            uint8_t method = profile.eap_method;
+            if (method > 1) method = WIFI_EAP_PEAP; /* guard old/corrupt values */
+
+            /* Login identity goes to the outer EAP identity for both methods. */
             err = esp_eap_client_set_identity((const unsigned char *)profile.identity,
                                               strlen(profile.identity));
-            if (err == ESP_OK) {
-                err = esp_eap_client_set_username((const unsigned char *)profile.identity,
-                                                  strlen(profile.identity));
+            if (method == WIFI_EAP_TTLS) {
+                /* Inner phase-2 is MSCHAPv2; password reuses the EAP password. */
+                if (err == ESP_OK) {
+                    err = esp_eap_client_set_username((const unsigned char *)profile.identity,
+                                                      strlen(profile.identity));
+                }
+                if (err == ESP_OK) {
+                    err = esp_eap_client_set_ttls_phase2_method(
+                        ESP_EAP_TTLS_PHASE2_MSCHAPV2);
+                }
+                if (err == ESP_OK) err = esp_eap_client_set_eap_methods(ESP_EAP_TYPE_TTLS);
+                ESP_LOGI(TAG, "企业网络 %s 使用 EAP-TTLS", profile.ssid);
+            } else {
+                /* PEAP: inner phase-2 defaults to MSCHAPv2. */
+                if (err == ESP_OK) {
+                    err = esp_eap_client_set_username((const unsigned char *)profile.identity,
+                                                      strlen(profile.identity));
+                }
+                if (err == ESP_OK) err = esp_eap_client_set_eap_methods(ESP_EAP_TYPE_PEAP);
+                ESP_LOGI(TAG, "企业网络 %s 使用 EAP-PEAP", profile.ssid);
             }
             if (err == ESP_OK) {
                 err = esp_eap_client_set_password((const unsigned char *)profile.password,
                                                   strlen(profile.password));
             }
-            if (err == ESP_OK) err = esp_eap_client_set_eap_methods(ESP_EAP_TYPE_PEAP);
             if (err == ESP_OK) err = esp_wifi_sta_enterprise_enable();
             if (err != ESP_OK) {
                 ESP_LOGW(TAG, "配置企业 Wi-Fi 认证失败: %s", esp_err_to_name(err));
@@ -365,6 +397,11 @@ static esp_err_t portal_get_handler(httpd_req_t *request)
         "<div id=ent>"
         "<label for=username>Username</label>"
         "<input id=username name=username maxlength=64 placeholder='e.g. zhangsan@corp.com'>"
+        "<label for=eap>Enterprise security (EAP)</label>"
+        "<select id=eap name=eap>"
+        "<option value=peap>EAP-PEAP (recommended)</option>"
+        "<option value=ttls>EAP-TTLS</option>"
+        "</select>"
         "</div>"
         "<label for=password>Password</label>"
         "<input id=password name=password type=password minlength=8 maxlength=63 autocomplete=current-password placeholder='Wi-Fi password' required>"
@@ -404,9 +441,17 @@ static esp_err_t portal_configure_handler(httpd_req_t *request)
     char username[65];
     char password[64];
     char auth[4];
+    char eap[5];
+    uint8_t eap_method = WIFI_EAP_PEAP;
     uint32_t generation;
     bool enterprise = form_value(form, "auth", auth, sizeof(auth)) &&
                       strcmp(auth, "ent") == 0;
+    if (enterprise) {
+        if (form_value(form, "eap", eap, sizeof(eap)) &&
+            strcmp(eap, "ttls") == 0) {
+            eap_method = WIFI_EAP_TTLS;
+        }
+    }
     if (!form_value(form, "ssid", ssid, sizeof(ssid)) ||
         !form_value(form, "password", password, sizeof(password)) ||
         (enterprise && !form_value(form, "username", username, sizeof(username))) ||
@@ -427,6 +472,7 @@ static esp_err_t portal_configure_handler(httpd_req_t *request)
     snprintf(profile.password, sizeof(profile.password), "%s", password);
     if (enterprise) {
         profile.enterprise = 1;
+        profile.eap_method = eap_method;
         /* Same precision trick as the SSID above: a full-length username
          * (64 chars) must not trigger the truncation warning. */
         snprintf(profile.identity, sizeof(profile.identity), "%.*s",
@@ -527,40 +573,27 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
          * "AP not found" (201) when diagnosing a corporate network. */
         wifi_event_sta_disconnected_t *disconnected =
             (wifi_event_sta_disconnected_t *)event_data;
-        if (disconnected) {
-            ESP_LOGW(TAG, "STA 断开连接, reason=%d", disconnected->reason);
-        }
-        if (s_state == WIFI_MANAGER_CONNECTING && s_retry_count < WIFI_CONNECT_RETRY_LIMIT) {
-            s_retry_count++;
-            esp_err_t result = esp_wifi_connect();
-            if (result != ESP_OK) fail_connection("重试 Wi-Fi 连接", result);
-        } else if (s_state == WIFI_MANAGER_CONNECTING) {
+        uint8_t reason = disconnected ? disconnected->reason : 0;
+        ESP_LOGW(TAG, "STA 断开连接, reason=%d", reason);
+
+        /* EAP/credential rejections will never succeed by retrying the same
+         * network: fail fast and hand off to the scan so a working network can
+         * be picked up instead of burning the retry budget. */
+        bool auth_failure = (reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
+                             reason == WIFI_REASON_802_1X_AUTH_FAILED);
+
+        if (s_state == WIFI_MANAGER_CONNECTING) {
+            if (auth_failure) {
+                ESP_LOGW(TAG, "企业认证/凭据被拒绝 (reason=%u), 不再重试同网", reason);
+                goto connect_failed;
+            }
+            if (s_retry_count < WIFI_CONNECT_RETRY_LIMIT) {
+                s_retry_count++;
+                esp_err_t result = esp_wifi_connect();
+                if (result != ESP_OK) fail_connection("重试 Wi-Fi 连接", result);
+                return;
+            }
             ESP_LOGW(TAG, "Wi-Fi 连接重试已耗尽");
-            s_state = WIFI_MANAGER_FAILED;
-
-            /* Remember which network just failed so an automatic scan cannot
-             * pick it again (prevents retry loops on wrong credentials). */
-            wifi_config_t current = { 0 };
-            if (esp_wifi_get_config(WIFI_IF_STA, &current) == ESP_OK &&
-                current.sta.ssid[0]) {
-                remember_failed_ssid((const char *)current.sta.ssid);
-            }
-            clear_pending_config();
-
-            /* Fall back to scanning for another stored profile. */
-            if (wifi_nvs_count_profiles() > 0) {
-                taskENTER_CRITICAL(&s_provisioning_lock);
-                bool spawn = !s_rescan_running;
-                if (spawn) s_rescan_running = true;
-                taskEXIT_CRITICAL(&s_provisioning_lock);
-                if (spawn &&
-                    xTaskCreate(wifi_rescan_task, "wifi_rescan", 4096, NULL, 5, NULL) != pdPASS) {
-                    taskENTER_CRITICAL(&s_provisioning_lock);
-                    s_rescan_running = false;
-                    taskEXIT_CRITICAL(&s_provisioning_lock);
-                    ESP_LOGW(TAG, "无法创建 Wi-Fi 自动切换任务");
-                }
-            }
         } else if (s_state == WIFI_MANAGER_CONNECTED) {
             /* Dropped while online (e.g. the device moved to another location):
              * retry from scratch, then fall back to scanning. */
@@ -569,6 +602,37 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
             s_retry_count = 0;
             esp_err_t result = esp_wifi_connect();
             if (result != ESP_OK) fail_connection("恢复 Wi-Fi 连接", result);
+            return;
+        } else {
+            return;
+        }
+
+    connect_failed:
+        s_state = WIFI_MANAGER_FAILED;
+
+        /* Remember which network just failed so an automatic scan cannot
+         * pick it again (prevents retry loops on wrong credentials). */
+        wifi_config_t current = { 0 };
+        if (esp_wifi_get_config(WIFI_IF_STA, &current) == ESP_OK &&
+            current.sta.ssid[0]) {
+            remember_failed_ssid((const char *)current.sta.ssid);
+        }
+        clear_pending_config();
+
+        /* Fall back to scanning for another stored profile unless this was the
+         * network actively selected by the user via Settings. */
+        if (wifi_nvs_count_profiles() > 0) {
+            taskENTER_CRITICAL(&s_provisioning_lock);
+            bool spawn = !s_rescan_running;
+            if (spawn) s_rescan_running = true;
+            taskEXIT_CRITICAL(&s_provisioning_lock);
+            if (spawn &&
+                xTaskCreate(wifi_rescan_task, "wifi_rescan", 4096, NULL, 5, NULL) != pdPASS) {
+                taskENTER_CRITICAL(&s_provisioning_lock);
+                s_rescan_running = false;
+                taskEXIT_CRITICAL(&s_provisioning_lock);
+                ESP_LOGW(TAG, "无法创建 Wi-Fi 自动切换任务");
+            }
         }
     }
 }

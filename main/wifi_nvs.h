@@ -7,17 +7,29 @@
 // Maximum number of stored Wi-Fi profiles (device memory limitation).
 #define MAX_WIFI_PROFILES 5
 
+// Inner/authentication flavour of a WPA2-Enterprise profile. The value is
+// stored in wifi_profile_t.eap_method; the field defaults to PEAP so profiles
+// written by older firmware (field zeroed) keep their former behaviour.
+// Both methods here are "username + password" and share the same credential
+// fields; only the outer EAP handshake differs. EAP-TLS is not selectable
+// because it requires a client certificate, which the provisioning flow does
+// not collect.
+#define WIFI_EAP_PEAP 0
+#define WIFI_EAP_TTLS 1
+
 // A saved network credential pair. priority 0 = most preferred.
-// enterprise != 0 means WPA2-Enterprise (PEAP/MSCHAPv2): password holds the
-// EAP password and identity the login name (applied to both the outer EAP
-// identity and the inner MSCHAPv2 username). For WPA2-PSK networks identity
-// stays empty.
+// enterprise != 0 means WPA2-Enterprise: password holds the EAP password,
+// identity the login name and eap_method selects PEAP or TTLS.
+// For PEAP the identity is applied to both the outer EAP identity and the
+// inner MSCHAPv2 username; for TTLS the inner phase-2 username also uses it.
+// For WPA2-PSK networks identity stays empty and eap_method is irrelevant.
 typedef struct {
     char ssid[32];
     char password[64];
     char identity[64];
     uint8_t priority;
     uint8_t enterprise;
+    uint8_t eap_method;
 } wifi_profile_t;
 
 // Namespace used for storing Wi-Fi profiles.

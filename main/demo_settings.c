@@ -397,7 +397,7 @@ static void networks_refresh(void)
             if (is_connected && strcmp(connected, profiles[i].ssid) == 0) {
                 value = "ONLINE";
             } else if (profiles[i].enterprise) {
-                value = "EAP";
+                value = profiles[i].eap_method == WIFI_EAP_TTLS ? "TTLS" : "PEAP";
             } else {
                 value = "";
             }

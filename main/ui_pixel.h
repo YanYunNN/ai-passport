@@ -20,4 +20,5 @@ lv_obj_t *ui_pixel_label(lv_obj_t *parent, const char *text,
                          const lv_font_t *font, uint32_t color);
 lv_obj_t *ui_pixel_mascot_create(lv_obj_t *parent, int x, int y);
 void ui_pixel_mascot_jump(lv_obj_t *mascot);
+void ui_pixel_mascot_jump_once(lv_obj_t *mascot);
 void ui_pixel_set_selected(lv_obj_t *panel, bool selected, bool enabled);

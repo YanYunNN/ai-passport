@@ -141,6 +141,28 @@ void ui_pixel_mascot_jump(lv_obj_t *mascot)
     lv_anim_start(&anim);
 }
 
+/*
+ * 一次性“提醒”跳跃：把当前 y 视为基准，跳到上方 5px 再落回。
+ * 与 ui_pixel_mascot_jump 的关键区别是它从动画起点稳定回到调用时的 y，
+ * 且不会与上次动画叠加；设计上每当触发需求才调用一次（见 demo_kiro_passport.c
+ * 的边沿触发逻辑），避免“持续向上跳动后消失”的漂移问题。
+ */
+void ui_pixel_mascot_jump_once(lv_obj_t *mascot)
+{
+    if (!mascot) return;
+    int base = lv_obj_get_y(mascot); /* 调用点既作为跳跃起点也作为落点 */
+    lv_anim_delete(mascot, jump_y);
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, mascot);
+    lv_anim_set_exec_cb(&anim, jump_y);
+    lv_anim_set_values(&anim, base, base - 5);
+    lv_anim_set_duration(&anim, 110);
+    lv_anim_set_playback_duration(&anim, 140);
+    lv_anim_set_path_cb(&anim, lv_anim_path_step);
+    lv_anim_start(&anim);
+}
+
 void ui_pixel_set_selected(lv_obj_t *panel, bool selected, bool enabled)
 {
     uint32_t color = !enabled ? 0x78909C : (selected ? UI_YELLOW : UI_PAPER);

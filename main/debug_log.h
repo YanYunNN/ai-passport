@@ -5,8 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define DEBUG_LOG_MAX_LINES 36
-#define DEBUG_LOG_LINE_MAX_LEN 96
+#define DEBUG_LOG_MAX_LINES 24
+#define DEBUG_LOG_LINE_MAX_LEN 80
 
 typedef enum {
     DEBUG_LOG_TYPE_DEVICE = 0,
