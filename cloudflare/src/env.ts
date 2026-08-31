@@ -17,6 +17,10 @@ export interface Env {
     AI_API_KEY?: string;
     AI_MODEL?: string;
     AI_ASR_LANGUAGE?: string;
+    // Edge TTS proxy Worker (OpenAI-compatible /v1/audio/speech on tts.yanyun.asia).
+    // TTS_API_KEY must be set via wrangler secret (shared with the edgetts-proxy Worker).
+    TTS_BASE_URL?: string;
+    TTS_API_KEY?: string;
     TTS_VOICE?: string;
     GROK_API_KEY?: string;
     GROK_MODEL?: string;

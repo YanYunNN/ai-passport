@@ -1,7 +1,7 @@
 // Standalone voice-assistant module: a self-contained web page for recording
 // audio and chatting with an AI (Grok via xAI API), plus the ASR pipeline
-// (Whisper via Cloudflare Workers AI). TTS is designed as a plug-in slot
-// (POST /v1/voice/tts) and is not implemented yet.
+// (Whisper via Cloudflare Workers AI). TTS goes through the Edge TTS proxy
+// Worker on tts.yanyun.asia (OpenAI-compatible POST /v1/audio/speech).
 import { hasBearerSecret, verifyAdminBasicAuth } from "./auth";
 import type { Env } from "./env";
 
@@ -86,7 +86,7 @@ function voicePage(): Response {
     <input class="textinput" id="textInput" placeholder="输入文字，或点麦克风说话…" autocomplete="off">
     <button class="sendbtn" id="sendBtn">发送</button>
 </div>
-<div class="hint">ASR: Whisper Large v3 Turbo (Workers AI) · LLM: OpenAI 兼容网关 · TTS 即将接入</div>
+<div class="hint">ASR: Whisper Large v3 Turbo (Workers AI) · LLM: OpenAI 兼容网关 · TTS: Edge TTS</div>
 <script>
 (function () {
     "use strict";
@@ -335,15 +335,13 @@ function validateMessages(value: unknown): ChatMessage[] | null {
     return messages;
 }
 
-const AI_DEFAULT_BASE_URL = "http://grok.yanyun.asia/v1";
-const AI_DEFAULT_MODEL = "grok-2-latest";
+const AI_DEFAULT_BASE_URL = "https://grok.yanyun.asia/v1";
+const AI_DEFAULT_MODEL = "grok-chat-fast";
 const TTS_MAX_TEXT = 800;
-const GOOGLE_TTS_LANG_DEFAULT = "zh-CN";
-// MeloTTS speaker index on Workers AI (0 = 中文女声). Edge TTS was investigated
-// but its server requires browser headers on the WS upgrade, which the Workers
-// runtime cannot attach (new WebSocket has no header option; DO connect() is
-// unavailable in this workerd version) — so Google TTS is the primary.
-const MELOTTS_VOICE_DEFAULT = 0;
+// Edge TTS proxy Worker (OpenAI-compatible /v1/audio/speech) on tts.yanyun.asia;
+// it handles the Edge WebSocket handshake server-side, so plain HTTPS fetch works.
+const TTS_DEFAULT_BASE_URL = "https://tts.yanyun.asia/v1";
+const TTS_DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural";
 
 function bytesToBase64(bytes: Uint8Array): string {
     let binary = "";
@@ -354,38 +352,34 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /**
- * TTS via Workers AI MeloTTS (same account, free tier, multilingual incl. Chinese).
- * The model's cold instances intermittently fail (~50%), so retry with backoff.
- * Output is a base64 WAV blob returned as-is.
+ * TTS via the Edge TTS proxy Worker (OpenAI-compatible /v1/audio/speech).
+ * Requires TTS_API_KEY (shared secret with the edgetts-proxy Worker).
+ * Returns MP3 bytes.
  */
-async function ttsMelotts(env: Env, text: string): Promise<Uint8Array> {
-    const voice = env.TTS_VOICE ? Number(env.TTS_VOICE) : MELOTTS_VOICE_DEFAULT;
-    let lastError = "unknown";
-    for (let attempt = 0; attempt < 3; attempt++) {
-        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, attempt * 800));
-        try {
-            const result = (await env.AI.run("@cf/myshell-ai/melotts", {
-                prompt: text,
-                voice,
-            } as any)) as { audio?: string };
-            const audioB64 = result.audio;
-            if (typeof audioB64 !== "string" || !audioB64) {
-                lastError = "melotts empty audio";
-                continue;
-            }
-            const binary = atob(audioB64);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-            if (bytes.length < 44) {
-                lastError = "melotts short audio";
-                continue;
-            }
-            return bytes; // already a RIFF/WAV blob
-        } catch (err) {
-            lastError = err instanceof Error ? err.message : String(err);
-        }
+async function ttsEdge(env: Env, text: string): Promise<Uint8Array> {
+    const apiKey = env.TTS_API_KEY;
+    if (!apiKey) throw new VoiceError("TTS_API_KEY 未配置（需与 tts.yanyun.asia 共享密钥）", 503);
+    const baseUrl = (env.TTS_BASE_URL || TTS_DEFAULT_BASE_URL).replace(/\/+$/u, "");
+    const voice = env.TTS_VOICE || TTS_DEFAULT_VOICE;
+    let res: Response;
+    try {
+        res = await fetch(`${baseUrl}/audio/speech`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify({ model: "tts-1", voice, input: text, stream: false }),
+        });
+    } catch (err) {
+        console.error("Edge TTS fetch failed", err);
+        throw new VoiceError("TTS 服务暂不可用", 503);
     }
-    throw new Error(`melotts: ${lastError.slice(0, 160)}`);
+    if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        console.error("Edge TTS error", res.status, detail);
+        throw new VoiceError(`TTS 服务错误 (${res.status})`, 502);
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.length < 1000) throw new VoiceError("TTS 返回音频为空", 502);
+    return bytes;
 }
 
 /** AI chat via an OpenAI-compatible gateway (default http://grok.yanyun.asia/v1). */
@@ -444,8 +438,9 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
                 grok: Boolean(env.AI_API_KEY || env.GROK_API_KEY),
                 model: env.AI_MODEL || env.GROK_MODEL || AI_DEFAULT_MODEL,
                 base_url: env.AI_BASE_URL || AI_DEFAULT_BASE_URL,
-                tts: true,
-                voice: env.TTS_VOICE ? String(env.TTS_VOICE) : String(MELOTTS_VOICE_DEFAULT),
+                tts: Boolean(env.TTS_API_KEY),
+                tts_base_url: env.TTS_BASE_URL || TTS_DEFAULT_BASE_URL,
+                voice: env.TTS_VOICE || TTS_DEFAULT_VOICE,
             });
         }
 
@@ -462,42 +457,20 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
             return json({ ok: true, text });
         }
 
-/** Google Translate TTS: free, plain HTTPS GET, works from the Worker, Chinese supported. */
-async function ttsGoogle(text: string): Promise<Uint8Array> {
-    const url = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${GOOGLE_TTS_LANG_DEFAULT}&q=${encodeURIComponent(text.slice(0, 200))}`;
-    const res = await fetch(url, {
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36" },
-    });
-    if (!res.ok) throw new Error(`google tts HTTP ${res.status}`);
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    if (bytes.length < 1000) throw new Error("google tts short audio");
-    return bytes;
-}
-
         if (request.method === "POST" && url.pathname === "/v1/voice/tts") {
             const body = await request.json<{ text?: string }>().catch(() => null);
             const text = typeof body?.text === "string" ? body.text.trim() : "";
             if (!text || text.length > TTS_MAX_TEXT) return json({ error: "invalid text" }, 400);
             let audio: Uint8Array;
-            let source: string;
-            let ttsNote = "";
             try {
-                audio = await ttsGoogle(text);
-                source = "google";
+                audio = await ttsEdge(env, text);
             } catch (err) {
-                ttsNote = err instanceof Error ? err.message : String(err);
-                console.error("Google TTS failed, falling back to melotts", ttsNote);
-                try {
-                    audio = await ttsMelotts(env, text);
-                    source = "melotts";
-                } catch (err2) {
-                    const aiDetail = err2 instanceof Error ? err2.message : String(err2);
-                    console.error("MeloTTS TTS failed", aiDetail);
-                    throw new VoiceError(`TTS 服务暂不可用: google=${ttsNote.slice(0, 120)}; melotts=${aiDetail.slice(0, 120)}`, 503);
-                }
+                if (err instanceof VoiceError) throw err;
+                const detail = err instanceof Error ? err.message : String(err);
+                console.error("Edge TTS failed", detail);
+                throw new VoiceError(`TTS 服务暂不可用: ${detail.slice(0, 120)}`, 503);
             }
-            const mime = source === "melotts" ? "audio/wav" : "audio/mpeg";
-            return json({ ok: true, source, note: ttsNote || undefined, audio: `data:${mime};base64,${bytesToBase64(audio)}` });
+            return json({ ok: true, source: "edgetts", audio: `data:audio/mpeg;base64,${bytesToBase64(audio)}` });
         }
 
         if (request.method === "POST" && url.pathname === "/v1/voice/chat") {

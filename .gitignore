@@ -18,3 +18,4 @@ cloudflare/worker-configuration.d.ts
 cloudflare/node_modules
 .kiro/passport_config.json
 .kiro_passport.json
+cloudflare/.wrangler
