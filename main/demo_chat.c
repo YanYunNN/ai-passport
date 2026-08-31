@@ -73,6 +73,9 @@ static chat_message_t s_history[CHAT_HISTORY_MAX];
 static size_t s_history_count;
 static char s_transcript[CHAT_AI_TEXT_MAX * 2 + 32];
 static HMP3Decoder s_mp3;
+/* 底部滚动字幕条：TTS 播放时滚动 AI 回复。 */
+static lv_obj_t *s_marquee_bar;
+static lv_obj_t *s_marquee_label;
 
 static void chat_set_status(const char *text)
 {
@@ -85,6 +88,62 @@ static void chat_show_transcript(void)
 {
     if (!bsp_lvgl_lock(500)) return;
     if (s_log) lv_label_set_text(s_log, s_transcript);
+    bsp_lvgl_unlock();
+}
+
+static void chat_marquee_stop_locked(void)
+{
+    if (s_marquee_label) {
+        lv_anim_del(s_marquee_label, NULL);
+        lv_obj_delete(s_marquee_label);
+        s_marquee_label = NULL;
+    }
+}
+
+/* 启动底部字幕条：AI 回复从右向左循环滚动（40px/s），与 TTS 播放同步。 */
+static void chat_marquee_start(const char *text)
+{
+    if (!bsp_lvgl_lock(500)) return;
+    chat_marquee_stop_locked();
+    if (!s_marquee_bar) {
+        s_marquee_bar = lv_obj_create(s_scr);
+        lv_obj_set_pos(s_marquee_bar, 14, 250);
+        lv_obj_set_size(s_marquee_bar, 212, 28);
+        lv_obj_set_style_bg_color(s_marquee_bar, lv_color_hex(UI_SYSTEM_SURFACE), 0);
+        lv_obj_set_style_border_color(s_marquee_bar, lv_color_hex(UI_SYSTEM_BORDER), 0);
+        lv_obj_set_style_border_width(s_marquee_bar, 1, 0);
+        lv_obj_set_style_radius(s_marquee_bar, 4, 0);
+        lv_obj_set_style_pad_all(s_marquee_bar, 0, 0);
+    }
+    s_marquee_label = lv_label_create(s_marquee_bar);
+    lv_label_set_text(s_marquee_label, text);
+    lv_obj_set_style_text_font(s_marquee_label, &ui_font_noto_sc_14, 0);
+    lv_obj_set_style_text_color(s_marquee_label, lv_color_hex(UI_SYSTEM_ACCENT), 0);
+    /* LV_SIZE_CONTENT 自适应文本宽度，避免依赖 LVGL 内部文本测量 API。 */
+    lv_obj_set_width(s_marquee_label, LV_SIZE_CONTENT);
+    lv_obj_update_layout(s_marquee_label);
+    lv_coord_t text_width = lv_obj_get_width(s_marquee_label);
+    const lv_coord_t start_x = 212;
+    const lv_coord_t end_x = -text_width;
+    lv_obj_align(s_marquee_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_x(s_marquee_label, start_x);
+    uint32_t duration_ms = (uint32_t)((start_x - end_x) * 1000u / 40u); /* 40 px/s */
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, s_marquee_label);
+    lv_anim_set_exec_cb(&anim, (lv_anim_exec_xcb_t)lv_obj_set_x);
+    lv_anim_set_values(&anim, start_x, end_x);
+    lv_anim_set_duration(&anim, duration_ms);
+    lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&anim, lv_anim_path_linear);
+    lv_anim_start(&anim);
+    bsp_lvgl_unlock();
+}
+
+static void chat_marquee_stop(void)
+{
+    if (!bsp_lvgl_lock(500)) return;
+    chat_marquee_stop_locked();
     bsp_lvgl_unlock();
 }
 
@@ -496,7 +555,9 @@ static void chat_task(void *arg)
 
         if (st == CHAT_PLAYING) {
             chat_set_status("朗读中… (长按 OK 退出)");
+            chat_marquee_start(reply);
             chat_play_mp3(s_tts_buf, s_mp3_len);
+            chat_marquee_stop();
             bsp_audio_close();
             chat_reset_to_idle("OK: 录音  ·  长按 OK: 退出");
             continue;
@@ -520,7 +581,7 @@ void demo_chat_enter(void)
 
     lv_obj_t *panel = lv_obj_create(s_scr);
     lv_obj_set_pos(panel, 14, 100);
-    lv_obj_set_size(panel, 212, 176);
+    lv_obj_set_size(panel, 212, 140);
     lv_obj_set_style_bg_color(panel, lv_color_hex(UI_SYSTEM_SURFACE), 0);
     lv_obj_set_style_border_color(panel, lv_color_hex(UI_SYSTEM_BORDER), 0);
     lv_obj_set_style_border_width(panel, 1, 0);
@@ -587,6 +648,11 @@ void demo_chat_exit(void)
         s_mp3_len = 0;
     }
     s_history_count = 0;
+    if (s_marquee_bar) {
+        lv_obj_delete(s_marquee_bar);
+        s_marquee_bar = NULL;
+    }
+    s_marquee_label = NULL;
     if (s_scr) {
         lv_obj_delete(s_scr);
         s_scr = NULL;
