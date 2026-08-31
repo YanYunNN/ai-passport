@@ -15,6 +15,7 @@ import { PassportRelay } from "./passport-relay";
 import { isDeviceId, parseApprovalInput, REQUEST_ID_PATTERN, type ApprovalInput } from "./protocol";
 import { handleSimulatorBinProxy, handleSimulatorPresets, simulatorPage } from "./simulator";
 import { renderWallpaperJpeg, weatherCodeLabel } from "./wallpaper";
+import { handleVoice } from "./voice";
 
 export { PassportRelay };
 
@@ -91,6 +92,12 @@ export default {
             }
             if (request.method === "GET" && url.pathname === "/api/simulator/presets") {
                 return handleSimulatorPresets();
+            }
+            if (request.method === "GET" && url.pathname === "/voice") {
+                return handleVoice(request, env, url);
+            }
+            if (url.pathname.startsWith("/v1/voice/")) {
+                return handleVoice(request, env, url);
             }
 
             if (request.method === "GET" && (url.pathname === "/admin" || url.pathname === "/admin/devices")) {
@@ -255,7 +262,8 @@ function renderNav(active: string | null): string {
             <a href="/admin" class="brand">🛂 <span>Kiro Passport</span></a>
             <div class="nav-tabs">${tabHtml}</div>
             <div class="topnav-actions">
-                <a href="/simulator" class="btn btn-sm btn-accent" target="_blank">🎮 模拟器</a>
+                <a href="/voice" class="btn btn-sm btn-accent" target="_blank">🎙️ 语音助手</a>
+                <a href="/simulator" class="btn btn-sm nav-btn" target="_blank">🎮 模拟器</a>
                 <a href="/admin" class="btn btn-sm nav-btn">🔄 刷新</a>
                 <a href="/admin/pair" class="btn btn-sm btn-primary">➕ 配对新设备</a>
             </div>

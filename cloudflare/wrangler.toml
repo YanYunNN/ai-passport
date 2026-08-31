@@ -6,10 +6,21 @@ compatibility_date = "2026-08-23"
 ADMIN_UI_USERNAME = "yanyun"
 # Info-wallpaper weather location (Open-Meteo); change lat/lon via env vars if needed.
 WALLPAPER_CITY = "Shanghai"
+# Voice-assistant AI: OpenAI-compatible gateway endpoint + default model.
+AI_BASE_URL = "http://grok.yanyun.asia/v1"
+AI_MODEL = "grok-4.6"
+# ASR recognition language (ISO-639-1); Whisper defaults to Chinese here.
+AI_ASR_LANGUAGE = "zh"
+# TTS voice: MeloTTS speaker index on Workers AI (0 = 中文女声).
+TTS_VOICE = "0"
 
 [triggers]
 # Push the generated info wallpaper to all active devices hourly.
 crons = ["0 * * * *"]
+
+# Workers AI: Whisper ASR for the voice assistant module.
+[ai]
+binding = "AI"
 
 # Before the first remote deployment, replace this placeholder with the ID printed by:
 #   npx wrangler d1 create kiro-passport
