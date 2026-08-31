@@ -132,6 +132,12 @@ bool demo_builtin_back(void)
         builtin_menu_build();
         return true;
     }
+    // 内置子菜单已移入设置页：长按返回时回到设置页而非主菜单。
+    if (s_on_exit) {
+        demo_builtin_exit();
+        s_on_exit();
+        return true;
+    }
     return false;
 }
 

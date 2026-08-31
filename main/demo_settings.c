@@ -3,6 +3,7 @@
 #include "bsp_display.h"
 #include "bsp_button.h"
 #include "debug_log.h"
+#include "demo.h"
 #include "game_audio.h"
 #include "kiro_passport_network.h"
 #include "power_manager.h"
@@ -16,7 +17,7 @@
 #include <string.h>
 #include "lvgl.h"
 
-#define SETTING_COUNT 7
+#define SETTING_COUNT 8
 #define TIME_ACTION_COUNT 6
 #define POWER_ACTION_COUNT 6
 #define WIFI_ACTION_COUNT 4
@@ -32,6 +33,7 @@ typedef enum {
     SETTING_WIFI,
     SETTING_RELAY,
     SETTING_DEBUG,
+    SETTING_BUILTIN,
 } setting_id_t;
 
 typedef enum {
@@ -916,10 +918,10 @@ static void settings_build(void)
     ui_system_divider(s_scr, 16, 68, 208);
 
     static const char * const titles[SETTING_COUNT] = {
-        "亮度", "音量", "时间", "节能", "网络", "Relay", "调试",
+        "亮度", "音量", "时间", "节能", "网络", "Relay", "调试", "内置",
     };
     for (size_t i = 0; i < SETTING_COUNT; i++) {
-        int y = 74 + (int)i * 33;
+        int y = 74 + (int)i * 30;
         s_items[i] = ui_system_item_create(s_scr, 16, y, 208, 29);
         s_titles[i] = ui_system_label(s_items[i], titles[i], &ui_font_noto_sc_14,
                                       UI_SYSTEM_TEXT);
@@ -952,6 +954,37 @@ static void show_view(settings_view_t view)
     clear_debug_objects();
     s_view = view;
     settings_build();
+}
+
+static void return_from_builtin(void)
+{
+    demo_settings_enter();
+    s_selected = SETTING_BUILTIN;
+    settings_refresh();
+}
+
+static void settings_enter_builtin(void)
+{
+    if (s_refresh_timer) {
+        lv_timer_delete(s_refresh_timer);
+        s_refresh_timer = NULL;
+    }
+    wifi_manager_stop_provisioning();
+    ui_status_set_visible(false);
+    if (s_scr) {
+        lv_obj_delete(s_scr);
+        s_scr = NULL;
+    }
+    clear_main_objects();
+    clear_time_objects();
+    clear_power_objects();
+    clear_wifi_objects();
+    clear_net_objects();
+    clear_relay_objects();
+    clear_debug_objects();
+    s_view = SETTINGS_VIEW_MAIN;
+    demo_builtin_set_on_exit(return_from_builtin);
+    demo_builtin_enter();
 }
 
 void demo_settings_enter(void)
@@ -1102,6 +1135,9 @@ static void main_settings_key(bsp_btn_t btn)
     case SETTING_DEBUG:
         s_debug_selected = 0;
         show_view(SETTINGS_VIEW_DEBUG);
+        return;
+    case SETTING_BUILTIN:
+        settings_enter_builtin();
         return;
     }
     settings_refresh();

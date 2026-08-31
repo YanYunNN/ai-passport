@@ -25,9 +25,9 @@ static const demo_entry_t DEMOS[] = {
     { "阅读", demo_reader_enter, demo_reader_exit, demo_reader_key, NULL },
     { "图片", demo_image_enter, demo_image_exit, demo_image_key, NULL },
     { "游戏", demo_games_enter, demo_games_exit, demo_games_key, demo_games_back },
-    { "设置", demo_settings_enter, demo_settings_exit, demo_settings_key, NULL },
     { "Kiro", demo_kiro_passport_enter, demo_kiro_passport_exit, demo_kiro_passport_key, NULL },
-    { "内置", demo_builtin_enter, demo_builtin_exit, demo_builtin_key, demo_builtin_back },
+    { "Chat", demo_chat_enter, demo_chat_exit, demo_chat_key, demo_chat_back },
+    { "设置", demo_settings_enter, demo_settings_exit, demo_settings_key, NULL },
 };
 #define DEMO_COUNT (sizeof(DEMOS) / sizeof(DEMOS[0]))
 
@@ -167,11 +167,10 @@ void app_main(void)
     s_ok[0] = true; // 阅读
     s_ok[1] = true; // 图片
     s_ok[2] = true; // 游戏
-    s_ok[3] = true; // 设置
-    s_ok[4] = true; // Kiro (will update below)
-    s_ok[5] = true; // 内置
+    s_ok[3] = true; // Kiro (will update below)
+    s_ok[4] = true; // Chat (requires relay enrollment; see below)
+    s_ok[5] = true; // 设置（内置硬件测试已移入设置页）
 
-    demo_builtin_set_on_exit(enter_menu);
     demo_games_set_on_exit(enter_menu);
 
     esp_err_t wifi_enable_result = wifi_manager_set_enabled(settings->wifi_enabled);
@@ -190,7 +189,7 @@ void app_main(void)
     }
 
     esp_err_t passport_result = kiro_passport_network_init();
-    s_ok[4] = (passport_result == ESP_OK);
+    s_ok[3] = (passport_result == ESP_OK);
     if (passport_result != ESP_OK) {
         ESP_LOGW(TAG, "Kiro Passport Wi-Fi 初始化失败: %s", esp_err_to_name(passport_result));
     }
@@ -208,7 +207,7 @@ void app_main(void)
 
     bsp_display_backlight(app_settings_get_brightness_percent());
 
-    ESP_LOGI(TAG, "就绪:按键=%d 音频=%d 电量=%d 阅读=%d 图片=%d 游戏=%d 设置=%d Kiro=%d 内置=%d Wi-Fi=%d",
+    ESP_LOGI(TAG, "就绪:按键=%d 音频=%d 电量=%d 阅读=%d 图片=%d 游戏=%d Kiro=%d Chat=%d 设置=%d Wi-Fi=%d",
              button_ok, audio_ok, batt_ok, s_ok[0], s_ok[1], s_ok[2], s_ok[3], s_ok[4], s_ok[5],
              wifi_result == ESP_OK);
 }

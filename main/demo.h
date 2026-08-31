@@ -38,6 +38,10 @@ void demo_settings_key(bsp_btn_t btn, bsp_btn_ev_t ev);
 void demo_kiro_passport_enter(void); void demo_kiro_passport_exit(void);
 void demo_kiro_passport_key(bsp_btn_t btn, bsp_btn_ev_t ev);
 
+void demo_chat_enter(void);   void demo_chat_exit(void);
+void demo_chat_key(bsp_btn_t btn, bsp_btn_ev_t ev);
+bool demo_chat_back(void);
+
 void demo_anim_enter(void);    void demo_anim_exit(void);
 void demo_anim_key(bsp_btn_t btn, bsp_btn_ev_t ev);
 

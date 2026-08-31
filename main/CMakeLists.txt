@@ -29,6 +29,7 @@ idf_component_register(
          "demo_image.c"
          "demo_settings.c"
          "demo_kiro_passport.c"
+         "demo_chat.c"
          "kiro_passport.c"
          "kiro_passport_network.c"
          "screencast.c"
