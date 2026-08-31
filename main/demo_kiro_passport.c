@@ -21,6 +21,9 @@ static lv_obj_t *s_request;
 static lv_obj_t *s_hint;
 static lv_timer_t *s_refresh_timer;
 
+/* 最近一次已显示过的通知版本；用于判断是否有更新的通知需要展示。 */
+static uint32_t s_displayed_notify_version = 0;
+
 static const char *connection_text(const kiro_passport_snapshot_t *snapshot)
 {
     if (!snapshot->initialized) return "Passport unavailable";
@@ -46,12 +49,21 @@ static void refresh_page(lv_timer_t *timer)
     lv_label_set_text(s_connection, connection_text(&snapshot));
     lv_label_set_text(s_state, state_text(&snapshot));
 
+    kiro_passport_notify_info_t notify;
+
     if (snapshot.pending) {
         char request[128];
         snprintf(request, sizeof(request), "Tool: %s\n%s", snapshot.tool, snapshot.summary);
         lv_label_set_text(s_request, request);
         lv_label_set_text(s_hint, "OK: Allow    DOWN: Deny");
         if (s_mascot) ui_pixel_mascot_jump(s_mascot);
+    } else if (kiro_passport_network_get_notify(&notify) && notify.present) {
+        /* 有待显示的通知：持续显示，直到用户按 OK 关闭（dismiss 会清 present）。
+         * version 只用于记录当前已展示的通知，避免把即将消失的通知顶掉。 */
+        s_displayed_notify_version = notify.version;
+        lv_label_set_text(s_state, notify.title);
+        lv_label_set_text(s_request, notify.content);
+        lv_label_set_text(s_hint, "OK: Dismiss");
     } else if (snapshot.decision[0]) {
         lv_label_set_text(s_request,
                           strcmp(snapshot.decision, "allow") == 0 ? "Approved on Passport" : "Denied on Passport");
@@ -126,6 +138,19 @@ void demo_kiro_passport_key(bsp_btn_t btn, bsp_btn_ev_t event)
 
     kiro_passport_snapshot_t snapshot;
     kiro_passport_get_snapshot(&snapshot);
+
+    /* 无待审批请求时，OK 键用于关闭当前显示的通知；待审批时仍走审批流程。 */
+    if (!snapshot.pending && btn == BSP_BTN_OK) {
+        kiro_passport_notify_info_t notify;
+        if (kiro_passport_network_get_notify(&notify) && notify.present &&
+            notify.version == s_displayed_notify_version) {
+            ESP_LOGI(TAG, "关闭通知: %s", notify.title);
+            kiro_passport_network_clear_notify();
+            refresh_page(NULL);
+            return;
+        }
+    }
+
     if (!snapshot.pending) return;
 
     if (btn == BSP_BTN_OK) {

@@ -105,3 +105,55 @@ export async function writeTerminalAudit(
     ).bind(request.request_id, request.device_id, sessionId, request.tool, request.summary,
         decision, reason, request.expires_at, decidedAt).run();
 }
+
+export type HookNotifyResult = "sent" | "offline" | "error";
+
+export interface HookNotifyLogRow {
+    id: string;
+    device_id: string;
+    session_id: string | null;
+    title: string;
+    content: string;
+    result: HookNotifyResult;
+    online: number;
+    created_at: number;
+}
+
+/**
+ * Records a hook-notify push to a target device. The Worker calls this after the
+ * Durable Object has attempted the push so the admin dashboard can audit what was
+ * sent and whether the device was online/delivered.
+ */
+export async function writeHookNotifyLog(
+    env: Env,
+    log: Pick<HookNotifyLogRow, "id" | "device_id" | "session_id" | "title" | "content" | "result" | "online" | "created_at">,
+): Promise<void> {
+    await env.DB.prepare(
+        "INSERT INTO hook_notify_log (id, device_id, session_id, title, content, result, online, created_at) " +
+        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) ON CONFLICT(id) DO NOTHING",
+    ).bind(log.id, log.device_id, log.session_id, log.title, log.content, log.result,
+        log.online ? 1 : 0, log.created_at).run();
+}
+
+/**
+ * Query recent hook-notify logs, newest first. `limit` is 1..200 (default 50).
+ * Supports an optional `device_id` filter for the admin dashboard.
+ */
+export async function listHookNotifyLogs(
+    env: Env,
+    opts: { deviceId?: string; limit?: number } = {},
+): Promise<HookNotifyLogRow[]> {
+    const limit = Math.max(1, Math.min(200, opts.limit ?? 50));
+    if (opts.deviceId) {
+        const rows = await env.DB.prepare(
+            "SELECT id, device_id, session_id, title, content, result, online, created_at " +
+            "FROM hook_notify_log WHERE device_id = ?1 ORDER BY created_at DESC LIMIT ?2",
+        ).bind(opts.deviceId, limit).all<HookNotifyLogRow>();
+        return rows.results;
+    }
+    const rows = await env.DB.prepare(
+        "SELECT id, device_id, session_id, title, content, result, online, created_at " +
+        "FROM hook_notify_log ORDER BY created_at DESC LIMIT ?1",
+    ).bind(limit).all<HookNotifyLogRow>();
+    return rows.results;
+}

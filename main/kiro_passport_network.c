@@ -17,6 +17,7 @@
 #include "time_sync.h"
 #include "wifi_manager.h"
 #include "mbedtls/base64.h"
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -33,6 +34,11 @@ static size_t s_b64_carry_len = 0;
 static char s_ctrl_rx_buffer[1024];
 static size_t s_ctrl_rx_len = 0;
 
+/* 本机通知：静态分配（无 PSRAM），由 s_notify_lock 保护。
+ * content 缓冲 900 字节，可容纳约 900/3≈290 个 UTF-8 中文字符。 */
+static kiro_passport_notify_info_t s_notify;
+static SemaphoreHandle_t s_notify_lock = NULL;
+
 bool kiro_passport_network_get_image(kiro_passport_image_info_t *out_info)
 {
     if (!out_info || s_active_image_size == 0) return false;
@@ -45,6 +51,25 @@ bool kiro_passport_network_get_image(kiro_passport_image_info_t *out_info)
     strlcpy(out_info->title, s_active_image_title, sizeof(out_info->title));
     if (s_image_lock) xSemaphoreGive(s_image_lock);
     return true;
+}
+
+bool kiro_passport_network_get_notify(kiro_passport_notify_info_t *out_info)
+{
+    if (!out_info) return false;
+    if (!s_notify_lock) s_notify_lock = xSemaphoreCreateMutex();
+    if (s_notify_lock) xSemaphoreTake(s_notify_lock, portMAX_DELAY);
+    bool present = s_notify.present;
+    if (present) *out_info = s_notify;
+    if (s_notify_lock) xSemaphoreGive(s_notify_lock);
+    return present;
+}
+
+void kiro_passport_network_clear_notify(void)
+{
+    if (!s_notify_lock) s_notify_lock = xSemaphoreCreateMutex();
+    if (s_notify_lock) xSemaphoreTake(s_notify_lock, portMAX_DELAY);
+    s_notify.present = false; /* version 保持不变，供新通知递增检测 */
+    if (s_notify_lock) xSemaphoreGive(s_notify_lock);
 }
 
 #define KIRO_NETWORK_NAMESPACE "passport"
@@ -102,6 +127,33 @@ static bool safe_value(const char *value, size_t max_length)
         unsigned char character = (unsigned char)*cursor;
         if (character < 0x21 || character > 0x7e || character == '"' ||
             character == '\\' || character == '\r' || character == '\n') return false;
+    }
+    return true;
+}
+
+/* 校验严格可打印 ASCII（字符 0x20-0x7E，不含 '"' 与 '\'），空或超长视为无效。
+ * 用于通知 id 等结构/安全字段。 */
+static bool printable_notify_text(const char *value, size_t buffer_size)
+{
+    if (!value || !value[0] || strlen(value) >= buffer_size) return false;
+    for (const char *cursor = value; *cursor; cursor++) {
+        unsigned char character = (unsigned char)*cursor;
+        if (character < 0x20 || character > 0x7e || character == '"' ||
+            character == '\\') return false;
+    }
+    return true;
+}
+
+/* 校验可显示的 UTF-8 文本：允许普通可打印 ASCII 与多字节（>=0x80）中文字节，
+ * 但拒绝 '"'、'\' 与控制符（0x00-0x1F 及 0x7F）。空或超长视为无效。
+ * 用于通知的 title/content 等展示字段。 */
+static bool printable_utf8_text(const char *value, size_t buffer_size)
+{
+    if (!value || !value[0] || strlen(value) >= buffer_size) return false;
+    for (const char *cursor = value; *cursor; cursor++) {
+        unsigned char character = (unsigned char)*cursor;
+        if (character == '"' || character == '\\' || character < 0x20 ||
+            character == 0x7f) return false;
     }
     return true;
 }
@@ -189,6 +241,14 @@ int kiro_passport_network_send_text(const char *message)
                                           pdMS_TO_TICKS(1500));
 }
 
+int kiro_passport_network_send_binary(const void *data, size_t length)
+{
+    if (!data || length == 0 || length > INT_MAX || !s_network.client ||
+        !esp_websocket_client_is_connected(s_network.client)) return -1;
+    return esp_websocket_client_send_bin(s_network.client, data, (int)length,
+                                         pdMS_TO_TICKS(1500));
+}
+
 static int send_text(const char *message)
 {
     return kiro_passport_network_send_text(message);
@@ -230,6 +290,36 @@ static bool extract_json_string(const char *json, const char *key, char *out, si
         memcpy(out, val_start, copy_len);
         out[copy_len] = '\0';
     }
+    return true;
+}
+
+static bool extract_json_u32(const char *json, const char *key, uint32_t *out)
+{
+    if (!json || !key || !out) return false;
+
+    char search_key[32];
+    int key_len = snprintf(search_key, sizeof(search_key), "\"%s\"", key);
+    if (key_len <= 0 || key_len >= (int)sizeof(search_key)) return false;
+
+    const char *cursor = strstr(json, search_key);
+    if (!cursor) return false;
+    cursor = strchr(cursor + key_len, ':');
+    if (!cursor) return false;
+    do {
+        cursor++;
+    } while (*cursor == ' ' || *cursor == '\t');
+    if (*cursor < '0' || *cursor > '9') return false;
+
+    uint64_t value = 0;
+    do {
+        value = value * 10 + (uint64_t)(*cursor - '0');
+        if (value > UINT32_MAX) return false;
+        cursor++;
+    } while (*cursor >= '0' && *cursor <= '9');
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') cursor++;
+    if (*cursor != ',' && *cursor != '}') return false;
+
+    *out = (uint32_t)value;
     return true;
 }
 
@@ -332,9 +422,96 @@ static void image_stream_feed(const char *data, size_t len, bool is_first, bool 
     if (s_image_lock) xSemaphoreGive(s_image_lock);
 }
 
+/* 解析一帧 type:"notify" 消息。返回 true 表示消息是合法通知并已存储。 */
+static bool parse_notify(const char *message)
+{
+    char id[sizeof(s_notify.id)];
+    char title[sizeof(s_notify.title)];
+    char content[sizeof(s_notify.content)];
+    if (!extract_json_string(message, "id", id, sizeof(id), NULL, NULL) ||
+        !extract_json_string(message, "title", title, sizeof(title), NULL, NULL) ||
+        !extract_json_string(message, "content", content, sizeof(content), NULL, NULL)) {
+        return false;
+    }
+    if (!printable_notify_text(id, sizeof(id)) || !printable_utf8_text(title, sizeof(title)) ||
+        !printable_utf8_text(content, sizeof(content))) {
+        return false;
+    }
+
+    if (!s_notify_lock) s_notify_lock = xSemaphoreCreateMutex();
+    if (s_notify_lock) xSemaphoreTake(s_notify_lock, portMAX_DELAY);
+    snprintf(s_notify.id, sizeof(s_notify.id), "%s", id);
+    snprintf(s_notify.title, sizeof(s_notify.title), "%s", title);
+    snprintf(s_notify.content, sizeof(s_notify.content), "%s", content);
+    s_notify.version++;
+    s_notify.present = true;
+    if (s_notify_lock) xSemaphoreGive(s_notify_lock);
+
+    ESP_LOGI(TAG, "收到通知: id=%s, title=%s, len=%zu, v=%lu", s_notify.id, s_notify.title,
+             strlen(s_notify.content), (unsigned long)s_notify.version);
+    return true;
+}
+
 static void process_message(const char *message)
 {
     if (!message) return;
+
+    if (strstr(message, "\"type\":\"screencast_ack\"") || strstr(message, "\"type\": \"screencast_ack\"")) {
+        uint32_t seq = 0;
+        uint32_t slice = 0;
+        if (extract_json_u32(message, "seq", &seq) && extract_json_u32(message, "slice", &slice) &&
+            slice <= UINT8_MAX) {
+            screencast_acknowledge(seq, (uint8_t)slice);
+        }
+        return;
+    }
+
+    if (strstr(message, "\"type\":\"image_start\"") || strstr(message, "\"type\": \"image_start\"")) {
+        if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
+        if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+        s_active_image_size = 0;
+        s_b64_carry_len = 0;
+        s_active_image_id[0] = '\0';
+        s_active_image_title[0] = '\0';
+        extract_json_string(message, "id", s_active_image_id, sizeof(s_active_image_id), NULL, NULL);
+        extract_json_string(message, "title", s_active_image_title, sizeof(s_active_image_title), NULL, NULL);
+        if (s_image_lock) xSemaphoreGive(s_image_lock);
+        ESP_LOGI(TAG, "收到图片推送开始: id=%s, title=%s", s_active_image_id, s_active_image_title);
+        return;
+    }
+
+    if (strstr(message, "\"type\":\"image_chunk\"") || strstr(message, "\"type\": \"image_chunk\"")) {
+        const char *chunk_data = NULL;
+        size_t chunk_len = 0;
+        if (extract_json_string(message, "data", NULL, 0, &chunk_data, &chunk_len) && chunk_data && chunk_len > 0) {
+            if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
+            if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+            if (s_active_image_size + chunk_len <= sizeof(s_active_image_data)) {
+                size_t olen = 0;
+                int ret = mbedtls_base64_decode(s_active_image_data + s_active_image_size,
+                                                sizeof(s_active_image_data) - s_active_image_size,
+                                                &olen, (const unsigned char *)chunk_data, chunk_len);
+                if (ret == 0) {
+                    s_active_image_size += olen;
+                } else {
+                    ESP_LOGE(TAG, "Base64 chunk decode 失败: ret=%d", ret);
+                }
+            }
+            if (s_image_lock) xSemaphoreGive(s_image_lock);
+        }
+        return;
+    }
+
+    if (strstr(message, "\"type\":\"image_end\"") || strstr(message, "\"type\": \"image_end\"")) {
+        if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
+        if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+        s_active_image_version++;
+        ESP_LOGI(TAG, "图片推送接收完成: id=%s, title=%s, size=%zu bytes, v=%lu",
+                 s_active_image_id, s_active_image_title, s_active_image_size,
+                 (unsigned long)s_active_image_version);
+        if (s_image_lock) xSemaphoreGive(s_image_lock);
+        return;
+    }
 
     if (strstr(message, "\"capture\"") || strstr(message, "\"screenshot\"") || strstr(message, "\"screencast_start\"")) {
         ESP_LOGI(TAG, "收到云端指令: 远程截屏");
@@ -342,6 +519,11 @@ static void process_message(const char *message)
         return;
     }
     if (strstr(message, "\"screencast_stop\"")) {
+        return;
+    }
+
+    if (strstr(message, "\"type\":\"notify\"") || strstr(message, "\"type\": \"notify\"")) {
+        if (!parse_notify(message)) ESP_LOGW(TAG, "忽略无效通知消息");
         return;
     }
 
@@ -447,43 +629,7 @@ static void destroy_client(void)
     kiro_passport_set_connection(false, NULL);
 }
 
-static const char s_relay_ca_pem[] =
-    // GTS Root R4
-    "-----BEGIN CERTIFICATE-----\n"
-    "MIICCTCCAY6gAwIBAgINAgPlwGjvYxqccpBQUjAKBggqhkjOPQQDAzBHMQswCQYD\n"
-    "VQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEUMBIG\n"
-    "A1UEAxMLR1RTIFJvb3QgUjQwHhcNMTYwNjIyMDAwMDAwWhcNMzYwNjIyMDAwMDAw\n"
-    "WjBHMQswCQYDVQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2Vz\n"
-    "IExMQzEUMBIGA1UEAxMLR1RTIFJvb3QgUjQwdjAQBgcqhkjOPQIBBgUrgQQAIgNi\n"
-    "AATzdHOnaItgrkO4NcWBMHtLSZ37wWHO5t5GvWvVYRg1rkDdc/eJkTBa6zzuhXyi\n"
-    "QHY7qca4R9gq55KRanPpsXI5nymfopjTX15YhmUPoYRlBtHci8nHc8iMai/lxKvR\n"
-    "HYqjQjBAMA4GA1UdDwEB/wQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQW\n"
-    "BBSATNbrdP9JNqPV2Py1PsVq8JQdjDAKBggqhkjOPQQDAwNpADBmAjEA6ED/g94D\n"
-    "9J+uHXqnLrmvT/aDHQ4thQEd0dlq7A/Cr8deVl5c1RxYIigL9zC2L7F8AjEA8GE8\n"
-    "p/SgguMh1YQdc4acLa/KNJvxn7kjNuK8YAOdgLOaVsjh4rsUecrNIdSUtUlD\n"
-    "-----END CERTIFICATE-----\n"
-    // GlobalSign Root CA
-    "-----BEGIN CERTIFICATE-----\n"
-    "MIIDdTCCAl2gAwIBAgILBAAAAAABFUtaw5QwDQYJKoZIhvcNAQEFBQAwVzELMAkG\n"
-    "A1UEBhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExEDAOBgNVBAsTB1Jv\n"
-    "b3QgQ0ExGzAZBgNVBAMTEkdsb2JhbFNpZ24gUm9vdCBDQTAeFw05ODA5MDExMjAw\n"
-    "MDBaFw0yODAxMjgxMjAwMDBaMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBHbG9i\n"
-    "YWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9iYWxT\n"
-    "aWduIFJvb3QgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDaDuaZ\n"
-    "jc6j40+Kfvvxi4Mla+pIH/EqsLmVEQS98GPR4mdmzxzdzxtIK+6NiY6arymAZavp\n"
-    "xy0Sy6scTHAHoT0KMM0VjU/43dSMUBUc71DuxC73/OlS8pF94G3VNTCOXkNz8kHp\n"
-    "1Wrjsok6Vjk4bwY8iGlbKk3Fp1S4bInMm/k8yuX9ifUSPJJ4ltbcdG6TRGHRjcdG\n"
-    "snUOhugZitVtbNV4FpWi6cgKOOvyJBNPc1STE4U6G7weNLWLBYy5d4ux2x8gkasJ\n"
-    "U26Qzns3dLlwR5EiUWMWea6xrkEmCMgZK9FGqkjWZCrXgzT/LCrBbBlDSgeF59N8\n"
-    "9iFo7+ryUp9/k5DPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMBAf8E\n"
-    "BTADAQH/MB0GA1UdDgQWBBRge2YaRQ2XyolQL30EzTSo//z9SzANBgkqhkiG9w0B\n"
-    "AQUFAAOCAQEA1nPnfE920I2/7LqivjTFKDK1fPxsnCwrvQmeU79rXqoRSLblCKOz\n"
-    "yj1hTdNGCbM+w6DjY1Ub8rrvrTnhQ7k4o+YviiY776BQVvnGCv04zcQLcFGUl5gE\n"
-    "38NflNUVyRRBnMRddWQVDf9VMOyGj/8N7yy5Y0b2qvzfvGn9LhJIZJrglfCm7ymP\n"
-    "AbEVtQwdpf5pLGkkeB6zpxxxYu7KyJesF12KwvhHhm4qxFYxldBniYUr+WymXUad\n"
-    "DKqC5JlR3XC321Y9YeRq4VzW9v493kHMB65jUr9TU/Qr6cf9tveCX4XSQRjbgbME\n"
-    "HMUfpIBvFSDJ3gyICh3WZlXi/EjJKSZp4A==\n"
-    "-----END CERTIFICATE-----\n";
+
 
 static esp_err_t start_client(void)
 {
@@ -497,17 +643,17 @@ static esp_err_t start_client(void)
         header_length >= (int)sizeof(headers)) return ESP_ERR_INVALID_SIZE;
 
     generate_session_id(s_network.session_id, sizeof(s_network.session_id));
-    ESP_LOGI(TAG, "正在启动 WebSocket 连接: URI=%s", uri);
+    ESP_LOGI(TAG, "正在启动 WebSocket 连接: URI=%s, free_heap=%lu", uri, (unsigned long)esp_get_free_heap_size());
     const esp_websocket_client_config_t config = {
         .uri = uri,
         .headers = headers,
-        .cert_pem = s_relay_ca_pem,
+        .crt_bundle_attach = esp_crt_bundle_attach,
         .disable_auto_reconnect = true,
         .enable_close_reconnect = false,
         .reconnect_timeout_ms = KIRO_NETWORK_RECONNECT_MS,
         .network_timeout_ms = 10000,
-        .buffer_size = 4096,
-        .task_stack = 6144,
+        .buffer_size = 2048,
+        .task_stack = 4096,
         .task_prio = 5,
         .ping_interval_sec = 20,
         .pingpong_timeout_sec = 10,
@@ -877,6 +1023,16 @@ static esp_err_t load_config(void)
     nvs_close(handle);
     if (result == ESP_OK && size == sizeof(stored) && valid_relay_url(stored.relay_url) &&
         safe_value(stored.credential, sizeof(stored.credential))) {
+        if (strcmp(stored.relay_url, "wss://ws.yanyun.fun") == 0) {
+            ESP_LOGI(TAG, "检测到旧域名 wss://ws.yanyun.fun，自动迁移为 %s", KIRO_ENROLLMENT_RELAY_URL);
+            snprintf(stored.relay_url, sizeof(stored.relay_url), "%s", KIRO_ENROLLMENT_RELAY_URL);
+            nvs_handle_t rw_handle;
+            if (nvs_open(KIRO_NETWORK_NAMESPACE, NVS_READWRITE, &rw_handle) == ESP_OK) {
+                nvs_set_blob(rw_handle, KIRO_NETWORK_CONFIG_KEY, &stored, sizeof(stored));
+                nvs_commit(rw_handle);
+                nvs_close(rw_handle);
+            }
+        }
         snprintf(stored.device_id, sizeof(stored.device_id), "%s", s_network.config.device_id);
         s_network.config = stored;
         return ESP_OK;

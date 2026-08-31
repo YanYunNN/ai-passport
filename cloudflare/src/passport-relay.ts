@@ -3,9 +3,12 @@ import { claimTerminalState, forceDenyAfterUncertainAllow, terminalStateMatches,
 import type { Env } from "./env";
 import {
     isDeviceId,
+    parseBinaryScreencastMessage,
     parseDecision,
     parseHello,
+    parseScreencastMessage,
     type DeviceRequest,
+    serializeDeviceNotify,
     serializeDeviceRequest,
 } from "./protocol";
 
@@ -47,6 +50,7 @@ interface SocketAttachment {
     deviceId: string;
     credentialHash: string;
     sessionId?: string;
+    credentialValidUntil?: number;
 }
 
 interface DeviceAuthorizationRecord {
@@ -60,11 +64,15 @@ const STATE_KEY = "relay_state";
 const requestKey = (requestId: string): string => `request:${requestId}`;
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 const projectionRetryDelayMs = 10_000;
+// ponytail: cache authorization for at most 5s to avoid one D1 query per video slice;
+// explicit revocation still closes the socket immediately. Lower this TTL if revocation bypasses the DO.
+const credentialCacheMs = 5_000;
 
 export class PassportRelay extends DurableObject<Env> {
     private readonly sockets = new Map<WebSocket, SocketAttachment>();
     private readonly adminViewers = new Set<WebSocket>();
     private readonly latestSlices = new Map<number, string>();
+    private latestFrameSeq?: number;
 
     constructor(ctx: DurableObjectState, env: Env) {
         super(ctx, env);
@@ -82,6 +90,7 @@ export class PassportRelay extends DurableObject<Env> {
             return this.connectDevice(request, url.pathname.slice("/device/".length));
         }
         if (request.method === "POST" && url.pathname === "/internal/requests") return this.createRequest(request);
+        if (request.method === "POST" && url.pathname === "/internal/notify") return this.pushNotify(request);
         if (request.method === "GET" && url.pathname.startsWith("/internal/requests/")) {
             return this.getRequest(request, url.pathname.slice("/internal/requests/".length));
         }
@@ -141,18 +150,40 @@ export class PassportRelay extends DurableObject<Env> {
         if (allSockets.size === 0) {
             return json({ sent: false, online: false });
         }
-        const msg = JSON.stringify({
-            v: 1,
-            type: "image",
-            id: payload.imageId,
-            title: payload.title || "Image",
-            data: payload.data,
-        });
+
+        const CHUNK_SIZE = 768; // must be multiple of 4 for valid base64
+        const totalChunks = Math.ceil(payload.data.length / CHUNK_SIZE);
+
         for (const socket of allSockets) {
             if (!this.adminViewers.has(socket)) {
                 try {
-                    socket.send(msg);
-                } catch {}
+                    socket.send(JSON.stringify({
+                        v: 1,
+                        type: "image_start",
+                        id: payload.imageId,
+                        title: payload.title || "Image",
+                        chunks: totalChunks,
+                    }));
+
+                    for (let i = 0; i < totalChunks; i++) {
+                        const chunk = payload.data.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+                        socket.send(JSON.stringify({
+                            v: 1,
+                            type: "image_chunk",
+                            id: payload.imageId,
+                            seq: i,
+                            data: chunk,
+                        }));
+                    }
+
+                    socket.send(JSON.stringify({
+                        v: 1,
+                        type: "image_end",
+                        id: payload.imageId,
+                    }));
+                } catch (err) {
+                    console.error("sendImage error", err);
+                }
             }
         }
         return json({ sent: true, online: true });
@@ -182,7 +213,7 @@ export class PassportRelay extends DurableObject<Env> {
         }
 
         const attachment = this.attachmentFor(socket);
-        if (!attachment || typeof message !== "string") {
+        if (!attachment) {
             await this.denyCurrentForProtocolError();
             return;
         }
@@ -190,27 +221,39 @@ export class PassportRelay extends DurableObject<Env> {
             await this.invalidateSession(attachment.sessionId, true);
             return;
         }
-        // Check if device is sending screencast frame / slice
-        if (message.includes('"screencast"')) {
-            try {
-                const parsed = JSON.parse(message);
-                if (parsed && parsed.type === "screencast" && typeof parsed.slice === "number") {
-                    this.latestSlices.set(parsed.slice, message);
-                    for (const viewer of this.adminViewers) {
-                        try { viewer.send(message); } catch {}
-                    }
-                    return;
-                }
-            } catch {}
-        }
-
         if (!attachment.sessionId) {
+            if (typeof message !== "string") {
+                socket.close(1008, "invalid hello");
+                return;
+            }
             const hello = parseHello(message, attachment.deviceId);
             if (!hello) {
                 socket.close(1008, "invalid hello");
                 return;
             }
             await this.handleHello(socket, attachment, hello.session_id);
+            return;
+        }
+
+        if (typeof message !== "string" || message.includes('"screencast"')) {
+            const screencast = typeof message === "string"
+                ? parseScreencastMessage(message)
+                : parseBinaryScreencastMessage(message);
+            if (!screencast) {
+                await this.denyCurrentForProtocolError();
+                return;
+            }
+            const viewerMessage = typeof message === "string" ? message : JSON.stringify(screencast);
+            if (this.latestFrameSeq !== screencast.seq) {
+                this.latestSlices.clear();
+                this.latestFrameSeq = screencast.seq;
+            }
+            this.latestSlices.set(screencast.slice, viewerMessage);
+            for (const viewer of this.adminViewers) {
+                try { viewer.send(viewerMessage); } catch {}
+            }
+            socket.send(`{"v":1,"type":"screencast_ack","seq":${screencast.seq},` +
+                `"slice":${screencast.slice}}`);
             return;
         }
 
@@ -254,7 +297,11 @@ export class PassportRelay extends DurableObject<Env> {
 
         const pair = new WebSocketPair();
         const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
-        const attachment: SocketAttachment = { deviceId, credentialHash };
+        const attachment: SocketAttachment = {
+            deviceId,
+            credentialHash,
+            credentialValidUntil: Date.now() + credentialCacheMs,
+        };
         server.serializeAttachment(attachment);
         this.ctx.acceptWebSocket(server);
         this.sockets.set(server, attachment);
@@ -271,6 +318,8 @@ export class PassportRelay extends DurableObject<Env> {
         const nextAttachment: SocketAttachment = { ...attachment, sessionId };
         socket.serializeAttachment(nextAttachment);
         this.sockets.set(socket, nextAttachment);
+        this.latestSlices.clear();
+        this.latestFrameSeq = undefined;
         const current = await this.loadState();
         await this.saveState({ ...current, deviceId: attachment.deviceId, currentSessionId: sessionId });
     }
@@ -320,6 +369,37 @@ export class PassportRelay extends DurableObject<Env> {
         return this.getStoredResponse(created.requestId);
     }
 
+    private async pushNotify(request: Request): Promise<Response> {
+        const deviceId = request.headers.get("X-Passport-Device-Id");
+        if (!deviceId || !isDeviceId(deviceId)) return json({ error: "unauthorized" }, 401);
+        const input = await request.json<{ title?: string; content?: string; ts?: number; id?: string }>().catch(() => null);
+        if (!input || typeof input.content !== "string" || typeof input.id !== "string" ||
+            typeof input.ts !== "number" || !Number.isSafeInteger(input.ts)) {
+            return json({ error: "invalid notify body" }, 400);
+        }
+        const state = await this.loadState();
+        if (!state.currentSessionId || !state.deviceId) return json({ sent: false, online: false });
+        if (state.deviceId !== deviceId) return json({ error: "device mismatch" }, 403);
+        const socket = await this.currentAuthorizedSocket(state.currentSessionId);
+        if (!socket) return json({ sent: false, online: false });
+
+        const payload = serializeDeviceNotify({
+            device_id: deviceId,
+            session_id: state.currentSessionId,
+            id: input.id,
+            title: input.title ?? "Agent",
+            content: input.content,
+            ts: input.ts,
+        });
+        try {
+            socket.send(payload);
+        } catch (error) {
+            console.error("pushNotify send error", error);
+            return json({ sent: false, online: false });
+        }
+        return json({ sent: true, online: true });
+    }
+
     private async getRequest(request: Request, requestId: string): Promise<Response> {
         const deviceId = request.headers.get("X-Passport-Device-Id");
         if (!deviceId || !isDeviceId(deviceId)) return json({ error: "unauthorized" }, 401);
@@ -365,14 +445,20 @@ export class PassportRelay extends DurableObject<Env> {
     }
 
     private async credentialStillValid(attachment: SocketAttachment): Promise<boolean> {
+        if ((attachment.credentialValidUntil ?? 0) > Date.now()) return true;
+
         const record = await this.env.DB.prepare(
             "SELECT credential_hash, previous_credential_hash, previous_credential_expires_at, status " +
             "FROM devices WHERE device_id = ?1",
         ).bind(attachment.deviceId).first<DeviceAuthorizationRecord>();
         if (!record || record.status !== "active") return false;
-        if (record.credential_hash === attachment.credentialHash) return true;
-        return record.previous_credential_hash === attachment.credentialHash &&
-            record.previous_credential_expires_at !== null && record.previous_credential_expires_at >= nowSeconds();
+
+        const valid = record.credential_hash === attachment.credentialHash ||
+            (record.previous_credential_hash === attachment.credentialHash &&
+                record.previous_credential_expires_at !== null &&
+                record.previous_credential_expires_at >= nowSeconds());
+        if (valid) attachment.credentialValidUntil = Date.now() + credentialCacheMs;
+        return valid;
     }
 
     private async invalidateSession(sessionId: string | undefined, closeSockets: boolean): Promise<void> {

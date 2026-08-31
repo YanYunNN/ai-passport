@@ -9,10 +9,11 @@ import {
     verifyAdminBasicAuth,
     verifyDeviceCredential,
 } from "./auth";
-import { createRequestIndex, getRequestIndex } from "./db";
+import { createRequestIndex, getRequestIndex, listHookNotifyLogs, writeHookNotifyLog } from "./db";
 import type { Env } from "./env";
 import { PassportRelay } from "./passport-relay";
 import { isDeviceId, parseApprovalInput, REQUEST_ID_PATTERN, type ApprovalInput } from "./protocol";
+import { handleSimulatorBinProxy, handleSimulatorPresets, simulatorPage } from "./simulator";
 
 export { PassportRelay };
 
@@ -83,6 +84,13 @@ export default {
         try {
             const url = new URL(request.url);
             if (request.method === "GET" && url.pathname === "/healthz") return json({ ok: true });
+            if (request.method === "GET" && url.pathname === "/simulator") return simulatorPage();
+            if (request.method === "GET" && url.pathname === "/api/simulator/bin-proxy") {
+                return handleSimulatorBinProxy(request);
+            }
+            if (request.method === "GET" && url.pathname === "/api/simulator/presets") {
+                return handleSimulatorPresets();
+            }
 
             if (request.method === "GET" && (url.pathname === "/admin" || url.pathname === "/admin/devices")) {
                 return adminDashboardPage(request, env);
@@ -117,6 +125,9 @@ export default {
             if (request.method === "GET" && url.pathname === "/admin/push/status") {
                 return adminPushStatusWeb(request, env);
             }
+            if (request.method === "POST" && url.pathname === "/admin/hook/push") {
+                return adminHookPush(request, env);
+            }
 
             if (request.method === "GET" && url.pathname === "/activate") return activationPage();
             if (request.method === "POST" && url.pathname === "/activate") return approveEnrollment(request, env);
@@ -144,6 +155,8 @@ export default {
 
             const createMatch = url.pathname.match(/^\/v1\/devices\/(passport-[A-F0-9]{12})\/requests$/u);
             if (request.method === "POST" && createMatch) return createApproval(request, env, createMatch[1]);
+            const notifyMatch = url.pathname.match(/^\/v1\/devices\/(passport-[A-F0-9]{12})\/notify$/u);
+            if (request.method === "POST" && notifyMatch) return pushNotify(request, env, notifyMatch[1]);
             const statusMatch = url.pathname.match(/^\/v1\/requests\/([0-9a-f-]{1,36})$/u);
             if (request.method === "GET" && statusMatch) return getApproval(request, env, statusMatch[1]);
             return json({ error: "not found" }, 404);
@@ -166,10 +179,13 @@ async function checkDeviceOnline(env: Env, deviceId: string): Promise<boolean> {
     return false;
 }
 
+/* 后台所有时间统一以 +08:00（Asia/Shanghai）时区展示，输出 YYYY-MM-DD HH:mm:ss +08:00。 */
 function formatDate(timestamp: number | null): string {
     if (!timestamp) return "-";
-    const date = new Date(timestamp * 1000);
-    return date.toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    const shifted = new Date((timestamp + 8 * 3600) * 1000);
+    const pad = (n: number): string => String(n).padStart(2, "0");
+    return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())} ` +
+        `${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}:${pad(shifted.getUTCSeconds())} +08:00`;
 }
 
 function activationPage(): Response {
@@ -202,7 +218,8 @@ function renderNav(active: string | null): string {
         { id: "overview", label: "📊 概览" },
         { id: "snapshot", label: "📸 远程快照" },
         { id: "images", label: "🖼️ 图片推送" },
-        { id: "requests", label: "🔔 审批推送" },
+        { id: "requests", label: "📨 审批推送" },
+        { id: "notify", label: "🔔 通知推送" },
         { id: "devices", label: "📱 设备管理" },
     ];
     const tabHtml = tabs
@@ -214,6 +231,7 @@ function renderNav(active: string | null): string {
             <a href="/admin" class="brand">🛂 <span>Kiro Passport</span></a>
             <div class="nav-tabs">${tabHtml}</div>
             <div class="topnav-actions">
+                <a href="/simulator" class="btn btn-sm btn-accent" target="_blank">🎮 模拟器</a>
                 <a href="/admin" class="btn btn-sm nav-btn">🔄 刷新</a>
                 <a href="/admin/pair" class="btn btn-sm btn-primary">➕ 配对新设备</a>
             </div>
@@ -632,6 +650,30 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
     const activeCount = deviceList.filter((d) => d.status === "active").length;
     const pendingCount = pendings.length;
 
+    // 最近 hook 推送记录（管理后台「Hook 日志」）
+    const hookLogs = await listHookNotifyLogs(env, { limit: 50 }).catch(() => []);
+    let hookLogsRows = "";
+    if (hookLogs.length === 0) {
+        hookLogsRows = `<tr><td colspan="6" class="empty-state">暂无 hook 推送记录。Agent 结束或 bridge notify 触发后会在此显示。</td></tr>`;
+    } else {
+        for (const log of hookLogs) {
+            const resultBadge = log.result === "sent"
+                ? `<span class="badge badge-active">✓ 已送达</span>`
+                : log.result === "offline"
+                    ? `<span class="badge" style="color:#d29922;border:1px solid rgba(210,153,34,0.3);background:rgba(210,153,34,0.1);">● 离线</span>`
+                    : `<span class="badge" style="color:#f85149;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.1);">✗ 失败</span>`;
+            hookLogsRows += `
+            <tr>
+                <td><span class="code-mono">${escapeHtml(log.device_id)}</span></td>
+                <td>${formatDate(log.created_at)}</td>
+                <td style="max-width:180px;word-break:break-all;">${escapeHtml(log.title)}</td>
+                <td style="max-width:300px;word-break:break-all;"><span style="color:var(--text-muted);">${escapeHtml(log.content)}</span></td>
+                <td>${log.online ? '🟢 在线' : '⚪ 离线'}</td>
+                <td>${resultBadge}</td>
+            </tr>`;
+        }
+    }
+
     let devicesRows = "";
     let deviceOptions = "";
     if (deviceList.length === 0) {
@@ -777,6 +819,13 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     <div>
                         <div class="quick-title">审批推送</div>
                         <div class="quick-desc">向设备推送审批请求并查看日志</div>
+                    </div>
+                </a>
+                <a href="#" class="quick-card" onclick="switchTab('notify'); return false;">
+                    <span class="quick-icon">📣</span>
+                    <div>
+                        <div class="quick-title">通知推送</div>
+                        <div class="quick-desc">向设备屏幕推送通知（支持中文）</div>
                     </div>
                 </a>
                 <a href="/admin/pair" class="quick-card">
@@ -987,6 +1036,57 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                         </tr>
                     </thead>
                     <tbody>${devicesRows}</tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- 🔔 通知推送 (Hook Notify) -->
+        <section class="page" data-page="notify">
+            <div class="page-head">
+                <h1>🔔 通知推送</h1>
+                <p class="page-desc">向设备推送通知内容（支持中文，显示在设备屏幕），并查看 Hook 推送日志</p>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">🚀 在线发送通知 (Hook Notify)</div>
+                </div>
+                <div class="push-form">
+                    <div class="push-grid">
+                        <div class="form-group">
+                            <label class="form-label">目标设备</label>
+                            <select id="hookTargetDevice" class="form-select">${deviceOptions}</select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">标题</label>
+                            <input id="hookTitle" type="text" class="form-input" maxlength="32" value="Agent done">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">内容</label>
+                        <textarea id="hookContent" class="form-input" rows="3" maxlength="2000" placeholder="要推送到设备屏幕显示的通知内容"></textarea>
+                    </div>
+                    <button type="button" id="hookSendBtn" class="btn btn-primary" style="padding:0.75rem;font-size:1rem;" onclick="pushHookNotify()">
+                        🔔 立即发送到设备
+                    </button>
+                    <div id="hookStatus" style="display:none;padding:0.75rem;border-radius:6px;font-size:0.85rem;"></div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">🔔 Hook 推送日志 (最近 ${hookLogs.length} 条)</div>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>设备 ID</th>
+                            <th>推送时间</th>
+                            <th>标题</th>
+                            <th>内容</th>
+                            <th>设备在线</th>
+                            <th>结果</th>
+                        </tr>
+                    </thead>
+                    <tbody>${hookLogsRows}</tbody>
                 </table>
             </div>
         </section>
@@ -1210,7 +1310,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
         });
 
         const initialTab = (location.hash || "").slice(1);
-        switchTab(["snapshot", "images", "requests", "devices"].includes(initialTab) ? initialTab : "overview");
+        switchTab(["snapshot", "images", "requests", "notify", "devices"].includes(initialTab) ? initialTab : "overview");
 
         // ----------------- 图片推送工作台 (Image Studio) -----------------
         let currentBase64 = "";
@@ -1320,6 +1420,63 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             } finally {
                 btn.disabled = false;
                 btn.innerText = "🚀 立即推送到设备屏幕";
+            }
+        }
+
+        // ---------------- 在线发送 Hook（测试推送） ----------------
+        async function pushHookNotify() {
+            const deviceId = document.getElementById("hookTargetDevice").value;
+            const title = document.getElementById("hookTitle").value || "Agent done";
+            const content = document.getElementById("hookContent").value.trim();
+            const btn = document.getElementById("hookSendBtn");
+            const statusBox = document.getElementById("hookStatus");
+
+            if (!deviceId) { alert("请先选择目标设备！"); return; }
+            if (!content) { alert("请输入要推送的内容！"); return; }
+
+            btn.disabled = true;
+            btn.innerText = "正在发送...";
+            statusBox.style.display = "none";
+            try {
+                const res = await fetch("/admin/hook/push", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ device_id: deviceId, title, content })
+                });
+                const result = await res.json();
+                statusBox.style.display = "block";
+                if (result.ok) {
+                    if (result.sent) {
+                        statusBox.style.background = "rgba(46, 160, 67, 0.15)";
+                        statusBox.style.border = "1px solid rgba(46, 160, 67, 0.3)";
+                        statusBox.style.color = "#3fb950";
+                        statusBox.innerHTML = "✅ <strong>已发送到设备</strong>（设备在线）。请到设备「Kiro Passport」页面查看。";
+                    } else if (result.online) {
+                        statusBox.style.background = "rgba(235, 179, 56, 0.15)";
+                        statusBox.style.border = "1px solid rgba(235, 179, 56, 0.3)";
+                        statusBox.style.color = "#d29922";
+                        statusBox.innerHTML = "⚠️ 设备在线但未送达（可能页面未就绪）。";
+                    } else {
+                        statusBox.style.background = "rgba(235, 179, 56, 0.15)";
+                        statusBox.style.border = "1px solid rgba(235, 179, 56, 0.3)";
+                        statusBox.style.color = "#d29922";
+                        statusBox.innerHTML = "⚠️ 设备当前处于<strong>离线</strong>状态。已记录到 Hook 日志，设备上线后可重发。";
+                    }
+                } else {
+                    statusBox.style.background = "rgba(248, 81, 73, 0.15)";
+                    statusBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
+                    statusBox.style.color = "#f85149";
+                    statusBox.innerHTML = "❌ 发送失败: " + (result.error || "未知错误");
+                }
+            } catch (err) {
+                statusBox.style.display = "block";
+                statusBox.style.background = "rgba(248, 81, 73, 0.15)";
+                statusBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
+                statusBox.style.color = "#f85149";
+                statusBox.innerHTML = "❌ 网络请求失败: " + err;
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "🔔 立即发送到设备";
             }
         }
 
@@ -1434,6 +1591,62 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 btn.innerText = "🚀 立即推送审批请求";
             }
         }
+        // ----------------- 通知推送 (Hook Notify) -----------------
+        async function pushHookNotify() {
+            const deviceId = document.getElementById("hookTargetDevice").value;
+            const title = document.getElementById("hookTitle").value || "Agent done";
+            const content = document.getElementById("hookContent").value.trim();
+            const btn = document.getElementById("hookSendBtn");
+            const statusBox = document.getElementById("hookStatus");
+
+            if (!deviceId) { alert("请先选择目标设备！"); return; }
+            if (!content) { alert("请输入要推送的内容！"); return; }
+
+            btn.disabled = true;
+            btn.innerText = "正在发送...";
+            statusBox.style.display = "none";
+            try {
+                const res = await fetch("/admin/hook/push", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ device_id: deviceId, title, content })
+                });
+                const result = await res.json();
+                statusBox.style.display = "block";
+                if (result.ok) {
+                    if (result.sent) {
+                        statusBox.style.background = "rgba(46, 160, 67, 0.15)";
+                        statusBox.style.border = "1px solid rgba(46, 160, 67, 0.3)";
+                        statusBox.style.color = "#3fb950";
+                        statusBox.innerHTML = "✅ <strong>已发送到设备</strong>（设备在线）。请到设备「Kiro Passport」页面查看。";
+                    } else if (result.online) {
+                        statusBox.style.background = "rgba(235, 179, 56, 0.15)";
+                        statusBox.style.border = "1px solid rgba(235, 179, 56, 0.3)";
+                        statusBox.style.color = "#d29922";
+                        statusBox.innerHTML = "⚠️ 设备在线但未送达（可能页面未就绪）。";
+                    } else {
+                        statusBox.style.background = "rgba(235, 179, 56, 0.15)";
+                        statusBox.style.border = "1px solid rgba(235, 179, 56, 0.3)";
+                        statusBox.style.color = "#d29922";
+                        statusBox.innerHTML = "⚠️ 设备当前处于<strong>离线</strong>状态。已记录到 Hook 日志，设备上线后可重发。";
+                    }
+                } else {
+                    statusBox.style.background = "rgba(248, 81, 73, 0.15)";
+                    statusBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
+                    statusBox.style.color = "#f85149";
+                    statusBox.innerHTML = "❌ 发送失败: " + (result.error || "未知错误");
+                }
+            } catch (err) {
+                statusBox.style.display = "block";
+                statusBox.style.background = "rgba(248, 81, 73, 0.15)";
+                statusBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
+                statusBox.style.color = "#f85149";
+                statusBox.innerHTML = "❌ 网络请求失败: " + err;
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "🔔 立即发送到设备";
+            }
+        }
         </script>
     `;
 
@@ -1479,6 +1692,56 @@ async function adminPushImageWeb(request: Request, env: Env): Promise<Response> 
     }
 
     return json({ ok: true, image_id: imageId, sent, online });
+}
+
+/* 管理后台「在线发送 Hook」：以 admin 登录态向设备推送一条通知，无需 Hook token。
+ * 与 pushNotify 走同一条 DO 通道并落地 hook_notify_log，方便在没有 agent 环境时自测。 */
+async function adminHookPush(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    const body = await request.json<{ device_id: string; title?: string; content?: string }>().catch(() => null);
+    if (!body || !isDeviceId(body.device_id) || typeof body.content !== "string" || !body.content) {
+        return json({ error: "invalid hook payload" }, 400);
+    }
+    const sanitize = (value: unknown, maxLength: number, fallback: string): string => {
+        if (typeof value !== "string") return fallback;
+        return ([...value.replace(/[^ -~]/gu, "").slice(0, maxLength)]).join("") || fallback;
+    };
+    const title = sanitize(body.title, 32, "Agent");
+    const notifyId = crypto.randomUUID();
+    const ts = Math.floor(Date.now() / 1000);
+
+    let sent = false;
+    let online = false;
+    let relayOk = false;
+    try {
+        const relay = env.PASSPORTS.get(env.PASSPORTS.idFromName(body.device_id));
+        const res = await relay.fetch("https://passport.internal/internal/notify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Passport-Device-Id": body.device_id },
+            body: JSON.stringify({ id: notifyId, title, content: body.content, ts }),
+        });
+        relayOk = res.ok;
+        if (res.ok) {
+            const data = await res.json<{ sent?: boolean; online?: boolean }>().catch(() => null);
+            sent = Boolean(data?.sent);
+            online = Boolean(data?.online);
+        }
+    } catch (err) {
+        console.error("Admin hook push failed", err);
+    }
+
+    // 写入 hook 日志（与管理后台 Hook 日志一致）
+    try {
+        await writeHookNotifyLog(env, {
+            id: notifyId, device_id: body.device_id, session_id: null,
+            title, content: body.content,
+            result: relayOk ? (sent ? "sent" : "offline") : "error",
+            online: online ? 1 : 0, created_at: ts,
+        });
+    } catch (err) { console.error("Admin hook log write failed", err); }
+
+    return json({ ok: true, sent, online, relay_ok: relayOk });
 }
 
 async function adminDeleteImageWeb(request: Request, env: Env): Promise<Response> {
@@ -2151,6 +2414,56 @@ async function adminPushStatusWeb(request: Request, env: Env): Promise<Response>
         expires_at: record.expires_at,
         decided_at: record.decided_at,
     });
+}
+
+async function pushNotify(request: Request, env: Env, deviceId: string): Promise<Response> {
+    if (!hasBearerSecret(request, env.HOOK_AUTH_SECRET)) return json({ error: "unauthorized" }, 401);
+    const body = await request.json<{ session_id?: string; title?: string; content?: string }>().catch(() => null);
+    if (!body || typeof body.content !== "string") return json({ error: "invalid notify body" }, 400);
+    const sanitize = (value: unknown, maxLength: number, fallback: string): string => {
+        if (typeof value !== "string") return fallback;
+        return ([...value.replace(/[^ -~]/gu, "").slice(0, maxLength)]).join("") || fallback;
+    };
+    const title = sanitize(body.title, 32, "Agent");
+    const notifyId = crypto.randomUUID();
+    const ts = Math.floor(Date.now() / 1000);
+
+    const relay = env.PASSPORTS.get(env.PASSPORTS.idFromName(deviceId));
+    const relayResponse = await relay.fetch("https://passport.internal/internal/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Passport-Device-Id": deviceId },
+        body: JSON.stringify({ id: notifyId, title, content: body.content, ts }),
+    });
+    if (!relayResponse.ok) {
+        // Record the failed push for auditing.
+        try {
+            await writeHookNotifyLog(env, {
+                id: notifyId, device_id: deviceId, session_id: body.session_id ?? null,
+                title, content: body.content, result: "error", online: 0, created_at: ts,
+            });
+        } catch (err) { console.error("notify log write (error) failed", err); }
+        return json({ error: "relay unavailable" }, 503);
+    }
+
+    // Persist the push outcome (delivered / device online) for the admin dashboard.
+    try {
+        let sent = false;
+        let online = false;
+        try {
+            const data = await relayResponse.json<{ sent?: boolean; online?: boolean }>();
+            sent = Boolean(data?.sent);
+            online = Boolean(data?.online);
+        } catch {}
+        const result: "sent" | "offline" = sent ? "sent" : "offline";
+        await writeHookNotifyLog(env, {
+            id: notifyId, device_id: deviceId, session_id: body.session_id ?? null,
+            title, content: body.content, result, online: online ? 1 : 0, created_at: ts,
+        });
+        return json({ ok: true, sent, online });
+    } catch (err) {
+        console.error("Hook notify log write failed", err);
+        return json({ ok: false, error: "log_failed" }, 500);
+    }
 }
 
 async function getApproval(request: Request, env: Env, requestId: string): Promise<Response> {
