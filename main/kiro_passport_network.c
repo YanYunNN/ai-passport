@@ -35,7 +35,7 @@ static char s_ctrl_rx_buffer[1024];
 static size_t s_ctrl_rx_len = 0;
 
 /* 本机通知：静态分配（无 PSRAM），由 s_notify_lock 保护。
- * content 缓冲 320 字节，最大约 319 个可打印 ASCII 字符。 */
+ * content 缓冲 900 字节，可容纳约 900/3≈290 个 UTF-8 中文字符。 */
 static kiro_passport_notify_info_t s_notify;
 static SemaphoreHandle_t s_notify_lock = NULL;
 
@@ -131,7 +131,8 @@ static bool safe_value(const char *value, size_t max_length)
     return true;
 }
 
-/* 校验可打印 ASCII（字符 0x20-0x7E，不含 '"' 与 '\'），空或超长视为无效。 */
+/* 校验严格可打印 ASCII（字符 0x20-0x7E，不含 '"' 与 '\'），空或超长视为无效。
+ * 用于通知 id 等结构/安全字段。 */
 static bool printable_notify_text(const char *value, size_t buffer_size)
 {
     if (!value || !value[0] || strlen(value) >= buffer_size) return false;
@@ -139,6 +140,20 @@ static bool printable_notify_text(const char *value, size_t buffer_size)
         unsigned char character = (unsigned char)*cursor;
         if (character < 0x20 || character > 0x7e || character == '"' ||
             character == '\\') return false;
+    }
+    return true;
+}
+
+/* 校验可显示的 UTF-8 文本：允许普通可打印 ASCII 与多字节（>=0x80）中文字节，
+ * 但拒绝 '"'、'\' 与控制符（0x00-0x1F 及 0x7F）。空或超长视为无效。
+ * 用于通知的 title/content 等展示字段。 */
+static bool printable_utf8_text(const char *value, size_t buffer_size)
+{
+    if (!value || !value[0] || strlen(value) >= buffer_size) return false;
+    for (const char *cursor = value; *cursor; cursor++) {
+        unsigned char character = (unsigned char)*cursor;
+        if (character == '"' || character == '\\' || character < 0x20 ||
+            character == 0x7f) return false;
     }
     return true;
 }
@@ -418,8 +433,8 @@ static bool parse_notify(const char *message)
         !extract_json_string(message, "content", content, sizeof(content), NULL, NULL)) {
         return false;
     }
-    if (!printable_notify_text(id, sizeof(id)) || !printable_notify_text(title, sizeof(title)) ||
-        !printable_notify_text(content, sizeof(content))) {
+    if (!printable_notify_text(id, sizeof(id)) || !printable_utf8_text(title, sizeof(title)) ||
+        !printable_utf8_text(content, sizeof(content))) {
         return false;
     }
 

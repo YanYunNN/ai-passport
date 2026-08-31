@@ -69,12 +69,13 @@ typedef struct {
 bool kiro_passport_network_get_image(kiro_passport_image_info_t *out_info);
 
 /* 内存预算约束：ESP32-C3 无 PSRAM，通知在全局静态区中保存。
- * content 使用 320 字节缓冲（最大约 319 个可打印 ASCII 字符，由 LVGL 换行显示），
- * title 使用 48 字节缓冲（设计上限约 40 字符）。 */
+ * content 使用 900 字节缓冲：中文按 UTF-8 每字 3 字节，可容纳约 290 字。
+ * 由于设备控制缓冲固定为 1024 字节，整体 notify 帧被 worker 严格限制在
+ * 1000 字节内，正文实际上限约 850 字节（约 280 汉字）。title 48 字节。 */
 typedef struct {
     char id[37];
     char title[48];
-    char content[320];
+    char content[900];
     uint32_t version; /* 每次收到新通知递增 */
     bool present;
 } kiro_passport_notify_info_t;

@@ -63,7 +63,7 @@ static void skip_space(const char **cursor)
     while (isspace((unsigned char)**cursor)) (*cursor)++;
 }
 
-static bool read_string(const char **cursor, char *out, size_t out_size)
+static bool read_string(const char **cursor, char *out, size_t out_size, bool allow_utf8)
 {
     skip_space(cursor);
     if (*(*cursor)++ != '"') return false;
@@ -71,8 +71,10 @@ static bool read_string(const char **cursor, char *out, size_t out_size)
     size_t length = 0;
     while (**cursor && **cursor != '"') {
         unsigned char character = (unsigned char)**cursor;
-        if (character < 0x20 || character > 0x7e || character == '\\' ||
-            length + 1 >= out_size) return false;
+        /* 默认仅接受可打印 ASCII；allow_utf8 时额外放行多字节 UTF-8（>=0x80），
+         * 用于 tool/summary 等展示字段。控制符、双引号、反斜杠一律拒绝。 */
+        if (character < 0x20 || character == 0x7f || character == '\\' ||
+            (!allow_utf8 && character > 0x7e) || length + 1 >= out_size) return false;
         out[length++] = *(*cursor)++;
     }
     if (**cursor != '"') return false;
@@ -117,7 +119,7 @@ static bool parse_request(const char *message, request_message_t *request)
             cursor++;
             break;
         }
-        if (!read_string(&cursor, key, sizeof(key))) return false;
+        if (!read_string(&cursor, key, sizeof(key), false)) return false;
         skip_space(&cursor);
         if (*cursor++ != ':') return false;
 
@@ -129,22 +131,22 @@ static bool parse_request(const char *message, request_message_t *request)
             parsed = read_uint(&cursor, &version) && version == 1;
         } else if (strcmp(key, "type") == 0) {
             field = FIELD_TYPE;
-            parsed = read_string(&cursor, request->type, sizeof(request->type));
+            parsed = read_string(&cursor, request->type, sizeof(request->type), false);
         } else if (strcmp(key, "device_id") == 0) {
             field = FIELD_DEVICE;
-            parsed = read_string(&cursor, request->device_id, sizeof(request->device_id));
+            parsed = read_string(&cursor, request->device_id, sizeof(request->device_id), false);
         } else if (strcmp(key, "session_id") == 0) {
             field = FIELD_SESSION;
-            parsed = read_string(&cursor, request->session_id, sizeof(request->session_id));
+            parsed = read_string(&cursor, request->session_id, sizeof(request->session_id), false);
         } else if (strcmp(key, "request_id") == 0) {
             field = FIELD_REQUEST;
-            parsed = read_string(&cursor, request->request_id, sizeof(request->request_id));
+            parsed = read_string(&cursor, request->request_id, sizeof(request->request_id), false);
         } else if (strcmp(key, "tool") == 0) {
             field = FIELD_TOOL;
-            parsed = read_string(&cursor, request->tool, sizeof(request->tool));
+            parsed = read_string(&cursor, request->tool, sizeof(request->tool), true);
         } else if (strcmp(key, "summary") == 0) {
             field = FIELD_SUMMARY;
-            parsed = read_string(&cursor, request->summary, sizeof(request->summary));
+            parsed = read_string(&cursor, request->summary, sizeof(request->summary), true);
         } else if (strcmp(key, "expires_at") == 0) {
             field = FIELD_EXPIRY;
             parsed = read_uint(&cursor, &request->expires_at);
