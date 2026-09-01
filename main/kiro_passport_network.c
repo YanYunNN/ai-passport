@@ -110,6 +110,7 @@ typedef struct {
     char message[KIRO_NETWORK_MESSAGE_MAX];
     size_t message_length;
     volatile bool transport_failed;
+    volatile bool paused;
 } network_context_t;
 
 static network_context_t s_network;
@@ -980,6 +981,11 @@ static void network_task(void *argument)
             s_network.transport_failed = false;
             destroy_client();
         }
+        if (s_network.paused) {
+            destroy_client();
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
         if (!is_configured()) {
             destroy_client();
             set_state(KIRO_PASSPORT_NETWORK_UNCONFIGURED);
@@ -1186,3 +1192,12 @@ const char *kiro_passport_network_state_name(kiro_passport_network_state_t state
     default: return "Relay error";
     }
 }
+
+void kiro_passport_network_pause(bool pause)
+{
+    s_network.paused = pause;
+    if (pause) {
+        destroy_client();
+    }
+}
+

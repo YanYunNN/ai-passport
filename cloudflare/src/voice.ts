@@ -3,6 +3,7 @@
 // (Whisper via Cloudflare Workers AI). TTS goes through the Edge TTS proxy
 // Worker on tts.yanyun.asia (OpenAI-compatible POST /v1/audio/speech).
 import { bearerToken, hasBearerSecret, verifyAdminBasicAuth, verifyDeviceCredential } from "./auth";
+import { writeVoiceLog, listVoiceLogs } from "./db";
 import type { Env } from "./env";
 
 const json = (body: unknown, status = 200): Response =>
@@ -16,14 +17,21 @@ async function voiceAuthorized(request: Request, env: Env): Promise<boolean> {
     // 固件 Chat 用 X-Device-Id + Bearer 设备凭证调用 ASR/Chat/TTS。
     const deviceId = request.headers.get("X-Device-Id");
     const credential = bearerToken(request);
-    if (deviceId && credential && (await verifyDeviceCredential(env, deviceId, credential))) {
-        return true;
+    if (deviceId && credential) {
+        const verified = await verifyDeviceCredential(env, deviceId, credential);
+        if (verified) return true;
+        console.warn(`voiceAuthorized: device auth failed for deviceId=${deviceId}`);
+    } else if (deviceId || credential) {
+        console.warn(`voiceAuthorized: partial device headers (deviceId=${deviceId}, hasCred=${!!credential})`);
     }
-    return (await verifyAdminBasicAuth(request, env)) !== null;
+    const adminUser = await verifyAdminBasicAuth(request, env);
+    if (adminUser) return true;
+    console.warn(`voiceAuthorized: unauthorized request to ${request.url}`);
+    return false;
 }
 
 const VOICE_PAGE_CSS = `
-:root { --bg:#080a10; --panel:#0e1117; --border:rgba(148,163,184,0.14); --text:#e7ecf3; --muted:#8b94a3; --accent:#6366f1; --accent2:#22d3ee; --ok:#4ade80; }
+:root { --bg:#080a10; --panel:#0e1117; --border:rgba(148,163,184,0.14); --text:#e7ecf3; --muted:#8b94a3; --accent:#6366f1; --accent2:#22d3ee; --ok:#4ade80; --err:#f87171; }
 * { box-sizing:border-box; margin:0; padding:0; }
 body {
     font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -73,8 +81,27 @@ body {
 .hint { text-align:center; color:var(--muted); font-size:0.75rem; padding:0.4rem 1rem 0.8rem; }
 .cfgbtn { background:rgba(148,163,184,0.1); border:1px solid var(--border); color:var(--text); border-radius:999px; width:34px; height:34px; cursor:pointer; font-size:1rem; flex:none; }
 .cfgbtn:hover { background:rgba(148,163,184,0.22); }
+.logbtn { background:rgba(148,163,184,0.1); border:1px solid var(--border); color:var(--text); border-radius:999px; padding:0.25rem 0.7rem; cursor:pointer; font-size:0.78rem; display:flex; align-items:center; gap:0.3rem; }
+.logbtn:hover { background:rgba(148,163,184,0.22); color:#22d3ee; border-color:rgba(34,211,238,0.4); }
 .cfgpanel { position:fixed; top:62px; right:16px; width:300px; max-width:calc(100vw - 32px); background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:1rem 1.1rem 1.1rem; z-index:20; box-shadow:0 18px 48px -12px rgba(0,0,0,0.75); display:none; }
 .cfgpanel.open { display:block; animation:pop .18s ease; }
+.logpanel { position:fixed; top:0; right:0; width:440px; max-width:100vw; height:100vh; background:var(--panel); border-left:1px solid var(--border); z-index:30; box-shadow:-12px 0 36px rgba(0,0,0,0.6); display:flex; flex-direction:column; transform:translateX(100%); transition:transform .22s cubic-bezier(0.16,1,0.3,1); }
+.logpanel.open { transform:translateX(0); }
+.logheader { padding:0.9rem 1.1rem; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+.logtitle { font-weight:700; font-size:0.98rem; display:flex; align-items:center; gap:0.4rem; }
+.loglist { flex:1; overflow-y:auto; padding:0.9rem; display:flex; flex-direction:column; gap:0.8rem; }
+.logitem { background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:0.75rem; font-size:0.82rem; }
+.logitem.err { border-color:rgba(248,113,113,0.35); background:rgba(248,113,113,0.05); }
+.logitem-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem; }
+.logbadge { font-size:0.7rem; padding:0.15rem 0.5rem; border-radius:999px; font-weight:600; }
+.logbadge.ok { background:rgba(74,222,128,0.15); color:var(--ok); border:1px solid rgba(74,222,128,0.3); }
+.logbadge.err { background:rgba(248,113,113,0.15); color:var(--err); border:1px solid rgba(248,113,113,0.3); }
+.logtime { font-size:0.72rem; color:var(--muted); }
+.logmetrics { display:flex; gap:0.6rem; flex-wrap:wrap; font-size:0.72rem; color:var(--accent2); margin-bottom:0.4rem; padding-bottom:0.3rem; border-bottom:1px dashed var(--border); }
+.logdev { color:var(--muted); font-size:0.7rem; margin-left:auto; }
+.logbubble { margin-top:0.3rem; padding:0.4rem 0.6rem; border-radius:6px; font-size:0.8rem; }
+.logbubble.u { background:rgba(99,102,241,0.12); color:#c7d2fe; }
+.logbubble.a { background:rgba(255,255,255,0.05); color:#e2e8f0; margin-top:0.25rem; }
 .cfgrow { display:flex; flex-direction:column; gap:0.3rem; margin-bottom:0.9rem; }
 .cfgrow label { font-size:0.78rem; color:var(--muted); }
 .cfgrow select, .cfgrow input[type=text] { background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:8px; padding:0.5rem 0.6rem; color:var(--text); font-size:0.88rem; outline:none; width:100%; }
@@ -102,6 +129,7 @@ function voicePage(): Response {
 <body>
 <div class="topbar">
     <div class="brand">🎙️ <span>Kiro Voice</span></div>
+    <button class="logbtn" id="logBtn" title="查看对话与录音追溯日志">📋 日志</button>
     <button class="status" id="ttsToggle" title="自动朗读 AI 回复">🔊 自动朗读</button>
     <button class="stopbtn" id="stopBtn" title="停止朗读" hidden>⏹ 停止</button>
     <div class="status" id="statusPill">检测中…</div>
@@ -141,6 +169,18 @@ function voicePage(): Response {
 <div class="chat" id="chat">
     <div class="bubble system">按住麦克风说话，或直接输入文字；识别后交给 AI 回答。</div>
 </div>
+<div class="logpanel" id="logPanel">
+    <div class="logheader">
+        <div class="logtitle">📋 <span>对话与录音追踪</span></div>
+        <div style="display:flex; gap:0.4rem;">
+            <button class="logbtn" id="refreshLogBtn">🔄 刷新</button>
+            <button class="logbtn" id="closeLogBtn">✕</button>
+        </div>
+    </div>
+    <div class="loglist" id="logList">
+        <div style="text-align:center; color:var(--muted); font-size:0.8rem; margin-top:2rem;">加载中…</div>
+    </div>
+</div>
 <div class="inputbar">
     <button class="micbtn" id="micBtn" title="点击开始/结束录音">🎙️</button>
     <input class="textinput" id="textInput" placeholder="输入文字，或点麦克风说话…" autocomplete="off">
@@ -168,6 +208,66 @@ function voicePage(): Response {
 
     const ttsToggle = document.getElementById("ttsToggle");
     const stopBtn = document.getElementById("stopBtn");
+    const logBtn = document.getElementById("logBtn");
+    const logPanel = document.getElementById("logPanel");
+    const closeLogBtn = document.getElementById("closeLogBtn");
+    const refreshLogBtn = document.getElementById("refreshLogBtn");
+    const logList = document.getElementById("logList");
+
+    logBtn.addEventListener("click", () => {
+        logPanel.classList.toggle("open");
+        if (logPanel.classList.contains("open")) loadLogs();
+    });
+    closeLogBtn.addEventListener("click", () => logPanel.classList.remove("open"));
+    refreshLogBtn.addEventListener("click", () => loadLogs());
+
+    function formatTime(unixSec) {
+        if (!unixSec) return "--";
+        const d = new Date(unixSec * 1000);
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    async function loadLogs() {
+        logList.innerHTML = '<div style="text-align:center; color:var(--muted); font-size:0.8rem; margin-top:2rem;">加载中…</div>';
+        try {
+            const data = await api("/v1/voice/logs?limit=40");
+            if (!data.logs || data.logs.length === 0) {
+                logList.innerHTML = '<div style="text-align:center; color:var(--muted); font-size:0.8rem; margin-top:2rem;">暂无对话日志</div>';
+                return;
+            }
+            logList.innerHTML = "";
+            for (const item of data.logs) {
+                const div = document.createElement("div");
+                const isOk = item.status === "success";
+                div.className = "logitem" + (isOk ? "" : " err");
+                div.innerHTML = \`
+                    <div class="logitem-top">
+                        <span class="logbadge \${isOk ? 'ok' : 'err'}">\${item.status}</span>
+                        <span class="logtime">\${formatTime(item.created_at)}</span>
+                        <span class="logdev">\${item.device_id || 'unknown'}</span>
+                    </div>
+                    <div class="logmetrics">
+                        <span>总耗时: <b>\${item.latency_total_ms || 0}ms</b></span>
+                        <span>ASR: \${item.latency_asr_ms || 0}ms</span>
+                        <span>LLM: \${item.latency_chat_ms || 0}ms</span>
+                        <span>TTS: \${item.latency_tts_ms || 0}ms</span>
+                        \${item.audio_bytes ? '<span>音频: ' + Math.round(item.audio_bytes/1024) + 'KB</span>' : ''}
+                    </div>
+                    \${item.asr_text ? '<div class="logbubble u">🗣️ ' + escapeHtml(item.asr_text) + '</div>' : ''}
+                    \${item.ai_reply ? '<div class="logbubble a">🤖 ' + escapeHtml(item.ai_reply) + '</div>' : ''}
+                    \${item.error_msg ? '<div style="color:var(--err); margin-top:0.3rem; font-size:0.75rem;">⚠️ ' + escapeHtml(item.error_msg) + '</div>' : ''}
+                \`;
+                logList.appendChild(div);
+            }
+        } catch (err) {
+            logList.innerHTML = '<div style="text-align:center; color:var(--err); font-size:0.8rem; margin-top:2rem;">日志加载失败: ' + err.message + '</div>';
+        }
+    }
+
+    function escapeHtml(str) {
+        return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
     ttsToggle.addEventListener("click", () => {
         autoplay = !autoplay;
         ttsToggle.textContent = autoplay ? "🔊 自动朗读" : "🔇 已静音";
@@ -806,7 +906,15 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
             });
         }
 
+        if (request.method === "GET" && url.pathname === "/v1/voice/logs") {
+            const deviceId = url.searchParams.get("device_id") || undefined;
+            const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+            const logs = await listVoiceLogs(env, { deviceId, limit });
+            return json({ ok: true, logs });
+        }
+
         if (request.method === "POST" && url.pathname === "/v1/voice/asr") {
+            const deviceId = request.headers.get("X-Device-Id") || "unknown";
             const form = await request.formData().catch(() => null);
             const file = form?.get("file");
             if (!file || typeof file === "string") return json({ error: "missing audio file" }, 400);
@@ -815,8 +923,225 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
             if (audio.byteLength > 2_000_000) {
                 return json({ error: "音频过大（单次请控制在 30 秒内）" }, 400);
             }
-            const text = await whisperTranscribe(env, audio);
-            return json({ ok: true, text });
+            const t0 = Date.now();
+            let text = "";
+            try {
+                text = await whisperTranscribe(env, audio);
+                const dur = Date.now() - t0;
+                console.log(JSON.stringify({ tag: "voice_asr", device_id: deviceId, duration_ms: dur, text }));
+                return json({ ok: true, text });
+            } catch (err: any) {
+                const dur = Date.now() - t0;
+                console.error(JSON.stringify({ tag: "voice_asr_error", device_id: deviceId, duration_ms: dur, error: err?.message }));
+                throw err;
+            }
+        }
+
+        if (request.method === "POST" && url.pathname === "/v1/voice/converse") {
+            const deviceId = request.headers.get("X-Device-Id") || "web-user";
+            const form = await request.formData().catch(() => null);
+            const file = form?.get("file");
+            if (!file || typeof file === "string") {
+                await writeVoiceLog(env, {
+                    device_id: deviceId,
+                    session_id: null,
+                    asr_text: null,
+                    ai_reply: null,
+                    audio_bytes: 0,
+                    mp3_bytes: 0,
+                    latency_asr_ms: 0,
+                    latency_chat_ms: 0,
+                    latency_tts_ms: 0,
+                    latency_total_ms: 0,
+                    status: "missing_audio",
+                    error_msg: "missing audio file",
+                    created_at: Math.floor(Date.now() / 1000),
+                });
+                return json({ error: "missing audio file" }, 400);
+            }
+            const audio = await file.arrayBuffer();
+            if (!audio || audio.byteLength === 0) return json({ error: "empty audio" }, 400);
+            if (audio.byteLength > 2_000_000) {
+                return json({ error: "音频过大（单次请控制在 30 秒内）" }, 400);
+            }
+            const historyStr = form?.get("history");
+            let history: ChatMessage[] = [];
+            if (typeof historyStr === "string" && historyStr.length > 0) {
+                try {
+                    const parsed = JSON.parse(historyStr);
+                    history = validateMessages(parsed) || [];
+                } catch {
+                    history = [];
+                }
+            }
+
+            const t0 = Date.now();
+            let asrText = "";
+            let t1 = t0;
+            try {
+                asrText = await whisperTranscribe(env, audio);
+                t1 = Date.now();
+                console.log(JSON.stringify({
+                    tag: "voice_trace",
+                    stage: "asr",
+                    device_id: deviceId,
+                    duration_ms: t1 - t0,
+                    audio_bytes: audio.byteLength,
+                    text: asrText,
+                }));
+            } catch (err: any) {
+                const dur = Date.now() - t0;
+                await writeVoiceLog(env, {
+                    device_id: deviceId,
+                    session_id: null,
+                    asr_text: null,
+                    ai_reply: null,
+                    audio_bytes: audio.byteLength,
+                    mp3_bytes: 0,
+                    latency_asr_ms: dur,
+                    latency_chat_ms: 0,
+                    latency_tts_ms: 0,
+                    latency_total_ms: dur,
+                    status: "asr_error",
+                    error_msg: err?.message || String(err),
+                    created_at: Math.floor(Date.now() / 1000),
+                });
+                throw err;
+            }
+
+            if (!asrText) {
+                const dur = t1 - t0;
+                await writeVoiceLog(env, {
+                    device_id: deviceId,
+                    session_id: null,
+                    asr_text: "",
+                    ai_reply: null,
+                    audio_bytes: audio.byteLength,
+                    mp3_bytes: 0,
+                    latency_asr_ms: dur,
+                    latency_chat_ms: 0,
+                    latency_tts_ms: 0,
+                    latency_total_ms: dur,
+                    status: "asr_empty",
+                    error_msg: "未识别到有效语音",
+                    created_at: Math.floor(Date.now() / 1000),
+                });
+                return json({ error: "未识别到有效语音", asr: "" }, 400);
+            }
+
+            const messages: ChatMessage[] = [...history, { role: "user", content: asrText }];
+            let reply = "";
+            let t2 = t1;
+            try {
+                reply = await aiChat(env, messages);
+                t2 = Date.now();
+                console.log(JSON.stringify({
+                    tag: "voice_trace",
+                    stage: "chat",
+                    device_id: deviceId,
+                    duration_ms: t2 - t1,
+                    reply_len: reply.length,
+                    reply,
+                }));
+            } catch (err: any) {
+                const tErr = Date.now();
+                await writeVoiceLog(env, {
+                    device_id: deviceId,
+                    session_id: null,
+                    asr_text: asrText,
+                    ai_reply: null,
+                    audio_bytes: audio.byteLength,
+                    mp3_bytes: 0,
+                    latency_asr_ms: t1 - t0,
+                    latency_chat_ms: tErr - t1,
+                    latency_tts_ms: 0,
+                    latency_total_ms: tErr - t0,
+                    status: "ai_error",
+                    error_msg: err?.message || String(err),
+                    created_at: Math.floor(Date.now() / 1000),
+                });
+                throw err;
+            }
+
+            const params: TtsParams = {
+                speed: 1.0,
+                pitch: 1.0,
+                stream: false,
+            };
+            let mp3Bytes: Uint8Array;
+            let t3 = t2;
+            try {
+                const ttsRes = await ttsEdge(env, reply, params);
+                t3 = Date.now();
+                mp3Bytes = new Uint8Array(await ttsRes.arrayBuffer());
+                console.log(JSON.stringify({
+                    tag: "voice_trace",
+                    stage: "tts",
+                    device_id: deviceId,
+                    duration_ms: t3 - t2,
+                    mp3_bytes: mp3Bytes.length,
+                }));
+            } catch (err: any) {
+                const tErr = Date.now();
+                await writeVoiceLog(env, {
+                    device_id: deviceId,
+                    session_id: null,
+                    asr_text: asrText,
+                    ai_reply: reply,
+                    audio_bytes: audio.byteLength,
+                    mp3_bytes: 0,
+                    latency_asr_ms: t1 - t0,
+                    latency_chat_ms: t2 - t1,
+                    latency_tts_ms: tErr - t2,
+                    latency_total_ms: tErr - t0,
+                    status: "tts_error",
+                    error_msg: err?.message || String(err),
+                    created_at: Math.floor(Date.now() / 1000),
+                });
+                throw err;
+            }
+
+            const totalMs = t3 - t0;
+            console.log(JSON.stringify({
+                tag: "voice_converse_success",
+                device_id: deviceId,
+                asr_text: asrText,
+                ai_reply: reply,
+                audio_bytes: audio.byteLength,
+                mp3_bytes: mp3Bytes.length,
+                latencies: {
+                    asr_ms: t1 - t0,
+                    chat_ms: t2 - t1,
+                    tts_ms: t3 - t2,
+                    total_ms: totalMs,
+                },
+            }));
+
+            await writeVoiceLog(env, {
+                device_id: deviceId,
+                session_id: null,
+                asr_text: asrText,
+                ai_reply: reply,
+                audio_bytes: audio.byteLength,
+                mp3_bytes: mp3Bytes.length,
+                latency_asr_ms: t1 - t0,
+                latency_chat_ms: t2 - t1,
+                latency_tts_ms: t3 - t2,
+                latency_total_ms: totalMs,
+                status: "success",
+                error_msg: null,
+                created_at: Math.floor(Date.now() / 1000),
+            });
+
+            return new Response(mp3Bytes, {
+                status: 200,
+                headers: {
+                    "Content-Type": "audio/mpeg",
+                    "Cache-Control": "no-store",
+                    "X-Asr-Text": encodeURIComponent(asrText),
+                    "X-Ai-Reply": encodeURIComponent(reply),
+                },
+            });
         }
 
         if (request.method === "POST" && url.pathname === "/v1/voice/tts") {

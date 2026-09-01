@@ -27,7 +27,7 @@ static const demo_entry_t DEMOS[] = {
     { "游戏", demo_games_enter, demo_games_exit, demo_games_key, demo_games_back },
     { "Kiro", demo_kiro_passport_enter, demo_kiro_passport_exit, demo_kiro_passport_key, NULL },
     { "Chat", demo_chat_enter, demo_chat_exit, demo_chat_key, demo_chat_back },
-    { "设置", demo_settings_enter, demo_settings_exit, demo_settings_key, NULL },
+    { "设置", demo_settings_enter, demo_settings_exit, demo_settings_key, demo_settings_back },
 };
 #define DEMO_COUNT (sizeof(DEMOS) / sizeof(DEMOS[0]))
 
@@ -121,7 +121,7 @@ static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user)
         if (btn == BSP_BTN_OK && s_ok[s_sel]) {
             s_active = s_sel;
             ui_status_set_visible(false);
-            lv_obj_delete(s_menu_scr);
+            lv_obj_t *old_scr = s_menu_scr;
             s_menu_scr = NULL;
             for (size_t i = 0; i < DEMO_COUNT; i++) {
                 s_cards[i] = NULL;
@@ -130,6 +130,9 @@ static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user)
                 s_indicators[i] = NULL;
             }
             DEMOS[s_active].enter();
+            if (old_scr) {
+                lv_obj_delete(old_scr);
+            }
         }
     }
     bsp_lvgl_unlock();

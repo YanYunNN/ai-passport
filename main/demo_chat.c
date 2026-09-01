@@ -50,6 +50,7 @@ static const char *TAG = "demo_chat";
 typedef enum {
     CHAT_IDLE,
     CHAT_RECORDING,
+    CHAT_CONVERSE,
     CHAT_ASR,
     CHAT_CHATTING,
     CHAT_TTS,
@@ -153,16 +154,36 @@ static esp_err_t chat_store_erase(size_t offset, size_t size)
     return esp_partition_erase_range(s_store, offset, size);
 }
 
-/* relay_url 形如 "wss://ws.yanyun.asia"，转成 HTTPS 前缀再拼 path。 */
+/* relay_url 形如 "wss://ws.yanyun.asia" 或 "wss://ws.yanyun.asia/device/xxx"，转成 HTTPS 前缀再拼 path。 */
 static void chat_build_url(const char *relay_url, const char *path, char *out, size_t out_size)
 {
-    if (strncmp(relay_url, "wss://", 6) == 0) {
-        snprintf(out, out_size, "https://%s%s", relay_url + 6, path);
-    } else if (strncmp(relay_url, "ws://", 5) == 0) {
-        snprintf(out, out_size, "http://%s%s", relay_url + 5, path);
-    } else {
-        snprintf(out, out_size, "%s%s", relay_url, path);
+    char host[96] = {0};
+    const char *p = relay_url;
+    bool is_https = true;
+    if (strncmp(p, "wss://", 6) == 0) {
+        p += 6;
+        is_https = true;
+    } else if (strncmp(p, "https://", 8) == 0) {
+        p += 8;
+        is_https = true;
+    } else if (strncmp(p, "ws://", 5) == 0) {
+        p += 5;
+        is_https = false;
+    } else if (strncmp(p, "http://", 7) == 0) {
+        p += 7;
+        is_https = false;
     }
+    const char *slash = strchr(p, '/');
+    if (slash) {
+        size_t hlen = (size_t)(slash - p);
+        if (hlen >= sizeof(host)) hlen = sizeof(host) - 1;
+        memcpy(host, p, hlen);
+        host[hlen] = '\0';
+    } else {
+        strlcpy(host, p, sizeof(host));
+    }
+    snprintf(out, out_size, "%s://%s%s", is_https ? "https" : "http", host, path);
+    ESP_LOGI(TAG, "chat_build_url: relay_url='%s' -> url='%s'", relay_url, out);
 }
 
 static esp_err_t chat_http_event(esp_http_client_event_t *event)
@@ -241,6 +262,192 @@ static size_t chat_json_escape(char *out, size_t out_size, const char *text)
     return pos;
 }
 
+/* URL-decode a percent-encoded string (UTF-8 safe). */
+static void chat_url_decode(char *dst, const char *src, size_t dst_cap)
+{
+    if (!dst || dst_cap == 0) return;
+    if (!src) { dst[0] = '\0'; return; }
+    size_t i = 0, j = 0;
+    while (src[i] && j + 1 < dst_cap) {
+        if (src[i] == '%' && src[i + 1] && src[i + 2]) {
+            char hex[3] = { src[i + 1], src[i + 2], '\0' };
+            char *endptr = NULL;
+            long val = strtol(hex, &endptr, 16);
+            if (endptr == hex + 2) {
+                dst[j++] = (char)val;
+                i += 3;
+                continue;
+            }
+        } else if (src[i] == '+') {
+            dst[j++] = ' ';
+            i++;
+            continue;
+        }
+        dst[j++] = src[i++];
+    }
+    dst[j] = '\0';
+}
+
+typedef struct {
+    char asr_raw[CHAT_AI_TEXT_MAX];
+    char reply_raw[CHAT_AI_TEXT_MAX];
+    chat_stream_t stream;
+} chat_converse_state_t;
+
+static esp_err_t chat_converse_event(esp_http_client_event_t *event)
+{
+    chat_converse_state_t *st = (chat_converse_state_t *)event->user_data;
+    if (!st) return ESP_OK;
+
+    if (event->event_id == HTTP_EVENT_ON_HEADER) {
+        if (strcasecmp(event->header_key, "X-Asr-Text") == 0) {
+            strlcpy(st->asr_raw, event->header_value, sizeof(st->asr_raw));
+        } else if (strcasecmp(event->header_key, "X-Ai-Reply") == 0) {
+            strlcpy(st->reply_raw, event->header_value, sizeof(st->reply_raw));
+        }
+        return ESP_OK;
+    }
+
+    if (event->event_id == HTTP_EVENT_ON_DATA && event->data_len > 0) {
+        if (st->stream.cursor + (size_t)event->data_len > st->stream.capacity) {
+            st->stream.overflow = true;
+            return ESP_FAIL;
+        }
+        esp_err_t err = esp_partition_write(s_store, st->stream.cursor, event->data, event->data_len);
+        if (err == ESP_OK) st->stream.cursor += (size_t)event->data_len;
+        return err;
+    }
+
+    return ESP_OK;
+}
+
+/* 单次 HTTPS 流水线调用 /v1/voice/converse：ASR + AI Chat + TTS 一气呵成，MP3 直接流式写入 Flash。 */
+static esp_err_t chat_converse(const char *url, const char *bearer, const char *device_id,
+                               const chat_message_t *history, size_t history_count,
+                               size_t pcm_bytes, char *recognized, size_t recognized_cap,
+                               char *reply, size_t reply_cap)
+{
+    static const char part_audio_hdr[] =
+        "--" CHAT_BOUNDARY "\r\n"
+        "Content-Disposition: form-data; name=\"file\"; filename=\"voice.wav\"\r\n"
+        "Content-Type: audio/wav\r\n\r\n";
+    static const char part_history_hdr[] =
+        "\r\n--" CHAT_BOUNDARY "\r\n"
+        "Content-Disposition: form-data; name=\"history\"\r\n"
+        "Content-Type: application/json\r\n\r\n";
+    static const char part_tail[] = "\r\n--" CHAT_BOUNDARY "--\r\n";
+
+    uint8_t wav_header[44];
+    chat_build_wav_header(wav_header, pcm_bytes);
+
+    char *hist_body = malloc(CHAT_HTTP_BODY_MAX);
+    uint8_t *filebuf = malloc(CHAT_ASR_FILEBUF_MAX);
+    chat_converse_state_t *conv_st = malloc(sizeof(chat_converse_state_t));
+    if (!hist_body || !filebuf || !conv_st) {
+        free(hist_body);
+        free(filebuf);
+        free(conv_st);
+        return ESP_ERR_NO_MEM;
+    }
+
+    memset(conv_st, 0, sizeof(*conv_st));
+    conv_st->stream.cursor = CHAT_MP3_OFFSET;
+    conv_st->stream.capacity = CHAT_MP3_OFFSET + CHAT_MP3_MAX_BYTES;
+
+    size_t hist_len = 0;
+    hist_len += (size_t)snprintf(hist_body + hist_len, CHAT_HTTP_BODY_MAX - hist_len, "[");
+    for (size_t i = 0; i < history_count; i++) {
+        int written = snprintf(hist_body + hist_len, CHAT_HTTP_BODY_MAX - hist_len,
+                               "%s{\"role\":\"%s\",\"content\":\"",
+                               i ? "," : "", history[i].role);
+        if (written < 0 || (size_t)written >= CHAT_HTTP_BODY_MAX - hist_len) break;
+        hist_len += (size_t)written;
+        hist_len += chat_json_escape(hist_body + hist_len, CHAT_HTTP_BODY_MAX - hist_len, history[i].content);
+        int tail = snprintf(hist_body + hist_len, CHAT_HTTP_BODY_MAX - hist_len, "\"}");
+        if (tail < 0 || (size_t)tail >= CHAT_HTTP_BODY_MAX - hist_len) break;
+        hist_len += (size_t)tail;
+    }
+    int last = snprintf(hist_body + hist_len, CHAT_HTTP_BODY_MAX - hist_len, "]");
+    if (last > 0 && (size_t)last < CHAT_HTTP_BODY_MAX - hist_len) hist_len += (size_t)last;
+
+    const esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = 30000,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .event_handler = chat_converse_event,
+        .user_data = conv_st,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        free(hist_body);
+        free(filebuf);
+        free(conv_st);
+        return ESP_ERR_NO_MEM;
+    }
+    esp_http_client_set_header(client, "User-Agent", "Mozilla/5.0 (ESP32; Kiro-Passport)");
+    esp_http_client_set_header(client, "Content-Type", "multipart/form-data; boundary=" CHAT_BOUNDARY);
+    esp_http_client_set_header(client, "Authorization", bearer);
+    esp_http_client_set_header(client, "X-Device-Id", device_id);
+
+    size_t total = (sizeof(part_audio_hdr) - 1) + sizeof(wav_header) + pcm_bytes +
+                   (sizeof(part_history_hdr) - 1) + hist_len +
+                   (sizeof(part_tail) - 1);
+
+    esp_err_t err = esp_http_client_open(client, (int)total);
+    if (err == ESP_OK) {
+        bool ok = esp_http_client_write(client, part_audio_hdr, sizeof(part_audio_hdr) - 1) >= 0 &&
+                  esp_http_client_write(client, (const char *)wav_header, sizeof(wav_header)) >= 0;
+        size_t off = 0;
+        while (ok && off < pcm_bytes) {
+            size_t n = pcm_bytes - off;
+            if (n > CHAT_ASR_FILEBUF_MAX) n = CHAT_ASR_FILEBUF_MAX;
+            if (esp_partition_read(s_store, off, filebuf, n) != ESP_OK) {
+                ok = false;
+                break;
+            }
+            if (esp_http_client_write(client, (const char *)filebuf, (int)n) < 0) {
+                ok = false;
+                break;
+            }
+            off += n;
+        }
+        if (ok) ok = esp_http_client_write(client, part_history_hdr, sizeof(part_history_hdr) - 1) >= 0;
+        if (ok) ok = esp_http_client_write(client, hist_body, hist_len) >= 0;
+        if (ok) ok = esp_http_client_write(client, part_tail, sizeof(part_tail) - 1) >= 0;
+
+        if (!ok) {
+            err = ESP_FAIL;
+        } else {
+            esp_http_client_fetch_headers(client);
+            int status = esp_http_client_get_status_code(client);
+            char drain[512];
+            while (esp_http_client_read(client, drain, sizeof(drain)) > 0) {}
+            ESP_LOGI(TAG, "Converse status=%d err=%d mp3_len=%u ovf=%d asr_hdr=%s",
+                     status, (int)err, (unsigned)(conv_st->stream.cursor - CHAT_MP3_OFFSET),
+                     (int)conv_st->stream.overflow, conv_st->asr_raw);
+            if (status != 200 || conv_st->stream.overflow) {
+                err = (status == 404) ? ESP_ERR_NOT_FOUND : ESP_ERR_INVALID_RESPONSE;
+            }
+        }
+    }
+
+    esp_http_client_cleanup(client);
+    free(hist_body);
+    free(filebuf);
+
+    if (err == ESP_OK) {
+        chat_url_decode(recognized, conv_st->asr_raw, recognized_cap);
+        chat_url_decode(reply, conv_st->reply_raw, reply_cap);
+        s_mp3_len = conv_st->stream.cursor - CHAT_MP3_OFFSET;
+        if (s_mp3_len == 0 || recognized[0] == '\0') {
+            err = ESP_ERR_INVALID_RESPONSE;
+        }
+    }
+    free(conv_st);
+    return err;
+}
+
 /* multipart 流式上传 flash 里的 WAV → /v1/voice/asr，返回识别文本。 */
 static esp_err_t chat_asr(const char *url, const char *bearer, const char *device_id,
                           size_t pcm_bytes, char *recognized, size_t recognized_cap)
@@ -276,6 +483,7 @@ static esp_err_t chat_asr(const char *url, const char *bearer, const char *devic
         free(filebuf);
         return ESP_ERR_NO_MEM;
     }
+    esp_http_client_set_header(client, "User-Agent", "Mozilla/5.0 (ESP32; Kiro-Passport)");
     esp_http_client_set_header(client, "Content-Type", "multipart/form-data; boundary=" CHAT_BOUNDARY);
     esp_http_client_set_header(client, "Authorization", bearer);
     esp_http_client_set_header(client, "X-Device-Id", device_id);
@@ -394,6 +602,7 @@ static esp_err_t chat_ask(const char *url, const char *bearer, const char *devic
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) { free(body); free(response); return ESP_ERR_NO_MEM; }
+    esp_http_client_set_header(client, "User-Agent", "Mozilla/5.0 (ESP32; Kiro-Passport)");
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_header(client, "Authorization", bearer);
     esp_http_client_set_header(client, "X-Device-Id", device_id);
@@ -426,13 +635,20 @@ static esp_err_t chat_ask(const char *url, const char *bearer, const char *devic
 static esp_err_t chat_tts_stream(const char *url, const char *bearer, const char *device_id,
                                  const char *text)
 {
-    char body[CHAT_AI_TEXT_MAX + 64];
-    int head = snprintf(body, sizeof(body), "{\"text\":\"");
-    if (head < 0 || (size_t)head >= sizeof(body)) return ESP_ERR_INVALID_SIZE;
+    char *body = malloc(CHAT_AI_TEXT_MAX + 64);
+    if (!body) return ESP_ERR_NO_MEM;
+    int head = snprintf(body, CHAT_AI_TEXT_MAX + 64, "{\"text\":\"");
+    if (head < 0 || (size_t)head >= CHAT_AI_TEXT_MAX + 64) {
+        free(body);
+        return ESP_ERR_INVALID_SIZE;
+    }
     size_t pos = (size_t)head;
-    pos += chat_json_escape(body + pos, sizeof(body) - pos, text);
-    int tail = snprintf(body + pos, sizeof(body) - pos, "\"}");
-    if (tail < 0 || (size_t)tail >= sizeof(body) - pos) return ESP_ERR_INVALID_SIZE;
+    pos += chat_json_escape(body + pos, CHAT_AI_TEXT_MAX + 64 - pos, text);
+    int tail = snprintf(body + pos, CHAT_AI_TEXT_MAX + 64 - pos, "\"}");
+    if (tail < 0 || (size_t)tail >= CHAT_AI_TEXT_MAX + 64 - pos) {
+        free(body);
+        return ESP_ERR_INVALID_SIZE;
+    }
     pos += (size_t)tail;
 
     chat_stream_t stream = {
@@ -449,7 +665,11 @@ static esp_err_t chat_tts_stream(const char *url, const char *bearer, const char
         .user_data = &stream,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) return ESP_ERR_NO_MEM;
+    if (!client) {
+        free(body);
+        return ESP_ERR_NO_MEM;
+    }
+    esp_http_client_set_header(client, "User-Agent", "Mozilla/5.0 (ESP32; Kiro-Passport)");
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_header(client, "Accept", "audio/mpeg");
     esp_http_client_set_header(client, "Authorization", bearer);
@@ -458,6 +678,7 @@ static esp_err_t chat_tts_stream(const char *url, const char *bearer, const char
     esp_err_t err = esp_http_client_perform(client);
     int status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
+    free(body);
     if (err != ESP_OK || status != 200 || stream.overflow) return ESP_ERR_INVALID_RESPONSE;
     s_mp3_len = stream.cursor - CHAT_MP3_OFFSET;
     return s_mp3_len > 0 ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
@@ -600,13 +821,22 @@ static void chat_marquee_stop(void)
     bsp_lvgl_unlock();
 }
 
-static void chat_task(void *arg)
-{
-    (void)arg;
+typedef struct {
     char url[160];
     char bearer[KIRO_PASSPORT_CREDENTIAL_MAX + 8];
     char recognized[CHAT_AI_TEXT_MAX];
     char reply[CHAT_AI_TEXT_MAX];
+} chat_context_t;
+
+static void chat_task(void *arg)
+{
+    (void)arg;
+    chat_context_t *ctx = malloc(sizeof(chat_context_t));
+    if (!ctx) {
+        ESP_LOGE(TAG, "chat ctx malloc 失败");
+        vTaskDelete(NULL);
+        return;
+    }
 
     for (;;) {
         chat_state_t st = s_state;
@@ -659,7 +889,7 @@ static void chat_task(void *arg)
                 chat_reset_to_idle("没听清，再试一次");
                 continue;
             }
-            s_state = CHAT_ASR;
+            s_state = CHAT_CONVERSE;
             continue;
         }
 
@@ -669,39 +899,67 @@ static void chat_task(void *arg)
             chat_reset_to_idle("未配对：设置 → Relay");
             continue;
         }
-        int blen = snprintf(bearer, sizeof(bearer), "Bearer %s", cfg.credential);
-        if (blen <= 0 || blen >= (int)sizeof(bearer)) {
+        int blen = snprintf(ctx->bearer, sizeof(ctx->bearer), "Bearer %s", cfg.credential);
+        if (blen <= 0 || blen >= (int)sizeof(ctx->bearer)) {
             chat_reset_to_idle("凭证异常");
             continue;
+        }
+
+        if (st == CHAT_CONVERSE) {
+            chat_set_status("AI 对话中…");
+            chat_log_heap("converse_start");
+            /* 预擦除 MP3 区，准备接收流式 MP3 */
+            if (chat_store_erase(CHAT_MP3_OFFSET, CHAT_MP3_MAX_BYTES) != ESP_OK) {
+                chat_reset_to_idle("存储擦除失败");
+                continue;
+            }
+            chat_build_url(cfg.relay_url, "/v1/voice/converse", ctx->url, sizeof(ctx->url));
+            esp_err_t conv_err = chat_converse(ctx->url, ctx->bearer, cfg.device_id,
+                                               s_history, s_history_count, s_rec_len,
+                                               ctx->recognized, sizeof(ctx->recognized),
+                                               ctx->reply, sizeof(ctx->reply));
+            if (conv_err == ESP_OK) {
+                snprintf(s_transcript, sizeof(s_transcript), "你: %s\nAI: %s", ctx->recognized, ctx->reply);
+                chat_show_transcript();
+                chat_push_history("user", ctx->recognized);
+                chat_push_history("assistant", ctx->reply);
+                s_state = CHAT_PLAYING;
+                continue;
+            } else {
+                /* 降级回退到经典三步串行流程 */
+                ESP_LOGW(TAG, "converse 接口未响应 (err=%d), 自动降级回退到三步流程", (int)conv_err);
+                s_state = CHAT_ASR;
+                continue;
+            }
         }
 
         if (st == CHAT_ASR) {
             chat_set_status("识别中…");
             chat_log_heap("asr_start");
-            chat_build_url(cfg.relay_url, "/v1/voice/asr", url, sizeof(url));
-            esp_err_t asr_err = chat_asr(url, bearer, cfg.device_id, s_rec_len,
-                                         recognized, sizeof(recognized));
+            chat_build_url(cfg.relay_url, "/v1/voice/asr", ctx->url, sizeof(ctx->url));
+            esp_err_t asr_err = chat_asr(ctx->url, ctx->bearer, cfg.device_id, s_rec_len,
+                                         ctx->recognized, sizeof(ctx->recognized));
             if (asr_err != ESP_OK) {
-                chat_reset_to_idle("识别失败");
+                chat_reset_to_idle("识别失败 (没听清)");
                 continue;
             }
-            snprintf(s_transcript, sizeof(s_transcript), "你: %s\nAI: …", recognized);
+            snprintf(s_transcript, sizeof(s_transcript), "你: %s\nAI: …", ctx->recognized);
             chat_show_transcript();
-            chat_push_history("user", recognized);
+            chat_push_history("user", ctx->recognized);
             s_state = CHAT_CHATTING;
             continue;
         }
 
         if (st == CHAT_CHATTING) {
             chat_set_status("AI 思考中…");
-            chat_build_url(cfg.relay_url, "/v1/voice/chat", url, sizeof(url));
-            if (chat_ask(url, bearer, cfg.device_id, s_history, s_history_count,
-                         reply, sizeof(reply)) != ESP_OK) {
+            chat_build_url(cfg.relay_url, "/v1/voice/chat", ctx->url, sizeof(ctx->url));
+            if (chat_ask(ctx->url, ctx->bearer, cfg.device_id, s_history, s_history_count,
+                         ctx->reply, sizeof(ctx->reply)) != ESP_OK) {
                 chat_reset_to_idle("AI 调用失败");
                 continue;
             }
-            chat_push_history("assistant", reply);
-            snprintf(s_transcript, sizeof(s_transcript), "你: %s\nAI: %s", recognized, reply);
+            chat_push_history("assistant", ctx->reply);
+            snprintf(s_transcript, sizeof(s_transcript), "你: %s\nAI: %s", ctx->recognized, ctx->reply);
             chat_show_transcript();
             s_state = CHAT_TTS;
             continue;
@@ -715,8 +973,8 @@ static void chat_task(void *arg)
                 chat_reset_to_idle("存储擦除失败");
                 continue;
             }
-            chat_build_url(cfg.relay_url, "/v1/voice/tts", url, sizeof(url));
-            if (chat_tts_stream(url, bearer, cfg.device_id, reply) != ESP_OK) {
+            chat_build_url(cfg.relay_url, "/v1/voice/tts", ctx->url, sizeof(ctx->url));
+            if (chat_tts_stream(ctx->url, ctx->bearer, cfg.device_id, ctx->reply) != ESP_OK) {
                 chat_reset_to_idle("语音合成失败");
                 continue;
             }
@@ -727,7 +985,7 @@ static void chat_task(void *arg)
         if (st == CHAT_PLAYING) {
             chat_set_status("朗读中… (长按 OK 退出)");
             chat_log_heap("playing_start");
-            chat_marquee_start(reply);
+            chat_marquee_start(ctx->reply);
             chat_play_mp3_stream();
             chat_marquee_stop();
             bsp_audio_close();
@@ -741,10 +999,26 @@ static void chat_task(void *arg)
             continue;
         }
     }
+    free(ctx);
 }
 
 void demo_chat_enter(void)
 {
+    /* 暂停后台 WebSocket 连接，释放 ~25KB TLS 堆内存给 Chat 的 HTTPS 请求 */
+    kiro_passport_network_pause(true);
+
+    s_transcript[0] = '\0';
+    s_state = CHAT_IDLE;
+    s_stop_record = false;
+    if (!s_task) {
+        if (xTaskCreate(chat_task, "demo_chat", 8192, NULL, 4, &s_task) != pdPASS) {
+            ESP_LOGW(TAG, "8192 栈分配失败，尝试 6144");
+            if (xTaskCreate(chat_task, "demo_chat", 6144, NULL, 4, &s_task) != pdPASS) {
+                ESP_LOGE(TAG, "任务创建失败");
+            }
+        }
+    }
+
     s_scr = ui_system_screen_create();
     lv_obj_t *heading = ui_system_label(s_scr, "Chat", &ui_font_noto_sc_20, UI_SYSTEM_TEXT);
     lv_obj_set_width(heading, 208);
@@ -782,7 +1056,9 @@ void demo_chat_enter(void)
 
     kiro_passport_network_config_t cfg;
     kiro_passport_network_get_config(&cfg);
-    if (!cfg.credential[0]) {
+    if (!s_task) {
+        lv_label_set_text(s_status, "内存不足，请重启");
+    } else if (!cfg.credential[0]) {
         lv_label_set_text(s_status, "未配对：设置 → Relay 先配对");
     } else if (wifi_manager_get_state() != WIFI_MANAGER_CONNECTED) {
         lv_label_set_text(s_status, "等待 Wi-Fi 连接…");
@@ -792,17 +1068,6 @@ void demo_chat_enter(void)
         lv_label_set_text(s_status, "按 OK 开始录音");
     }
 
-    s_transcript[0] = '\0';
-    s_state = CHAT_IDLE;
-    s_stop_record = false;
-    if (!s_task) {
-        /* 大缓冲已移出任务栈（transient heap），但 HTTPS ASR/TLS 链路深，实测 ASR 阶段
-         * 峰值栈 ~6-7KB，故给 8192 字节。创建只分配一个空栈体（不再是 8KB 里塞 14KB
-         * 缓冲），在 ~7KB 空闲堆下也能稳定创建其栈。 */
-        if (xTaskCreate(chat_task, "demo_chat", 8192, NULL, 4, &s_task) != pdPASS) {
-            ESP_LOGE(TAG, "任务创建失败");
-        }
-    }
     chat_log_heap("chat_enter");
     lv_screen_load(s_scr);
 }
@@ -832,6 +1097,8 @@ void demo_chat_exit(void)
         s_status = NULL;
         s_log = NULL;
     }
+    /* 恢复后台 WebSocket 连接 */
+    kiro_passport_network_pause(false);
     chat_log_heap("chat_exit");
 }
 

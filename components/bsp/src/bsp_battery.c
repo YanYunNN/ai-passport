@@ -15,21 +15,13 @@ static const char *TAG = "bsp_batt";
 #define CW_REG_VERSION   0x00   // 版本号,上电应答即代表芯片在位
 #define CW_REG_VCELL_H   0x02   // 14bit 电压,V(uV) = raw * 312.5
 #define CW_REG_SOC_H     0x04   // 高字节 = 整数百分比;低字节(0x05)= 1/256 %
-#define CW_REG_MODE      0x08   // 0xF0=睡眠 / 0x30=复位态 / 0x00=正常
+#define CW_REG_MODE      0x08   // 0xF0/0xC0=睡眠 / 0x30=复位态 / 0x00=正常
 
 #define CW_MODE_RESTART  0x30
 #define CW_MODE_NORMAL   0x00
 
-// 唤醒(快速启动)后芯片要跑完若干采样周期才会给出首个有效 SOC(未就绪时读回 0xFF)。
-// init 里每轮最多轮询 CW_SOC_POLLS 次(每 50ms 一次),最多重试 CW_READY_ATTEMPTS 轮;
-// 完全放电后刚接上充电器时芯片可能要多唤醒几次才就绪。
-#define CW_SOC_POLLS      10u    // 单轮最多 500ms
-#define CW_READY_ATTEMPTS 3u     // init 最多唤醒尝试次数
-#define CW_SOC_RETRY_MS   5000u  // soc() 里两次自动唤醒的最小间隔(避免反复重启打断采样)
-
 static i2c_master_dev_handle_t s_dev;
-static SemaphoreHandle_t s_lock;        // 保护 s_dev 与唤醒状态,init/soc/mv 共用
-static uint32_t s_last_quickstart;      // tick;与 CW_SOC_RETRY_MS 一起限频
+static SemaphoreHandle_t s_lock;
 
 static int cw_read(uint8_t reg, uint8_t *buf, size_t n) {
     if (!s_dev) return -1;
@@ -42,36 +34,10 @@ static int cw_write(uint8_t reg, uint8_t val) {
     return i2c_master_transmit(s_dev, b, 2, 100) == ESP_OK ? 0 : -1;
 }
 
-// 取锁;返回 false 表示锁不可用(内存不足或超时)。
 static bool battery_lock(void) {
     if (!s_lock) s_lock = xSemaphoreCreateMutex();
     if (!s_lock) return false;
     return xSemaphoreTake(s_lock, pdMS_TO_TICKS(1000)) == pdTRUE;
-}
-
-// 官方唤醒/快速启动序列:写 0x30 触发重启,等芯片完成复位后再写 0x00 回到正常态。
-// 单独写 0x00 无法可靠唤醒经历过掉电(完全放电后充电)的电量计。
-static void cw_quickstart(void) {
-    if (cw_write(CW_REG_MODE, CW_MODE_RESTART) != 0) {
-        ESP_LOGW(TAG, "CW2017 写入 RESTART 失败");
-        return;
-    }
-    vTaskDelay(pdMS_TO_TICKS(30));
-    if (cw_write(CW_REG_MODE, CW_MODE_NORMAL) != 0) {
-        ESP_LOGE(TAG, "CW2017 写回 NORMAL 失败");
-        return;
-    }
-    s_last_quickstart = xTaskGetTickCount();
-}
-
-// 就绪判定:处于正常态(MODE=0x00)且 SOC 高字节 <= 100。
-// SOC 高字节 0xFF 表示芯片尚未完成首次采样,读到的百分比无效。
-static bool cw_ready(void) {
-    uint8_t mode = 0, soc[2] = {0xFF, 0xFF};
-    if (cw_read(CW_REG_MODE, &mode, 1) != 0) return false;
-    if (mode != CW_MODE_NORMAL) return false;
-    if (cw_read(CW_REG_SOC_H, soc, 2) != 0) return false;
-    return soc[0] <= 100;
 }
 
 // SOC 16bit 读数(高字节=整数百分比,低字节=1/256 %)四舍五入到整数百分比。
@@ -112,57 +78,55 @@ esp_err_t bsp_battery_init(void) {
 
     esp_err_t e = battery_ensure_device();
     if (e == ESP_OK) {
-        // 完全放电后刚接上充电器时,芯片可能处于睡眠态或 SOC 长时间未就绪(0xFF),
-        // 只做一次 0x30 -> 0x00 不一定够;这里最多重试 CW_READY_ATTEMPTS 轮。
-        for (uint32_t attempt = 0; attempt < CW_READY_ATTEMPTS && !cw_ready(); attempt++) {
-            ESP_LOGI(TAG, "CW2017 未就绪, 执行唤醒 (第 %u/%u 次)", attempt + 1u, CW_READY_ATTEMPTS);
-            cw_quickstart();
-            for (uint32_t i = 0; i < CW_SOC_POLLS && !cw_ready(); i++) {
-                vTaskDelay(pdMS_TO_TICKS(50));
+        // 唤醒/启动芯片:
+        // 写 0x30 触发 QuickStart 重启算法, 延时后写 0x00 回到正常工作态。
+        // 只在初始化时执行一次, 绝不在后续读取中反复打断。
+        cw_write(CW_REG_MODE, CW_MODE_RESTART);
+        vTaskDelay(pdMS_TO_TICKS(40));
+        cw_write(CW_REG_MODE, CW_MODE_NORMAL);
+        vTaskDelay(pdMS_TO_TICKS(100));
+
+        // 轮询等待首次采样就绪 (最多等待 1 秒)
+        for (int i = 0; i < 20; i++) {
+            uint8_t b[2] = {0xFF, 0xFF};
+            if (cw_read(CW_REG_SOC_H, b, 2) == 0 && b[0] <= 100) {
+                ESP_LOGI(TAG, "CW2017 采样就绪, SOC=%d%%", cw_soc_pct(b));
+                break;
             }
+            vTaskDelay(pdMS_TO_TICKS(50));
         }
     }
-    bool ready = (e == ESP_OK) && cw_ready();
     xSemaphoreGive(s_lock);
-
-    if (ready) {
-        ESP_LOGI(TAG, "CW2017 就绪, 当前 SOC=%d%%, 电压=%dmV", bsp_battery_soc(), bsp_battery_mv());
-    } else if (e == ESP_OK) {
-        // 芯片在位但始终未就绪:不当作失败,后续 bsp_battery_soc() 会限频自动唤醒。
-        ESP_LOGW(TAG, "CW2017 仍处于未就绪态, 后续读取会自动重试唤醒");
-    }
     return e;
 }
 
-int bsp_battery_soc(void) {
-    if (!battery_lock()) return -1;
+// 典型单节 3.7V/4.2V 锂聚合物电池开路电压 (OCV) 映射表
+static int ocv_to_soc(int mv) {
+    if (mv >= 4200) return 100;
+    if (mv <= 3350) return 0;
 
-    int soc = -1;
-    bool responded = false;
-    uint8_t b[2] = {0xFF, 0xFF};
-
-    if (battery_ensure_device() == ESP_OK) {
-        if (cw_read(CW_REG_SOC_H, b, 2) == 0) {
-            responded = true;
-            if (b[0] <= 100) soc = cw_soc_pct(b);
-        }
-
-        // 芯片在位但 SOC 未就绪(高字节 0xFF,多见于完全放电后充电开机):
-        // 限频重试唤醒序列并短轮询,让这类场景自动恢复,而不是一直返回无效值。
-        uint32_t now = xTaskGetTickCount();
-        if (soc < 0 && responded && b[0] > 100 &&
-            (s_last_quickstart == 0 || now - s_last_quickstart >= CW_SOC_RETRY_MS)) {
-            cw_quickstart();
-            for (uint32_t i = 0; i < CW_SOC_POLLS / 2u && soc < 0; i++) {
-                vTaskDelay(pdMS_TO_TICKS(50));
-                if (cw_read(CW_REG_SOC_H, b, 2) == 0 && b[0] <= 100) {
-                    soc = cw_soc_pct(b);
-                }
-            }
+    static const struct { int mv; int soc; } OCV_MAP[] = {
+        { 4200, 100 },
+        { 4120, 92 },
+        { 4020, 80 },
+        { 3920, 66 },
+        { 3830, 50 },
+        { 3760, 35 },
+        { 3700, 20 },
+        { 3640, 10 },
+        { 3550, 4 },
+        { 3350, 0 },
+    };
+    for (size_t i = 0; i < (sizeof(OCV_MAP) / sizeof(OCV_MAP[0])) - 1; i++) {
+        if (mv >= OCV_MAP[i + 1].mv) {
+            int v_high = OCV_MAP[i].mv;
+            int v_low  = OCV_MAP[i + 1].mv;
+            int s_high = OCV_MAP[i].soc;
+            int s_low  = OCV_MAP[i + 1].soc;
+            return s_low + (mv - v_low) * (s_high - s_low) / (v_high - v_low);
         }
     }
-    xSemaphoreGive(s_lock);
-    return soc;
+    return 0;
 }
 
 int bsp_battery_mv(void) {
@@ -173,9 +137,47 @@ int bsp_battery_mv(void) {
         uint8_t b[2] = { 0 };
         if (cw_read(CW_REG_VCELL_H, b, 2) == 0) {
             uint32_t raw = ((uint32_t)b[0] << 8 | b[1]) & 0x3FFF;   // 14bit
-            mv = (int)((raw * 3125) / 10000);                       // raw * 312.5uV → mV
+            int val = (int)((raw * 3125) / 10000);                  // raw * 312.5uV → mV
+            if (val >= 2500 && val <= 4600) {                       // 合理单节锂电范围
+                mv = val;
+            }
         }
     }
     xSemaphoreGive(s_lock);
     return mv;
 }
+
+int bsp_battery_soc(void) {
+    if (!battery_lock()) return -1;
+
+    int soc = -1;
+    if (battery_ensure_device() == ESP_OK) {
+        uint8_t b[2] = {0xFF, 0xFF};
+        int hw_soc = -1;
+        if (cw_read(CW_REG_SOC_H, b, 2) == 0 && b[0] <= 100) {
+            hw_soc = cw_soc_pct(b);
+        }
+
+        // 读取当前真实电压 (mV)
+        uint8_t vb[2] = {0};
+        int mv = -1;
+        if (cw_read(CW_REG_VCELL_H, vb, 2) == 0) {
+            uint32_t raw = ((uint32_t)vb[0] << 8 | vb[1]) & 0x3FFF;
+            int val = (int)((raw * 3125) / 10000);
+            if (val >= 2500 && val <= 4600) mv = val;
+        }
+
+        if (mv > 0) {
+            // 如果硬件 FastCali 已给出非零有效 SOC，且与电压大致吻合，使用芯片计算值；
+            // 若芯片未烧录 Profile 导致读数为 0% 或未就绪，则回退到标准 OCV 曲线计算。
+            if (hw_soc > 0 && !(hw_soc == 0 && mv >= 3500)) {
+                soc = hw_soc;
+            } else {
+                soc = ocv_to_soc(mv);
+            }
+        }
+    }
+    xSemaphoreGive(s_lock);
+    return soc;
+}
+

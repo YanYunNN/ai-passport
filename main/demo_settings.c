@@ -46,6 +46,7 @@ typedef enum {
     SETTINGS_VIEW_RELAY,
     SETTINGS_VIEW_DEBUG,
     SETTINGS_VIEW_LOG_VIEWER,
+    SETTINGS_VIEW_BUILTIN,
 } settings_view_t;
 
 typedef enum {
@@ -982,7 +983,7 @@ static void settings_enter_builtin(void)
     clear_net_objects();
     clear_relay_objects();
     clear_debug_objects();
-    s_view = SETTINGS_VIEW_MAIN;
+    s_view = SETTINGS_VIEW_BUILTIN;
     demo_builtin_set_on_exit(return_from_builtin);
     demo_builtin_enter();
 }
@@ -1030,6 +1031,9 @@ void demo_settings_exit(void)
     clear_net_objects();
     clear_relay_objects();
     clear_debug_objects();
+    if (s_view == SETTINGS_VIEW_BUILTIN) {
+        demo_builtin_exit();
+    }
     s_view = SETTINGS_VIEW_MAIN;
 }
 
@@ -1373,6 +1377,10 @@ void demo_settings_key(bsp_btn_t btn, bsp_btn_ev_t ev)
         }
         return;
     }
+    if (s_view == SETTINGS_VIEW_BUILTIN) {
+        demo_builtin_key(btn, ev);
+        return;
+    }
     if (ev != BSP_BTN_CLICK) return;
     if (s_view == SETTINGS_VIEW_TIME) {
         time_settings_key(btn);
@@ -1390,3 +1398,16 @@ void demo_settings_key(bsp_btn_t btn, bsp_btn_ev_t ev)
         main_settings_key(btn);
     }
 }
+
+bool demo_settings_back(void)
+{
+    if (s_view == SETTINGS_VIEW_BUILTIN) {
+        return demo_builtin_back();
+    }
+    if (s_view != SETTINGS_VIEW_MAIN) {
+        show_view(SETTINGS_VIEW_MAIN);
+        return true;
+    }
+    return false;
+}
+

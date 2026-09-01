@@ -95,3 +95,6 @@ int kiro_passport_network_send_binary(const void *data, size_t length);
 /* 检查 WebSocket 是否处于连接活跃状态 */
 bool kiro_passport_network_is_connected(void);
 
+/* 暂停/恢复 WebSocket 连接（用于 Chat 语音助手等高内存场景释放 TLS 堆内存） */
+void kiro_passport_network_pause(bool pause);
+

@@ -206,3 +206,76 @@ export async function listHookNotifyLogs(
     ).bind(limit).all<HookNotifyLogRow>();
     return rows.results;
 }
+
+export interface VoiceLogRow {
+    id: number;
+    device_id: string;
+    session_id: string | null;
+    asr_text: string | null;
+    ai_reply: string | null;
+    audio_bytes: number;
+    mp3_bytes: number;
+    latency_asr_ms: number;
+    latency_chat_ms: number;
+    latency_tts_ms: number;
+    latency_total_ms: number;
+    status: string;
+    error_msg: string | null;
+    created_at: number;
+}
+
+export async function writeVoiceLog(
+    env: Env,
+    log: Omit<VoiceLogRow, "id">,
+): Promise<void> {
+    try {
+        await env.DB.prepare(
+            "INSERT INTO voice_logs (device_id, session_id, asr_text, ai_reply, audio_bytes, mp3_bytes, " +
+            "latency_asr_ms, latency_chat_ms, latency_tts_ms, latency_total_ms, status, error_msg, created_at) " +
+            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        ).bind(
+            log.device_id,
+            log.session_id,
+            log.asr_text,
+            log.ai_reply,
+            log.audio_bytes,
+            log.mp3_bytes,
+            log.latency_asr_ms,
+            log.latency_chat_ms,
+            log.latency_tts_ms,
+            log.latency_total_ms,
+            log.status,
+            log.error_msg,
+            log.created_at,
+        ).run();
+    } catch (err) {
+        console.error("Failed to write voice log to DB:", err);
+    }
+}
+
+export async function listVoiceLogs(
+    env: Env,
+    opts: { deviceId?: string; limit?: number } = {},
+): Promise<VoiceLogRow[]> {
+    const limit = Math.max(1, Math.min(200, opts.limit ?? 50));
+    try {
+        if (opts.deviceId) {
+            const rows = await env.DB.prepare(
+                "SELECT id, device_id, session_id, asr_text, ai_reply, audio_bytes, mp3_bytes, " +
+                "latency_asr_ms, latency_chat_ms, latency_tts_ms, latency_total_ms, status, error_msg, created_at " +
+                "FROM voice_logs WHERE device_id = ?1 ORDER BY created_at DESC LIMIT ?2",
+            ).bind(opts.deviceId, limit).all<VoiceLogRow>();
+            return rows.results || [];
+        }
+        const rows = await env.DB.prepare(
+            "SELECT id, device_id, session_id, asr_text, ai_reply, audio_bytes, mp3_bytes, " +
+            "latency_asr_ms, latency_chat_ms, latency_tts_ms, latency_total_ms, status, error_msg, created_at " +
+            "FROM voice_logs ORDER BY created_at DESC LIMIT ?1",
+        ).bind(limit).all<VoiceLogRow>();
+        return rows.results || [];
+    } catch (err) {
+        console.error("Failed to list voice logs from DB:", err);
+        return [];
+    }
+}
+
