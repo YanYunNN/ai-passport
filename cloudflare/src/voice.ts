@@ -71,6 +71,22 @@ body {
 .stopbtn:hover { color:#f87171; border-color:rgba(248,113,113,0.5); }
 .stopbtn[hidden] { display:none; }
 .hint { text-align:center; color:var(--muted); font-size:0.75rem; padding:0.4rem 1rem 0.8rem; }
+.cfgbtn { background:rgba(148,163,184,0.1); border:1px solid var(--border); color:var(--text); border-radius:999px; width:34px; height:34px; cursor:pointer; font-size:1rem; flex:none; }
+.cfgbtn:hover { background:rgba(148,163,184,0.22); }
+.cfgpanel { position:fixed; top:62px; right:16px; width:300px; max-width:calc(100vw - 32px); background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:1rem 1.1rem 1.1rem; z-index:20; box-shadow:0 18px 48px -12px rgba(0,0,0,0.75); display:none; }
+.cfgpanel.open { display:block; animation:pop .18s ease; }
+.cfgrow { display:flex; flex-direction:column; gap:0.3rem; margin-bottom:0.9rem; }
+.cfgrow label { font-size:0.78rem; color:var(--muted); }
+.cfgrow select, .cfgrow input[type=text] { background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:8px; padding:0.5rem 0.6rem; color:var(--text); font-size:0.88rem; outline:none; width:100%; }
+.cfgrow select:focus, .cfgrow input[type=text]:focus { border-color:rgba(129,140,248,0.65); }
+.cfgrow input[type=range] { width:100%; accent-color:var(--accent); cursor:pointer; }
+.cfgval { float:right; font-weight:600; color:var(--accent2); }
+.cfgbtns { display:flex; gap:0.6rem; margin-top:0.4rem; }
+.cfgbtn-act { flex:1; background:var(--accent); color:#fff; border:none; border-radius:10px; padding:0.62rem; cursor:pointer; font-weight:600; }
+.cfgbtn-act:hover { background:#818cf8; }
+.cfgbtn-sec { flex:1; background:rgba(148,163,184,0.12); color:var(--text); border:1px solid var(--border); border-radius:10px; padding:0.62rem; cursor:pointer; }
+.cfgbtn-sec:hover { background:rgba(148,163,184,0.22); }
+.cfgbtn-act:disabled, .cfgbtn-sec:disabled { opacity:0.5; cursor:not-allowed; }
 @media (max-width:560px){ .bubble{max-width:90%;} }
 `;
 
@@ -89,6 +105,38 @@ function voicePage(): Response {
     <button class="status" id="ttsToggle" title="自动朗读 AI 回复">🔊 自动朗读</button>
     <button class="stopbtn" id="stopBtn" title="停止朗读" hidden>⏹ 停止</button>
     <div class="status" id="statusPill">检测中…</div>
+    <button class="cfgbtn" id="cfgBtn" title="TTS 设置">⚙️</button>
+</div>
+<div class="cfgpanel" id="cfgPanel">
+    <div class="cfgrow">
+        <label>音色 <span class="cfgval" id="voiceVal"></span></label>
+        <select id="voiceSel"></select>
+        <input type="text" id="voiceInput" placeholder="或直接输入音色名，如 zh-CN-YunxiNeural" spellcheck="false" autocomplete="off">
+    </div>
+    <div class="cfgrow">
+        <label>语速 <span class="cfgval" id="speedVal"></span></label>
+        <input type="range" id="speedRange" min="0.25" max="2" step="0.05">
+    </div>
+    <div class="cfgrow">
+        <label>音调 <span class="cfgval" id="pitchVal"></span></label>
+        <input type="range" id="pitchRange" min="0.5" max="1.5" step="0.05">
+    </div>
+    <div class="cfgrow">
+        <label>风格 <span class="cfgval" id="styleVal"></span></label>
+        <select id="styleSel"></select>
+    </div>
+    <div class="cfgrow">
+        <label>输出方式 <span class="cfgval" id="streamVal"></span></label>
+        <select id="streamSel">
+            <option value="standard">标准（完整音频）</option>
+            <option value="stream">流式（Stream）</option>
+        </select>
+        <span style="font-size:0.7rem; color:var(--muted);">流式：Edge 边合成边发送，页面边下边播（不支持 MSE 时自动降级为缓冲播放）</span>
+    </div>
+    <div class="cfgbtns">
+        <button class="cfgbtn-sec" id="previewBtn">🔊 试听</button>
+        <button class="cfgbtn-act" id="saveCfgBtn">保存</button>
+    </div>
 </div>
 <div class="chat" id="chat">
     <div class="bubble system">按住麦克风说话，或直接输入文字；识别后交给 AI 回答。</div>
@@ -141,6 +189,150 @@ function voicePage(): Response {
         stopBtn.hidden = true;
     }
     stopBtn.addEventListener("click", stopPlayback);
+
+    // ---------- TTS 设置（右上角 ⚙️，localStorage 持久化） ----------
+    const TTS_ZH_VOICES = [
+        ["zh-CN-XiaoxiaoNeural", "晓晓 · 女声 温柔"],
+        ["zh-CN-XiaoyiNeural", "晓伊 · 女声 活泼"],
+        ["zh-CN-YunxiNeural", "云希 · 男声 阳光"],
+        ["zh-CN-YunyangNeural", "云扬 · 男声 专业"],
+        ["zh-CN-YunjianNeural", "云健 · 男声 浑厚"],
+        ["zh-CN-YunxiaNeural", "云夏 · 男声 少年"],
+        ["zh-CN-YunfengNeural", "云枫 · 男声 磁性"],
+        ["zh-CN-XiaochenNeural", "晓辰 · 女声 温润"],
+        ["zh-CN-XiaohanNeural", "晓涵 · 女声 温暖"],
+        ["zh-CN-XiaomoNeural", "晓墨 · 女声 解说"],
+        ["zh-CN-XiaoruiNeural", "晓睿 · 女声 细腻"],
+        ["zh-CN-XiaoshuangNeural", "晓双 · 童声 可爱"],
+        ["zh-CN-XiaoxuanNeural", "晓萱 · 女声 亲和"],
+        ["zh-CN-XiaoyanNeural", "晓颜 · 女声 柔和"],
+        ["zh-CN-XiaoyouNeural", "晓悠 · 女声 温暖"],
+        ["zh-CN-XiaozhenNeural", "晓甄 · 女声 自信"],
+        ["zh-CN-YunzeNeural", "云泽 · 男声 青涩"],
+        ["zh-CN-liaoning-XiaobeiNeural", "晓北 · 东北话 女声"],
+        ["zh-CN-shaanxi-XiaoniNeural", "晓妮 · 陕西话 女声"],
+    ];
+    const TTS_STYLES = [
+        ["", "无"],
+        ["assistant", "助理"],
+        ["chat", "聊天"],
+        ["cheerful", "欢快"],
+        ["newscast", "新闻播报"],
+        ["calm", "平静"],
+        ["gentle", "温柔"],
+        ["affectionate", "深情"],
+        ["sad", "悲伤"],
+        ["serious", "严肃"],
+        ["lyrical", "抒情"],
+        ["narration-professional", "专业解说"],
+        ["sports-commentary", "体育解说"],
+    ];
+    const TTS_STORAGE_KEY = "kiroVoiceTtsConfig";
+    let ttsCfg = { voice: "", speed: 1.0, pitch: 1.0, style: "", stream: false };
+    try {
+        const saved = JSON.parse(localStorage.getItem(TTS_STORAGE_KEY) || "null");
+        if (saved && typeof saved === "object") ttsCfg = Object.assign(ttsCfg, saved);
+    } catch (e) {}
+
+    const cfgPanel = document.getElementById("cfgPanel");
+    const cfgBtn = document.getElementById("cfgBtn");
+    const voiceSel = document.getElementById("voiceSel");
+    const voiceInput = document.getElementById("voiceInput");
+    const voiceVal = document.getElementById("voiceVal");
+    const speedRange = document.getElementById("speedRange");
+    const speedVal = document.getElementById("speedVal");
+    const pitchRange = document.getElementById("pitchRange");
+    const pitchVal = document.getElementById("pitchVal");
+    const styleSel = document.getElementById("styleSel");
+    const styleVal = document.getElementById("styleVal");
+    const streamSel = document.getElementById("streamSel");
+    const streamVal = document.getElementById("streamVal");
+
+    function fillVoiceSelect() {
+        voiceSel.innerHTML = "";
+        TTS_ZH_VOICES.forEach(function (pair) {
+            const opt = document.createElement("option");
+            opt.value = pair[0];
+            opt.textContent = pair[1];
+            voiceSel.appendChild(opt);
+        });
+    }
+    function fillStyleSelect() {
+        styleSel.innerHTML = "";
+        TTS_STYLES.forEach(function (pair) {
+            const opt = document.createElement("option");
+            opt.value = pair[0];
+            opt.textContent = pair[1];
+            styleSel.appendChild(opt);
+        });
+    }
+    function applyCfgUI() {
+        ttsCfg.voice = voiceInput.value.trim();
+        ttsCfg.speed = parseFloat(speedRange.value) || 1.0;
+        ttsCfg.pitch = parseFloat(pitchRange.value) || 1.0;
+        ttsCfg.style = styleSel.value;
+        ttsCfg.stream = streamSel.value === "stream";
+    }
+    function syncCfgUI() {
+        voiceInput.value = ttsCfg.voice || "";
+        const match = Array.prototype.find.call(voiceSel.options, function (o) { return o.value === ttsCfg.voice; });
+        voiceSel.value = match ? ttsCfg.voice : "";
+        speedRange.value = String(ttsCfg.speed);
+        pitchRange.value = String(ttsCfg.pitch);
+        styleSel.value = ttsCfg.style;
+        streamSel.value = ttsCfg.stream ? "stream" : "standard";
+        voiceVal.textContent = ttsCfg.voice || "默认";
+        speedVal.textContent = ttsCfg.speed + "x";
+        pitchVal.textContent = ttsCfg.pitch + "x";
+        styleVal.textContent = ttsCfg.style ? ttsCfg.style : "无";
+        streamVal.textContent = ttsCfg.stream ? "Stream" : "标准";
+    }
+    function ttsPayload(text) {
+        const p = { text: text };
+        if (ttsCfg.voice) p.voice = ttsCfg.voice;
+        if (ttsCfg.speed && ttsCfg.speed !== 1) p.speed = ttsCfg.speed;
+        if (ttsCfg.pitch && ttsCfg.pitch !== 1) p.pitch = ttsCfg.pitch;
+        if (ttsCfg.style) p.style = ttsCfg.style;
+        if (ttsCfg.stream) p.stream = true;
+        return p;
+    }
+
+    fillVoiceSelect();
+    fillStyleSelect();
+    voiceSel.addEventListener("change", function () { voiceInput.value = voiceSel.value; applyCfgUI(); syncCfgUI(); });
+    voiceInput.addEventListener("input", function () { applyCfgUI(); syncCfgUI(); });
+    speedRange.addEventListener("input", function () { applyCfgUI(); syncCfgUI(); });
+    pitchRange.addEventListener("input", function () { applyCfgUI(); syncCfgUI(); });
+    styleSel.addEventListener("change", function () { applyCfgUI(); syncCfgUI(); });
+    streamSel.addEventListener("change", function () { applyCfgUI(); syncCfgUI(); });
+
+    cfgBtn.addEventListener("click", function () {
+        cfgPanel.classList.toggle("open");
+        if (cfgPanel.classList.contains("open")) syncCfgUI();
+    });
+    document.addEventListener("click", function (e) {
+        if (cfgPanel.classList.contains("open") && !cfgPanel.contains(e.target) && e.target !== cfgBtn) {
+            cfgPanel.classList.remove("open");
+        }
+    });
+    const saveCfgBtn = document.getElementById("saveCfgBtn");
+    saveCfgBtn.addEventListener("click", function () {
+        applyCfgUI();
+        try { localStorage.setItem(TTS_STORAGE_KEY, JSON.stringify(ttsCfg)); } catch (e) {}
+        cfgPanel.classList.remove("open");
+        statusPill.textContent = "TTS: " + (ttsCfg.voice || "默认");
+    });
+    const previewBtn = document.getElementById("previewBtn");
+    previewBtn.addEventListener("click", async function () {
+        previewBtn.disabled = true;
+        try {
+            await speak("你好，我是跃云。语音设置试听。", null);
+        } catch (err) {
+            appendBubble("试听失败: " + err.message, "system");
+        } finally {
+            previewBtn.disabled = false;
+        }
+    });
 
     function appendBubble(text, kind) {
         const div = document.createElement("div");
@@ -222,43 +414,112 @@ function voicePage(): Response {
 
     // 朗读给定文本。btn 为绑定到该气泡上的朗读按钮，用于播放/暂停切换与状态展示。
     // 再次点击同一按钮会在播放/暂停间切换；点击其它气泡或「停止」按钮会停止当前朗读。
+    // 播放开始后的公共 UI 状态（气泡按钮 / 停止键 / 结束钩子）。
+    function startPlaybackUi(audio, btn) {
+        currentAudio = audio;
+        currentBtn = btn;
+        if (btn) {
+            btn.textContent = "⏸";
+            btn.classList.add("playing");
+            btn.classList.remove("paused");
+            btn.title = "暂停";
+        }
+        stopBtn.hidden = false;
+        audio.onended = stopPlayback;
+        audio.onerror = () => { stopPlayback(); appendBubble("朗读失败", "system"); };
+    }
+
+    // 不支持 MSE 时的兜底：把流攒成 Blob 再播。
+    async function bufferToBlob(body, btn) {
+        const chunks = [];
+        const reader = body.getReader();
+        try {
+            while (true) {
+                const r = await reader.read();
+                if (r.done) break;
+                chunks.push(r.value);
+            }
+            const url = URL.createObjectURL(new Blob(chunks, { type: "audio/mpeg" }));
+            const audio = new Audio(url);
+            startPlaybackUi(audio, btn);
+            audio.play().catch(stopPlayback);
+        } catch (err) {
+            appendBubble("朗读失败: " + err.message, "system");
+        }
+    }
+
+    // 流式播放原始 MP3（ReadableStream）：支持 MSE 就边下边播，否则缓冲成 Blob。
+    function playMp3Stream(body, btn) {
+        let mseOk = false;
+        try { mseOk = "MediaSource" in window && MediaSource.isTypeSupported("audio/mpeg"); } catch (e) { mseOk = false; }
+        if (!mseOk) { bufferToBlob(body, btn); return; }
+
+        const mediaSource = new MediaSource();
+        const url = URL.createObjectURL(mediaSource);
+        const audio = new Audio(url);
+        startPlaybackUi(audio, btn);
+        audio.play().catch(stopPlayback);
+        mediaSource.addEventListener("sourceopen", () => {
+            let sourceBuffer = null;
+            try { sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg"); }
+            catch (e) { bufferToBlob(body, btn); return; }
+            const reader = body.getReader();
+            (async () => {
+                try {
+                    while (true) {
+                        const r = await reader.read();
+                        if (r.done) break;
+                        if (sourceBuffer.updating) {
+                            await new Promise((res) => sourceBuffer.addEventListener("updateend", res, { once: true }));
+                        }
+                        sourceBuffer.appendBuffer(r.value);
+                        await new Promise((res) => sourceBuffer.addEventListener("updateend", res, { once: true }));
+                    }
+                    if (mediaSource.readyState === "open") mediaSource.endOfStream();
+                } catch (err) {
+                    stopPlayback();
+                    appendBubble("流式朗读失败: " + err.message, "system");
+                }
+            })();
+        });
+    }
+
     async function speak(text, btn) {
         // 同一按钮再次点击 → 播放/暂停切换。
         if (currentAudio && currentBtn === btn) {
             if (currentAudio.paused) {
                 currentAudio.play().catch(stopPlayback);
-                btn.textContent = "⏸";
-                btn.classList.remove("paused");
-                btn.classList.add("playing");
-                btn.title = "暂停";
+                if (btn) { btn.textContent = "⏸"; btn.classList.remove("paused"); btn.classList.add("playing"); btn.title = "暂停"; }
             } else {
                 currentAudio.pause();
-                btn.textContent = "▶";
-                btn.classList.remove("playing");
-                btn.classList.add("paused");
-                btn.title = "继续播放";
+                if (btn) { btn.textContent = "▶"; btn.classList.remove("playing"); btn.classList.add("paused"); btn.title = "继续播放"; }
             }
             return;
         }
         // 切换到新音频：停掉上一段，再取新音频。
         stopPlayback();
         try {
-            const data = await api("/v1/voice/tts", {
+            const res = await fetch("/v1/voice/tts", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text: text })
+                body: JSON.stringify(ttsPayload(text))
             });
-            const audio = new Audio(data.audio);
-            currentAudio = audio;
-            currentBtn = btn;
-            btn.textContent = "⏸";
-            btn.classList.add("playing");
-            btn.classList.remove("paused");
-            btn.title = "暂停";
-            stopBtn.hidden = false;
-            audio.onended = stopPlayback;
-            audio.onerror = () => { stopPlayback(); appendBubble("朗读失败", "system"); };
-            audio.play().catch(stopPlayback);
+            if (!res.ok) {
+                let msg = "HTTP " + res.status;
+                try { const d = await res.json(); if (d && d.error) msg = d.error; } catch (e) {}
+                throw new Error(msg);
+            }
+            const ct = res.headers.get("Content-Type") || "";
+            if (ct.indexOf("json") >= 0) {
+                // 标准模式：JSON data URL
+                const data = await res.json();
+                const audio = new Audio(data.audio);
+                startPlaybackUi(audio, btn);
+                audio.play().catch(stopPlayback);
+            } else {
+                // 流式模式：原始 MP3 流
+                playMp3Stream(res.body, btn);
+            }
         } catch (err) {
             appendBubble("朗读失败: " + err.message, "system");
         }
@@ -336,6 +597,10 @@ function voicePage(): Response {
     textInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendText(); });
 
     api("/v1/voice/status").then((s) => {
+        // 未保存过自定义设置时，跟随服务端默认音色。
+        if (!localStorage.getItem(TTS_STORAGE_KEY) && s.voice) {
+            ttsCfg.voice = s.voice;
+        }
         if (s.grok) { statusPill.textContent = "AI (" + (s.model || "") + ") 已就绪"; statusPill.classList.add("ok"); }
         else { statusPill.textContent = "AI 未配置（AI_API_KEY）"; }
     }).catch(() => { statusPill.textContent = "状态获取失败"; });
@@ -348,7 +613,7 @@ function voicePage(): Response {
         headers: {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store",
-            "Content-Security-Policy": "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; media-src data:; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+            "Content-Security-Policy": "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; media-src data: blob:; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
             "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
         },
@@ -409,6 +674,26 @@ const TTS_MAX_TEXT = 800;
 const TTS_DEFAULT_BASE_URL = "https://tts.yanyun.asia/v1";
 const TTS_DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural";
 
+interface TtsParams {
+    voice?: string;
+    speed?: number;
+    pitch?: number;
+    style?: string;
+    stream?: boolean;
+}
+
+function clampNumber(value: unknown, min: number, max: number): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) return 1;
+    return Math.min(max, Math.max(min, value));
+}
+
+function cleanTtsString(value: unknown, maxLength: number): string | undefined {
+    if (typeof value !== "string") return undefined;
+    const cleaned = value.trim();
+    if (!cleaned || cleaned.length > maxLength || /[\r\n]/u.test(cleaned)) return undefined;
+    return cleaned;
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
     let binary = "";
     for (let offset = 0; offset < bytes.length; offset += 0x8000) {
@@ -422,30 +707,41 @@ function bytesToBase64(bytes: Uint8Array): string {
  * Requires TTS_API_KEY (shared secret with the edgetts-proxy Worker).
  * Returns MP3 bytes.
  */
-async function ttsEdge(env: Env, text: string): Promise<Uint8Array> {
+async function ttsEdge(env: Env, text: string, params: TtsParams = {}): Promise<Response> {
     const apiKey = env.TTS_API_KEY;
     if (!apiKey) throw new VoiceError("TTS_API_KEY 未配置（需与 tts.yanyun.asia 共享密钥）", 503);
     const baseUrl = (env.TTS_BASE_URL || TTS_DEFAULT_BASE_URL).replace(/\/+$/u, "");
-    const voice = env.TTS_VOICE || TTS_DEFAULT_VOICE;
+    const voice = params.voice || env.TTS_VOICE || TTS_DEFAULT_VOICE;
+    const speed = clampNumber(params.speed, 0.25, 2.0);
+    const pitch = clampNumber(params.pitch, 0.5, 1.5);
+    const stream = params.stream === true;
+    const payload: Record<string, unknown> = {
+        model: "tts-1", voice, input: text, stream, speed, pitch,
+    };
+    if (params.style) payload.style = params.style;
+    // 30s 硬超时：上游流卡住时返回明确错误而不是无限等待。
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30000);
     let res: Response;
     try {
         res = await fetch(`${baseUrl}/audio/speech`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-            body: JSON.stringify({ model: "tts-1", voice, input: text, stream: false }),
+            body: JSON.stringify(payload),
+            signal: controller.signal,
         });
     } catch (err) {
+        clearTimeout(timer);
         console.error("Edge TTS fetch failed", err);
-        throw new VoiceError("TTS 服务暂不可用", 503);
+        throw new VoiceError("TTS 服务暂不可用或超时", 503);
     }
+    clearTimeout(timer);
     if (!res.ok) {
         const detail = await res.text().catch(() => "");
         console.error("Edge TTS error", res.status, detail);
         throw new VoiceError(`TTS 服务错误 (${res.status})`, 502);
     }
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    if (bytes.length < 1000) throw new VoiceError("TTS 返回音频为空", 502);
-    return bytes;
+    return res;
 }
 
 /** AI chat via an OpenAI-compatible gateway (default http://grok.yanyun.asia/v1). */
@@ -524,13 +820,22 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
         }
 
         if (request.method === "POST" && url.pathname === "/v1/voice/tts") {
-            const body = await request.json<{ text?: string }>().catch(() => null);
+            const body = await request
+                .json<{ text?: string; voice?: string; speed?: number; pitch?: number; style?: string; stream?: boolean }>()
+                .catch(() => null);
             const text = typeof body?.text === "string" ? body.text.trim() : "";
             if (!text || text.length > TTS_MAX_TEXT) return json({ error: "invalid text" }, 400);
-            let audio: Uint8Array;
+            const params: TtsParams = {
+                voice: cleanTtsString(body?.voice, 64),
+                speed: clampNumber(body?.speed, 0.25, 2.0),
+                pitch: clampNumber(body?.pitch, 0.5, 1.5),
+                style: cleanTtsString(body?.style, 32),
+                stream: body?.stream === true,
+            };
             const t0 = Date.now();
+            let ttsRes: Response;
             try {
-                audio = await ttsEdge(env, text);
+                ttsRes = await ttsEdge(env, text, params);
             } catch (err) {
                 if (err instanceof VoiceError) throw err;
                 const detail = err instanceof Error ? err.message : String(err);
@@ -538,6 +843,14 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
                 throw new VoiceError(`TTS 服务暂不可用: ${detail.slice(0, 120)}`, 503);
             }
             console.log(`[voice latency] tts(synthesis): ${Date.now() - t0}ms, chars=${text.length}`);
+            // 流式：原样透传 edgetts 的 MP3 流（不缓冲），页面用 MSE 边下边播，固件可流式接收。
+            if (params.stream === true) {
+                return new Response(ttsRes.body, {
+                    headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-store" },
+                });
+            }
+            const audio = new Uint8Array(await ttsRes.arrayBuffer());
+            if (audio.length < 1000) throw new VoiceError("TTS 返回音频为空", 502);
             // 固件 Chat 用 Accept: audio/mpeg 直接拿 MP3 字节流，避免 base64 大缓冲。
             if (request.headers.get("Accept")?.includes("audio/mpeg")) {
                 return new Response(audio, {
