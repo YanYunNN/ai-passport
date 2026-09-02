@@ -5,6 +5,7 @@
 // 3. 服务端 ASR/LLM 回复后下发 MP3 流，软解播放，端到端延迟显著降低。
 #include "demo.h"
 #include "app_settings.h"
+#include "power_manager.h"
 #include "bsp_audio.h"
 #include "bsp_display.h"
 #include "esp_partition.h"
@@ -501,6 +502,9 @@ static void chat_task(void *arg)
 
 void demo_chat_enter(void)
 {
+    /* 聊天交互期间暂时关闭浅睡眠，防止 Wi-Fi/DMA/网络发送在 CPU 降频或休眠时挂起 */
+    power_manager_set_light_sleep_enabled(false);
+
     /* 注册 Voice 交互回调 */
     kiro_passport_network_register_voice_cb(chat_voice_cb, NULL);
 
@@ -600,6 +604,7 @@ void demo_chat_exit(void)
         s_log = NULL;
     }
     chat_log_heap("chat_exit");
+    power_manager_set_light_sleep_enabled(app_settings_get()->light_sleep_enabled);
 }
 
 void demo_chat_key(bsp_btn_t btn, bsp_btn_ev_t ev)

@@ -18,6 +18,8 @@ static volatile uint32_t s_last_activity_time_sec;
 static volatile bool s_screen_dimmed;
 static esp_timer_handle_t s_inactivity_timer;
 
+static esp_err_t apply_power_policy(bool light_sleep_enabled);
+
 static void inactivity_timer_cb(void *arg)
 {
     (void)arg;
@@ -38,6 +40,9 @@ static void inactivity_timer_cb(void *arg)
         s_screen_dimmed = true;
         bsp_display_backlight(0);
         ESP_LOGI(TAG, "空闲超时 %u 秒，自动息屏", (unsigned)elapsed);
+        if (s_light_sleep_enabled) {
+            apply_power_policy(true);
+        }
     }
 }
 
@@ -62,13 +67,12 @@ static esp_err_t apply_power_policy(bool light_sleep_enabled)
 #if CONFIG_PM_ENABLE
     const esp_pm_config_t config = {
         .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-        .min_freq_mhz = 10,
+        .min_freq_mhz = light_sleep_enabled ? 10 : 80,
         .light_sleep_enable = light_sleep_enabled,
     };
     esp_err_t result = esp_pm_configure(&config);
     if (result == ESP_OK) {
-        s_light_sleep_enabled = light_sleep_enabled;
-        ESP_LOGI(TAG, "自动浅睡眠%s", light_sleep_enabled ? "已启用" : "已关闭");
+        ESP_LOGI(TAG, "自动浅睡眠%s (min_freq=%dMHz)", light_sleep_enabled ? "已启用" : "已关闭", config.min_freq_mhz);
     } else {
         ESP_LOGW(TAG, "配置电源管理失败: %s", esp_err_to_name(result));
     }
@@ -85,6 +89,7 @@ esp_err_t power_manager_init(bool light_sleep_enabled)
     log_wakeup_cause();
     s_last_activity_time_sec = (uint32_t)(esp_timer_get_time() / 1000000ULL);
     s_screen_dimmed = false;
+    s_light_sleep_enabled = light_sleep_enabled;
 
     if (!s_inactivity_timer) {
         const esp_timer_create_args_t timer_args = {
@@ -97,16 +102,18 @@ esp_err_t power_manager_init(bool light_sleep_enabled)
         }
     }
 
-    if (s_initialized) return power_manager_set_light_sleep_enabled(light_sleep_enabled);
-
-    esp_err_t result = apply_power_policy(light_sleep_enabled);
-    if (result == ESP_OK) s_initialized = true;
-    return result;
+    s_initialized = true;
+    /* 亮屏运行时保持稳定策略（min_freq=80MHz，无浅休眠），确保 Wi-Fi/TLS 握手及音频外设稳定 */
+    return apply_power_policy(false);
 }
 
 esp_err_t power_manager_set_light_sleep_enabled(bool enabled)
 {
-    return apply_power_policy(enabled);
+    s_light_sleep_enabled = enabled;
+    if (s_screen_dimmed) {
+        return apply_power_policy(enabled);
+    }
+    return ESP_OK;
 }
 
 bool power_manager_is_light_sleep_enabled(void)
@@ -120,7 +127,8 @@ bool power_manager_activity_notify(void)
     if (s_screen_dimmed) {
         s_screen_dimmed = false;
         bsp_display_backlight(app_settings_get_brightness_percent());
-        ESP_LOGI(TAG, "检测到按键，恢复屏幕亮度");
+        apply_power_policy(false);
+        ESP_LOGI(TAG, "检测到按键，恢复屏幕亮度并退出浅休眠");
         return true;
     }
     return false;
@@ -134,7 +142,10 @@ bool power_manager_is_screen_dimmed(void)
 void power_manager_wake_screen(void)
 {
     s_last_activity_time_sec = (uint32_t)(esp_timer_get_time() / 1000000ULL);
-    s_screen_dimmed = false;
+    if (s_screen_dimmed) {
+        s_screen_dimmed = false;
+        apply_power_policy(false);
+    }
     bsp_display_backlight(app_settings_get_brightness_percent());
 }
 

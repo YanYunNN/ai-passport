@@ -241,17 +241,16 @@ void demo_kiro_passport_key(bsp_btn_t btn, bsp_btn_ev_t event)
 {
     if (event != BSP_BTN_CLICK) return;
 
-    kiro_passport_snapshot_t snapshot;
+    static kiro_passport_snapshot_t snapshot;
     kiro_passport_get_snapshot(&snapshot);
 
     /* 无待审批请求时，OK 键用于已读并关闭当前显示的通知；待审批时仍走审批流程。 */
     if (!snapshot.pending && btn == BSP_BTN_OK) {
-        kiro_passport_notify_info_t notify;
-        if (kiro_passport_network_get_notify(&notify) && notify.present) {
-            ESP_LOGI(TAG, "已读通知: %s", notify.title);
+        if (kiro_passport_network_has_notify()) {
+            ESP_LOGI(TAG, "已读通知，停止跳动");
             kiro_passport_network_clear_notify();
             ui_pixel_mascot_stop_bounce(s_mascot);
-            refresh_page(NULL);
+            if (s_refresh_timer) lv_timer_ready(s_refresh_timer);
             return;
         }
     }

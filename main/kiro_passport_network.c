@@ -65,6 +65,15 @@ bool kiro_passport_network_get_notify(kiro_passport_notify_info_t *out_info)
     return present;
 }
 
+bool kiro_passport_network_has_notify(void)
+{
+    if (!s_notify_lock) s_notify_lock = xSemaphoreCreateMutex();
+    if (s_notify_lock) xSemaphoreTake(s_notify_lock, portMAX_DELAY);
+    bool present = s_notify.present;
+    if (s_notify_lock) xSemaphoreGive(s_notify_lock);
+    return present;
+}
+
 void kiro_passport_network_clear_notify(void)
 {
     if (!s_notify_lock) s_notify_lock = xSemaphoreCreateMutex();
@@ -726,8 +735,8 @@ static esp_err_t start_client(void)
         .buffer_size = 2048,
         .task_stack = 4096,
         .task_prio = 5,
-        .ping_interval_sec = 20,
-        .pingpong_timeout_sec = 10,
+        .ping_interval_sec = 60,
+        .pingpong_timeout_sec = 20,
         .keep_alive_enable = true,
         .keep_alive_idle = 20,
         .keep_alive_interval = 10,

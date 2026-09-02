@@ -44,8 +44,7 @@ static lv_timer_t *s_menu_timer;
 
 static void menu_refresh(void)
 {
-    kiro_passport_notify_info_t notify;
-    bool has_notify = (kiro_passport_network_get_notify(&notify) && notify.present);
+    bool has_notify = kiro_passport_network_has_notify();
 
     for (size_t i = 0; i < DEMO_COUNT; i++) {
         const char *status_str = s_ok[i] ? "" : "不可用";
@@ -66,8 +65,7 @@ static void menu_timer_cb(lv_timer_t *timer)
     (void)timer;
     if (s_active < 0 && s_menu_scr) {
         static bool s_last_has_notify = false;
-        kiro_passport_notify_info_t notify;
-        bool has_notify = (kiro_passport_network_get_notify(&notify) && notify.present);
+        bool has_notify = kiro_passport_network_has_notify();
         if (has_notify != s_last_has_notify) {
             s_last_has_notify = has_notify;
             menu_refresh();

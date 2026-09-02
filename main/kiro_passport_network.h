@@ -83,6 +83,9 @@ typedef struct {
 /* 获取最近一次的通知快照，若无已接收通知返回 false */
 bool kiro_passport_network_get_notify(kiro_passport_notify_info_t *out_info);
 
+/* 快速检查当前是否存在未读/未关闭的通知（轻量，不消耗调用栈空间） */
+bool kiro_passport_network_has_notify(void);
+
 /* 清除当前通知的 present 标志（version 保持不变），用于用户关闭通知 */
 void kiro_passport_network_clear_notify(void);
 
