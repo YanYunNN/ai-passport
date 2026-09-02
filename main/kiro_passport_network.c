@@ -1,5 +1,6 @@
 #include "kiro_passport_network.h"
 #include "screencast.h"
+#include "power_manager.h"
 
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
@@ -242,7 +243,7 @@ int kiro_passport_network_send_text(const char *message)
 {
     if (!message || !s_network.client || !esp_websocket_client_is_connected(s_network.client)) return -1;
     return esp_websocket_client_send_text(s_network.client, message, strlen(message),
-                                          pdMS_TO_TICKS(1500));
+                                          pdMS_TO_TICKS(3000));
 }
 
 int kiro_passport_network_send_binary(const void *data, size_t length)
@@ -250,7 +251,7 @@ int kiro_passport_network_send_binary(const void *data, size_t length)
     if (!data || length == 0 || length > INT_MAX || !s_network.client ||
         !esp_websocket_client_is_connected(s_network.client)) return -1;
     return esp_websocket_client_send_bin(s_network.client, data, (int)length,
-                                         pdMS_TO_TICKS(1500));
+                                         pdMS_TO_TICKS(3000));
 }
 
 static int send_text(const char *message)
@@ -453,6 +454,7 @@ static bool parse_notify(const char *message)
 
     ESP_LOGI(TAG, "收到通知: id=%s, title=%s, len=%zu, v=%lu", s_notify.id, s_notify.title,
              strlen(s_notify.content), (unsigned long)s_notify.version);
+    power_manager_wake_screen();
     return true;
 }
 
@@ -1278,16 +1280,16 @@ void kiro_passport_network_register_voice_cb(kiro_passport_voice_cb_t cb, void *
 esp_err_t kiro_passport_network_voice_start(const char *history_json)
 {
     if (!kiro_passport_network_is_connected()) return ESP_ERR_INVALID_STATE;
-    char msg[512];
+    static char s_voice_start_msg[1536];
     if (history_json && history_json[0] && strcmp(history_json, "[]") != 0) {
-        snprintf(msg, sizeof(msg),
+        snprintf(s_voice_start_msg, sizeof(s_voice_start_msg),
                  "{\"v\":1,\"type\":\"voice_start\",\"format\":\"pcm_16k_16bit_mono\",\"history\":%s}",
                  history_json);
     } else {
-        snprintf(msg, sizeof(msg),
+        snprintf(s_voice_start_msg, sizeof(s_voice_start_msg),
                  "{\"v\":1,\"type\":\"voice_start\",\"format\":\"pcm_16k_16bit_mono\"}");
     }
-    int ret = kiro_passport_network_send_text(msg);
+    int ret = kiro_passport_network_send_text(s_voice_start_msg);
     return ret > 0 ? ESP_OK : ESP_FAIL;
 }
 

@@ -27,7 +27,7 @@ static const char *TAG = "demo_chat";
 
 #define CHAT_SAMPLE_RATE 16000
 #define CHAT_REC_MAX_SEC 4
-#define CHAT_REC_MAX_BYTES (CHAT_SAMPLE_RATE * sizeof(int16_t) * CHAT_REC_MAX_SEC) // 128000 字节 (~4s)
+#define CHAT_REC_MAX_BYTES (128 * 1024) // 131072 字节 (4KB 对齐, ~4.1s)
 #define CHAT_MP3_MAX_BYTES (160 * 1024)
 #define CHAT_MP3_OFFSET 131072 // 对齐到 4KB
 #define CHAT_STORE_NAME "chatrec"
@@ -113,7 +113,17 @@ static esp_err_t chat_store_init(void)
 static esp_err_t chat_store_erase(size_t offset, size_t size)
 {
     if (!s_store) return ESP_ERR_INVALID_STATE;
-    return esp_partition_erase_range(s_store, offset, size);
+    size_t aligned_offset = offset & ~4095;
+    size_t aligned_size = (size + 4095) & ~4095;
+    if (aligned_offset + aligned_size > s_store->size) {
+        aligned_size = s_store->size - aligned_offset;
+    }
+    esp_err_t err = esp_partition_erase_range(s_store, aligned_offset, aligned_size);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "chat_store_erase 失败: off=0x%zx sz=0x%zx err=%s",
+                 aligned_offset, aligned_size, esp_err_to_name(err));
+    }
+    return err;
 }
 
 static size_t chat_json_escape(char *out, size_t out_size, const char *text)
@@ -236,11 +246,6 @@ static void chat_voice_cb(kiro_passport_voice_event_t event, const void *data, s
     case KIRO_PASSPORT_VOICE_EVT_TTS_START:
         ESP_LOGI(TAG, "TTS start: total_bytes=%zu", len);
         s_mp3_len = 0;
-        {
-            size_t erase_sz = (len > 0) ? ((len + 4095) & ~4095) : 65536;
-            if (erase_sz > CHAT_MP3_MAX_BYTES) erase_sz = CHAT_MP3_MAX_BYTES;
-            chat_store_erase(CHAT_MP3_OFFSET, erase_sz);
-        }
         break;
     case KIRO_PASSPORT_VOICE_EVT_TTS_DATA:
         if (data && len > 0 && s_store) {
@@ -258,15 +263,15 @@ static void chat_voice_cb(kiro_passport_voice_event_t event, const void *data, s
         if (data && len > 0) {
             strlcpy(s_voice_err, (const char *)data, sizeof(s_voice_err));
             ESP_LOGE(TAG, "Voice error: %s", s_voice_err);
+            s_tts_error = true;
         }
-        s_tts_error = true;
         break;
     }
 }
 
-/* helix 软解 flash 里的 MP3（分块读入）→ PCM → ES8311。 */
 static esp_err_t chat_play_mp3_stream(void)
 {
+    if (!s_store || s_mp3_len == 0) return ESP_ERR_INVALID_STATE;
     if (!s_mp3) {
         s_mp3 = MP3InitDecoder();
         if (!s_mp3) return ESP_ERR_NO_MEM;
@@ -358,6 +363,48 @@ static void chat_task(void *arg)
             s_recognized[0] = '\0';
             s_reply[0] = '\0';
 
+            /* 1. 预先擦除 Flash 录音区（128KB，4KB 对齐） */
+            chat_set_status("准备录音…");
+            if (chat_store_erase(0, CHAT_REC_MAX_BYTES) != ESP_OK) {
+                chat_reset_to_idle("存储擦除失败");
+                continue;
+            }
+
+            /* 2. 录音阶段：纯硬件采集存入 Flash，不占用网络，杜绝 WiFi 发包与 I2S 竞争导致的内存枯竭 */
+            chat_set_status("聆听中… (再按 OK 停止)");
+            if (bsp_audio_set_format(CHAT_SAMPLE_RATE, 16, 1) != ESP_OK) {
+                chat_reset_to_idle("音频初始化失败");
+                continue;
+            }
+            bsp_audio_set_volume(app_settings_get_volume_percent());
+
+            s_rec_len = 0;
+            static int16_t s_pcm_chunk[512];
+            while (s_rec_len < CHAT_REC_MAX_BYTES) {
+                if (s_stop_record) break;
+                if (bsp_audio_read(s_pcm_chunk, sizeof(s_pcm_chunk)) != ESP_OK) break;
+                if (esp_partition_write(s_store, s_rec_len, s_pcm_chunk, sizeof(s_pcm_chunk)) != ESP_OK) break;
+                s_rec_len += sizeof(s_pcm_chunk);
+            }
+            bsp_audio_close(); // 关键！立即关闭音频硬件，释放 I2S DMA 缓冲
+
+            if (s_rec_len < 1600 * sizeof(int16_t)) {
+                chat_reset_to_idle("没听清，再试一次");
+                continue;
+            }
+
+            /* 预擦除 MP3 缓存区（在麦克风已关闭、准备上传时进行） */
+            chat_store_erase(CHAT_MP3_OFFSET, 128 * 1024);
+
+            /* 3. 音频关闭后内存恢复至 35KB+，此时通过长连接 WebSocket 流式推送 PCM */
+            chat_set_status("上传识别中…");
+            chat_log_heap("voice_upload_start");
+
+            if (!kiro_passport_network_is_connected()) {
+                chat_reset_to_idle("Relay 断开，请重试");
+                continue;
+            }
+
             /* 构建对话历史 JSON */
             static char s_hist_buf[1024];
             size_t hpos = 0;
@@ -381,32 +428,32 @@ static void chat_task(void *arg)
                 continue;
             }
 
-            chat_set_status("聆听中… (再按 OK 停止)");
-            if (bsp_audio_set_format(CHAT_SAMPLE_RATE, 16, 1) != ESP_OK) {
-                chat_reset_to_idle("音频初始化失败");
+            /* 分块推送 PCM 数据到 WebSocket (每块 2048 字节，间隔 15ms) */
+            static uint8_t s_send_buf[2048];
+            size_t sent = 0;
+            bool send_ok = true;
+            while (sent < s_rec_len) {
+                size_t n = s_rec_len - sent;
+                if (n > sizeof(s_send_buf)) n = sizeof(s_send_buf);
+                if (esp_partition_read(s_store, sent, s_send_buf, n) != ESP_OK) {
+                    send_ok = false;
+                    break;
+                }
+                if (kiro_passport_network_voice_send_pcm(s_send_buf, n) != ESP_OK) {
+                    send_ok = false;
+                    break;
+                }
+                sent += n;
+                vTaskDelay(pdMS_TO_TICKS(15));
+            }
+
+            if (!send_ok) {
+                chat_reset_to_idle("发送失败");
                 continue;
             }
-            bsp_audio_set_volume(app_settings_get_volume_percent());
 
-            s_rec_len = 0;
-            static int16_t s_pcm_chunk[512];
-            while (s_rec_len < CHAT_REC_MAX_BYTES) {
-                if (s_stop_record) break;
-                if (bsp_audio_read(s_pcm_chunk, sizeof(s_pcm_chunk)) != ESP_OK) break;
-                if (kiro_passport_network_voice_send_pcm(s_pcm_chunk, sizeof(s_pcm_chunk)) != ESP_OK) break;
-                s_rec_len += sizeof(s_pcm_chunk);
-            }
-            bsp_audio_close();
-
-            if (s_rec_len < 1600 * sizeof(int16_t)) {
-                kiro_passport_network_voice_end();
-                chat_reset_to_idle("没听清，再试一次");
-                continue;
-            }
-
-            chat_set_status("识别中…");
-            chat_log_heap("voice_recording_done");
             kiro_passport_network_voice_end();
+            chat_set_status("AI 思考中…");
             s_state = CHAT_WAITING;
             continue;
         }
@@ -460,12 +507,14 @@ void demo_chat_enter(void)
     s_transcript[0] = '\0';
     s_recognized[0] = '\0';
     s_reply[0] = '\0';
-    s_state = CHAT_IDLE;
+    s_history_count = 0;
     s_stop_record = false;
+    s_state = CHAT_IDLE;
 
     if (!s_task) {
-        if (xTaskCreate(chat_task, "demo_chat", 6144, NULL, 4, &s_task) != pdPASS) {
-            ESP_LOGE(TAG, "任务创建失败");
+        if (xTaskCreate(chat_task, "demo_chat", 4096, NULL, 4, &s_task) != pdPASS) {
+            ESP_LOGE(TAG, "创建 chat_task 失败");
+            s_task = NULL;
         }
     }
 

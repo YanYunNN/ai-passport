@@ -40,12 +40,38 @@ static lv_obj_t *s_indicators[DEMO_COUNT];
 static int s_sel;
 static int s_active = -1;
 
+static lv_timer_t *s_menu_timer;
+
 static void menu_refresh(void)
 {
+    kiro_passport_notify_info_t notify;
+    bool has_notify = (kiro_passport_network_get_notify(&notify) && notify.present);
+
     for (size_t i = 0; i < DEMO_COUNT; i++) {
-        lv_label_set_text(s_status[i], s_ok[i] ? "" : "不可用");
+        const char *status_str = s_ok[i] ? "" : "不可用";
+        if (i == 3 && s_ok[3] && has_notify) {
+            status_str = "● 新消息";
+        }
+        lv_label_set_text(s_status[i], status_str);
         ui_system_set_item_state(s_cards[i], s_rows[i], s_status[i],
                                  s_indicators[i], (int)i == s_sel, s_ok[i]);
+        if (i == 3 && s_ok[3] && has_notify) {
+            lv_obj_set_style_text_color(s_status[i], lv_color_hex(UI_SYSTEM_ACCENT), 0);
+        }
+    }
+}
+
+static void menu_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    if (s_active < 0 && s_menu_scr) {
+        static bool s_last_has_notify = false;
+        kiro_passport_notify_info_t notify;
+        bool has_notify = (kiro_passport_network_get_notify(&notify) && notify.present);
+        if (has_notify != s_last_has_notify) {
+            s_last_has_notify = has_notify;
+            menu_refresh();
+        }
     }
 }
 
@@ -68,9 +94,9 @@ static void menu_build(void)
         lv_obj_set_pos(s_rows[i], 16, 10);
         s_status[i] = ui_system_label(s_cards[i], "", &ui_font_noto_sc_14,
                                       UI_SYSTEM_MUTED);
-        lv_obj_set_width(s_status[i], 56);
+        lv_obj_set_width(s_status[i], 68);
         lv_obj_set_style_text_align(s_status[i], LV_TEXT_ALIGN_RIGHT, 0);
-        lv_obj_set_pos(s_status[i], 108, 10);
+        lv_obj_set_pos(s_status[i], 98, 10);
         s_indicators[i] = ui_system_label(s_cards[i], ">", &lv_font_montserrat_20,
                                            UI_SYSTEM_MUTED);
         lv_obj_set_pos(s_indicators[i], 180, 7);
@@ -85,6 +111,9 @@ static void enter_menu(void)
     s_active = -1;
     menu_build();
     ui_status_set_visible(true);
+    if (!s_menu_timer) {
+        s_menu_timer = lv_timer_create(menu_timer_cb, 500, NULL);
+    }
 }
 
 /* The callback runs in the button task, so all LVGL access is mutex-protected. */
@@ -119,6 +148,10 @@ static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user)
             menu_refresh();
         }
         if (btn == BSP_BTN_OK && s_ok[s_sel]) {
+            if (s_menu_timer) {
+                lv_timer_delete(s_menu_timer);
+                s_menu_timer = NULL;
+            }
             s_active = s_sel;
             ui_status_set_visible(false);
             lv_obj_t *old_scr = s_menu_scr;

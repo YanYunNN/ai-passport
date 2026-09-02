@@ -78,6 +78,7 @@ lv_obj_t *ui_pixel_mascot_create(lv_obj_t *parent, int x, int y)
     lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(m, 0, 0);
     lv_obj_set_style_pad_all(m, 0, 0);
+    lv_obj_set_user_data(m, (void *)(intptr_t)y);
 
     /* 原创“小电视机器人”：天线、发光屏幕脸、橙色围巾与履带脚。 */
     block(m, 18, 0, 3, 6, UI_INK);
@@ -105,6 +106,13 @@ static void jump_y(void *obj, int32_t value)
     lv_obj_set_y((lv_obj_t *)obj, value);
 }
 
+static int32_t mascot_get_base_y(lv_obj_t *mascot)
+{
+    if (!mascot) return 0;
+    intptr_t base = (intptr_t)lv_obj_get_user_data(mascot);
+    return base != 0 ? (int32_t)base : lv_obj_get_y(mascot);
+}
+
 static void blink_eye(void *obj, int32_t value)
 {
     lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)value, 0);
@@ -128,40 +136,58 @@ static void start_blink(lv_obj_t *eye)
 void ui_pixel_mascot_jump(lv_obj_t *mascot)
 {
     if (!mascot) return;
-    int y = lv_obj_get_y(mascot);
+    int32_t base = mascot_get_base_y(mascot);
     lv_anim_delete(mascot, jump_y);
+    lv_obj_set_y(mascot, base);
     lv_anim_t anim;
     lv_anim_init(&anim);
     lv_anim_set_var(&anim, mascot);
     lv_anim_set_exec_cb(&anim, jump_y);
-    lv_anim_set_values(&anim, y, y - 5);
-    lv_anim_set_duration(&anim, 110);
+    lv_anim_set_values(&anim, base, base - 6);
+    lv_anim_set_duration(&anim, 120);
     lv_anim_set_playback_duration(&anim, 140);
-    lv_anim_set_path_cb(&anim, lv_anim_path_step);
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_in_out);
     lv_anim_start(&anim);
 }
 
-/*
- * 一次性“提醒”跳跃：把当前 y 视为基准，跳到上方 5px 再落回。
- * 与 ui_pixel_mascot_jump 的关键区别是它从动画起点稳定回到调用时的 y，
- * 且不会与上次动画叠加；设计上每当触发需求才调用一次（见 demo_kiro_passport.c
- * 的边沿触发逻辑），避免“持续向上跳动后消失”的漂移问题。
- */
 void ui_pixel_mascot_jump_once(lv_obj_t *mascot)
 {
+    ui_pixel_mascot_jump(mascot);
+}
+
+bool ui_pixel_mascot_is_bouncing(lv_obj_t *mascot)
+{
+    if (!mascot) return false;
+    return lv_anim_get(mascot, jump_y) != NULL;
+}
+
+void ui_pixel_mascot_start_bounce(lv_obj_t *mascot)
+{
     if (!mascot) return;
-    int base = lv_obj_get_y(mascot); /* 调用点既作为跳跃起点也作为落点 */
-    lv_anim_delete(mascot, jump_y);
+    if (ui_pixel_mascot_is_bouncing(mascot)) return;
+    int32_t base = mascot_get_base_y(mascot);
+    lv_obj_set_y(mascot, base);
     lv_anim_t anim;
     lv_anim_init(&anim);
     lv_anim_set_var(&anim, mascot);
     lv_anim_set_exec_cb(&anim, jump_y);
-    lv_anim_set_values(&anim, base, base - 5);
-    lv_anim_set_duration(&anim, 110);
+    lv_anim_set_values(&anim, base, base - 6);
+    lv_anim_set_duration(&anim, 140);
     lv_anim_set_playback_duration(&anim, 140);
-    lv_anim_set_path_cb(&anim, lv_anim_path_step);
+    lv_anim_set_repeat_delay(&anim, 250);
+    lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_in_out);
     lv_anim_start(&anim);
 }
+
+void ui_pixel_mascot_stop_bounce(lv_obj_t *mascot)
+{
+    if (!mascot) return;
+    int32_t base = mascot_get_base_y(mascot);
+    lv_anim_delete(mascot, jump_y);
+    lv_obj_set_y(mascot, base);
+}
+
 
 void ui_pixel_set_selected(lv_obj_t *panel, bool selected, bool enabled)
 {

@@ -110,6 +110,7 @@ static void refresh_page(lv_timer_t *timer)
 
     if (snapshot.pending) {
         /* 审批模式：展示待审批请求的工具与摘要，结合吉祥物跳跃。 */
+        ui_pixel_mascot_stop_bounce(s_mascot);
         lv_label_set_text(s_state, "APPROVAL REQUIRED");
         char request[256];
         snprintf(request, sizeof(request), "%s\n%s", snapshot.tool, snapshot.summary);
@@ -118,14 +119,17 @@ static void refresh_page(lv_timer_t *timer)
         s_paged_content = false; /* 审批交互不吃翻页键，避免和 Allow/Deny 冲突 */
         mascot_nudge_pending(&snapshot);
     } else if (kiro_passport_network_get_notify(&notify) && notify.present) {
-        /* 有待显示的通知：持续显示，直到用户按 OK 关闭（dismiss 会清 present）。
+        /* 有待显示的通知：持续显示，直到用户按 OK 关闭/已读（dismiss 会清 present）。
          * version 只用于记录当前已展示的通知，避免把即将消失的通知顶掉。 */
         s_displayed_notify_version = notify.version;
         lv_label_set_text(s_state, notify.title);
         set_request_paged(NULL, notify.content, UI_SYSTEM_TEXT);
-        lv_label_set_text(s_hint, "OK: Dismiss   UP/DOWN: Page");
+        lv_label_set_text(s_hint, "OK: Read   UP/DOWN: Page");
         s_paged_content = true;
+        /* 新消息推送提醒：小机器人持续跳动，直到按 OK 确认已读 */
+        ui_pixel_mascot_start_bounce(s_mascot);
     } else if (snapshot.decision[0]) {
+        ui_pixel_mascot_stop_bounce(s_mascot);
         lv_label_set_text(s_state, state_text(&snapshot));
         set_request_paged("DECISION",
                           strcmp(snapshot.decision, "allow") == 0 ? "Approved on Passport"
@@ -134,6 +138,7 @@ static void refresh_page(lv_timer_t *timer)
         lv_label_set_text(s_hint, "Long OK: Back to menu");
         s_paged_content = true;
     } else {
+        ui_pixel_mascot_stop_bounce(s_mascot);
         lv_label_set_text(s_state, state_text(&snapshot));
         set_request_paged("KIRO GUARD",
                           "Monitors high-risk AI tool calls.\n"
@@ -215,6 +220,7 @@ void demo_kiro_passport_exit(void)
         lv_timer_delete(s_refresh_timer);
         s_refresh_timer = NULL;
     }
+    ui_pixel_mascot_stop_bounce(s_mascot);
     if (s_screen) {
         lv_obj_delete(s_screen);
         s_screen = NULL;
@@ -238,13 +244,13 @@ void demo_kiro_passport_key(bsp_btn_t btn, bsp_btn_ev_t event)
     kiro_passport_snapshot_t snapshot;
     kiro_passport_get_snapshot(&snapshot);
 
-    /* 无待审批请求时，OK 键用于关闭当前显示的通知；待审批时仍走审批流程。 */
+    /* 无待审批请求时，OK 键用于已读并关闭当前显示的通知；待审批时仍走审批流程。 */
     if (!snapshot.pending && btn == BSP_BTN_OK) {
         kiro_passport_notify_info_t notify;
-        if (kiro_passport_network_get_notify(&notify) && notify.present &&
-            notify.version == s_displayed_notify_version) {
-            ESP_LOGI(TAG, "关闭通知: %s", notify.title);
+        if (kiro_passport_network_get_notify(&notify) && notify.present) {
+            ESP_LOGI(TAG, "已读通知: %s", notify.title);
             kiro_passport_network_clear_notify();
+            ui_pixel_mascot_stop_bounce(s_mascot);
             refresh_page(NULL);
             return;
         }
