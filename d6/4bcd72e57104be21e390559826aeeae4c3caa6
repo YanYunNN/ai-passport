@@ -1,0 +1,40 @@
+cloudflare/src/index.ts
+  s_fa1d6c2fc8b2ac::t_d5ccd377dd0eb4 622-636,639-641
+  s_fa1d6c2fc8b2ac::t_2d4a60fcc9b469 1856,1858,1862,1867,1869,1872-1873,1876-1881,1884,1891-1897
+  s_fa1d6c2fc8b2ac::t_b480506365f12a 1652-1653,1655
+  s_fa1d6c2fc8b2ac::t_5de30e6c906bcf 139-141
+  s_fa1d6c2fc8b2ac::t_add1af38c219a4 3036-3043
+  s_fa1d6c2fc8b2ac::t_ebbbc76cb554f3 376-390
+  s_fa1d6c2fc8b2ac::t_5b483b54b7bdcd 1003-1004
+  s_fa1d6c2fc8b2ac::t_c46f18d645501f 1005-1006
+  s_fa1d6c2fc8b2ac::t_03e9b07abee4b4 1267-1270
+  s_fa1d6c2fc8b2ac::t_e389b5c2a3758d 1819-1834,1836-1855,1910
+  s_fa1d6c2fc8b2ac::t_709cc57ce6afb1 637-638
+  s_fa1d6c2fc8b2ac::t_8611781174fa27 1857,1859-1861,1863-1866,1868,1870-1871,1874-1875,1882-1883,1885-1890,1898-1906
+  s_fa1d6c2fc8b2ac::t_e86197dc4aea99 1937,1940-1941
+  s_fa1d6c2fc8b2ac::t_4fa589df6ff780 1651,1654
+  s_fa1d6c2fc8b2ac::t_65ac6b3bad365f 1658-1815,1817-1818,1907-1909
+  s_fa1d6c2fc8b2ac::t_79a886421124c0 1943-1944
+  s_fa1d6c2fc8b2ac::t_089cb771b4617a 1911
+  s_fa1d6c2fc8b2ac::t_dc8702ed6bcbb0 1835
+  s_fa1d6c2fc8b2ac::t_180b371a550b32 1957
+  s_fa1d6c2fc8b2ac::t_605e4f891a8a46 1001-1002
+  s_fa1d6c2fc8b2ac::t_3feca103009312 2247
+  s_fa1d6c2fc8b2ac::t_6bf4d73049fc39 1816
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "d64bcd72e57104be21e390559826aeeae4c3caa6",
+  "prompts": {},
+  "sessions": {
+    "s_fa1d6c2fc8b2ac": {
+      "agent_id": {
+        "tool": "chengxiaobang",
+        "id": "s_m5odjrajv8er",
+        "model": "auto(free)"
+      },
+      "human_author": "YanYunNNX <YanYunNNX@163.com>"
+    }
+  }
+}
