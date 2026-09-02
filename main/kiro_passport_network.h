@@ -98,3 +98,29 @@ bool kiro_passport_network_is_connected(void);
 /* 暂停/恢复 WebSocket 连接（用于 Chat 语音助手等高内存场景释放 TLS 堆内存） */
 void kiro_passport_network_pause(bool pause);
 
+/* --- Voice over WebSocket 流式交互接口 --- */
+
+typedef enum {
+    KIRO_PASSPORT_VOICE_EVT_START_ACK,  /* 收到服务端的录音就绪确认 */
+    KIRO_PASSPORT_VOICE_EVT_ASR,        /* data = recognized text, len = strlen */
+    KIRO_PASSPORT_VOICE_EVT_REPLY,      /* data = ai reply text, len = strlen */
+    KIRO_PASSPORT_VOICE_EVT_TTS_START,  /* len = total mp3 bytes expected */
+    KIRO_PASSPORT_VOICE_EVT_TTS_DATA,   /* data = mp3 chunk, len = chunk size */
+    KIRO_PASSPORT_VOICE_EVT_TTS_END,    /* len = total mp3 bytes received */
+    KIRO_PASSPORT_VOICE_EVT_ERROR,      /* data = error message, len = strlen */
+} kiro_passport_voice_event_t;
+
+typedef void (*kiro_passport_voice_cb_t)(kiro_passport_voice_event_t event, const void *data, size_t len, void *user_ctx);
+
+/* 注册 / 注销 Voice 交互监听器 (cb=NULL 取消注册) */
+void kiro_passport_network_register_voice_cb(kiro_passport_voice_cb_t cb, void *user_ctx);
+
+/* 启动语音流会话：向服务端发送 {"v":1,"type":"voice_start", ...} */
+esp_err_t kiro_passport_network_voice_start(const char *history_json);
+
+/* 流式发送一包 PCM 数据（16kHz 16-bit mono 裸 PCM 数据包） */
+esp_err_t kiro_passport_network_voice_send_pcm(const void *pcm_data, size_t len);
+
+/* 结束语音流会话：向服务端发送 {"v":1,"type":"voice_end"} */
+esp_err_t kiro_passport_network_voice_end(void);
+

@@ -11,6 +11,7 @@ import {
     serializeDeviceNotify,
     serializeDeviceRequest,
 } from "./protocol";
+import { pcmToWav, processVoicePipeline, validateMessages, type ChatMessage } from "./voice";
 
 interface PendingRequest {
     requestId: string;
@@ -60,6 +61,12 @@ interface DeviceAuthorizationRecord {
     status: "active" | "revoked";
 }
 
+interface VoiceSession {
+    pcmChunks: Uint8Array[];
+    totalBytes: number;
+    history: ChatMessage[];
+}
+
 const STATE_KEY = "relay_state";
 const requestKey = (requestId: string): string => `request:${requestId}`;
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
@@ -72,6 +79,7 @@ export class PassportRelay extends DurableObject<Env> {
     private readonly sockets = new Map<WebSocket, SocketAttachment>();
     private readonly adminViewers = new Set<WebSocket>();
     private readonly latestSlices = new Map<number, string>();
+    private readonly voiceSessions = new Map<WebSocket, VoiceSession>();
     private latestFrameSeq?: number;
 
     constructor(ctx: DurableObjectState, env: Env) {
@@ -235,15 +243,22 @@ export class PassportRelay extends DurableObject<Env> {
             return;
         }
 
-        if (typeof message !== "string" || message.includes('"screencast"')) {
-            const screencast = typeof message === "string"
-                ? parseScreencastMessage(message)
-                : parseBinaryScreencastMessage(message);
+        if (typeof message !== "string") {
+            const voiceSession = this.voiceSessions.get(socket);
+            if (voiceSession) {
+                const u8 = new Uint8Array(message);
+                if (voiceSession.totalBytes + u8.byteLength <= 2_000_000) {
+                    voiceSession.pcmChunks.push(u8);
+                    voiceSession.totalBytes += u8.byteLength;
+                }
+                return;
+            }
+            const screencast = parseBinaryScreencastMessage(message);
             if (!screencast) {
                 await this.denyCurrentForProtocolError();
                 return;
             }
-            const viewerMessage = typeof message === "string" ? message : JSON.stringify(screencast);
+            const viewerMessage = JSON.stringify(screencast);
             if (this.latestFrameSeq !== screencast.seq) {
                 this.latestSlices.clear();
                 this.latestFrameSeq = screencast.seq;
@@ -251,6 +266,105 @@ export class PassportRelay extends DurableObject<Env> {
             this.latestSlices.set(screencast.slice, viewerMessage);
             for (const viewer of this.adminViewers) {
                 try { viewer.send(viewerMessage); } catch {}
+            }
+            socket.send(`{"v":1,"type":"screencast_ack","seq":${screencast.seq},` +
+                `"slice":${screencast.slice}}`);
+            return;
+        }
+
+        if (message.includes('"voice_start"')) {
+            try {
+                const json = JSON.parse(message);
+                if (json.type === "voice_start") {
+                    this.voiceSessions.set(socket, {
+                        pcmChunks: [],
+                        totalBytes: 0,
+                        history: Array.isArray(json.history) ? validateMessages(json.history) || [] : [],
+                    });
+                    socket.send(JSON.stringify({ v: 1, type: "voice_start_ack" }));
+                    return;
+                }
+            } catch {}
+        }
+
+        if (message.includes('"voice_end"')) {
+            try {
+                const json = JSON.parse(message);
+                if (json.type === "voice_end") {
+                    const session = this.voiceSessions.get(socket);
+                    this.voiceSessions.delete(socket);
+                    if (!session || session.totalBytes < 3200) {
+                        socket.send(JSON.stringify({ v: 1, type: "voice_error", message: "录音时间过短或未收到有效语音" }));
+                        return;
+                    }
+                    const fullPcm = new Uint8Array(session.totalBytes);
+                    let offset = 0;
+                    for (const chunk of session.pcmChunks) {
+                        fullPcm.set(chunk, offset);
+                        offset += chunk.byteLength;
+                    }
+                    const wav = pcmToWav(fullPcm, 16000, 1, 16);
+                    this.ctx.waitUntil((async () => {
+                        try {
+                            const res = await processVoicePipeline(
+                                this.env,
+                                wav.buffer as ArrayBuffer,
+                                session.history,
+                                attachment.deviceId,
+                                attachment.sessionId || null,
+                                (stage, text) => {
+                                    try {
+                                        if (stage === "asr") {
+                                            socket.send(JSON.stringify({ v: 1, type: "voice_asr", text }));
+                                        } else if (stage === "reply") {
+                                            socket.send(JSON.stringify({ v: 1, type: "voice_reply", text }));
+                                        }
+                                    } catch {}
+                                },
+                            );
+                            socket.send(JSON.stringify({
+                                v: 1,
+                                type: "voice_tts_start",
+                                total_bytes: res.mp3Bytes.length,
+                            }));
+                            const CHUNK_SIZE = 1024;
+                            for (let i = 0; i < res.mp3Bytes.length; i += CHUNK_SIZE) {
+                                socket.send(res.mp3Bytes.subarray(i, i + CHUNK_SIZE));
+                            }
+                            socket.send(JSON.stringify({
+                                v: 1,
+                                type: "voice_tts_end",
+                                total_bytes: res.mp3Bytes.length,
+                            }));
+                        } catch (err: any) {
+                            console.error("Voice pipeline error in DO:", err);
+                            try {
+                                socket.send(JSON.stringify({
+                                    v: 1,
+                                    type: "voice_error",
+                                    message: err?.message || "语音服务异常",
+                                }));
+                            } catch {}
+                        }
+                    })());
+                    return;
+                }
+            } catch {}
+        }
+
+        if (message.includes('"screencast"')) {
+            const screencast = parseScreencastMessage(message);
+            if (!screencast) {
+                await this.denyCurrentForProtocolError();
+                return;
+            }
+            if (this.latestFrameSeq !== screencast.seq) {
+                this.latestSlices.clear();
+                this.latestFrameSeq = screencast.seq;
+            }
+            this.latestSlices.set(screencast.slice, message);
+            for (const viewer of this.adminViewers) {
+                try { viewer.send(message); } catch {}
             }
             socket.send(`{"v":1,"type":"screencast_ack","seq":${screencast.seq},` +
                 `"slice":${screencast.slice}}`);
@@ -272,6 +386,7 @@ export class PassportRelay extends DurableObject<Env> {
     }
 
     async webSocketClose(socket: WebSocket): Promise<void> {
+        this.voiceSessions.delete(socket);
         if (this.adminViewers.has(socket)) {
             this.adminViewers.delete(socket);
             return;

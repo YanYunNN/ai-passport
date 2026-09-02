@@ -90,6 +90,9 @@ void kiro_passport_network_clear_notify(void)
 
 static const char *TAG = "passport_wss";
 
+static kiro_passport_voice_cb_t s_voice_cb = NULL;
+static void *s_voice_user_ctx = NULL;
+
 typedef struct {
     char data[KIRO_ENROLLMENT_RESPONSE_MAX];
     size_t length;
@@ -523,6 +526,67 @@ static void process_message(const char *message)
         return;
     }
 
+    if (strstr(message, "\"voice_\"")) {
+        if (strstr(message, "\"type\":\"voice_start_ack\"") || strstr(message, "\"type\": \"voice_start_ack\"")) {
+            if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_START_ACK, NULL, 0, s_voice_user_ctx);
+            return;
+        }
+        if (strstr(message, "\"type\":\"voice_asr\"") || strstr(message, "\"type\": \"voice_asr\"")) {
+            cJSON *root = cJSON_Parse(message);
+            if (root) {
+                cJSON *text = cJSON_GetObjectItemCaseSensitive(root, "text");
+                if (cJSON_IsString(text) && text->valuestring && s_voice_cb) {
+                    s_voice_cb(KIRO_PASSPORT_VOICE_EVT_ASR, text->valuestring, strlen(text->valuestring), s_voice_user_ctx);
+                }
+                cJSON_Delete(root);
+            }
+            return;
+        }
+        if (strstr(message, "\"type\":\"voice_reply\"") || strstr(message, "\"type\": \"voice_reply\"")) {
+            cJSON *root = cJSON_Parse(message);
+            if (root) {
+                cJSON *text = cJSON_GetObjectItemCaseSensitive(root, "text");
+                if (cJSON_IsString(text) && text->valuestring && s_voice_cb) {
+                    s_voice_cb(KIRO_PASSPORT_VOICE_EVT_REPLY, text->valuestring, strlen(text->valuestring), s_voice_user_ctx);
+                }
+                cJSON_Delete(root);
+            }
+            return;
+        }
+        if (strstr(message, "\"type\":\"voice_tts_start\"") || strstr(message, "\"type\": \"voice_tts_start\"")) {
+            cJSON *root = cJSON_Parse(message);
+            size_t total = 0;
+            if (root) {
+                cJSON *tb = cJSON_GetObjectItemCaseSensitive(root, "total_bytes");
+                if (cJSON_IsNumber(tb)) total = (size_t)tb->valueint;
+                cJSON_Delete(root);
+            }
+            if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_TTS_START, NULL, total, s_voice_user_ctx);
+            return;
+        }
+        if (strstr(message, "\"type\":\"voice_tts_end\"") || strstr(message, "\"type\": \"voice_tts_end\"")) {
+            cJSON *root = cJSON_Parse(message);
+            size_t total = 0;
+            if (root) {
+                cJSON *tb = cJSON_GetObjectItemCaseSensitive(root, "total_bytes");
+                if (cJSON_IsNumber(tb)) total = (size_t)tb->valueint;
+                cJSON_Delete(root);
+            }
+            if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_TTS_END, NULL, total, s_voice_user_ctx);
+            return;
+        }
+        if (strstr(message, "\"type\":\"voice_error\"") || strstr(message, "\"type\": \"voice_error\"")) {
+            cJSON *root = cJSON_Parse(message);
+            if (root) {
+                cJSON *msg = cJSON_GetObjectItemCaseSensitive(root, "message");
+                const char *err = (cJSON_IsString(msg) && msg->valuestring) ? msg->valuestring : "Voice error";
+                if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_ERROR, err, strlen(err), s_voice_user_ctx);
+                cJSON_Delete(root);
+            }
+            return;
+        }
+    }
+
     if (strstr(message, "\"type\":\"notify\"") || strstr(message, "\"type\": \"notify\"")) {
         if (!parse_notify(message)) ESP_LOGW(TAG, "忽略无效通知消息");
         return;
@@ -571,10 +635,14 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t event_id, 
         s_network.transport_failed = true;
         set_state(KIRO_PASSPORT_NETWORK_ERROR);
     } else if (event_id == WEBSOCKET_EVENT_DATA) {
-        ESP_LOGI(TAG, "Relay 收到数据 (len=%d, op=%d, offset=%d, total=%d, fin=%d)",
-                 (int)event->data_len, event->op_code, (int)event->payload_offset, (int)event->payload_len, (int)event->fin);
-
         if (event->op_code == WS_TRANSPORT_OPCODES_PING || event->op_code == WS_TRANSPORT_OPCODES_PONG) {
+            return;
+        }
+
+        if (event->op_code == WS_TRANSPORT_OPCODES_BINARY) {
+            if (s_voice_cb && event->data_len > 0) {
+                s_voice_cb(KIRO_PASSPORT_VOICE_EVT_TTS_DATA, event->data_ptr, (size_t)event->data_len, s_voice_user_ctx);
+            }
             return;
         }
 
@@ -1199,5 +1267,43 @@ void kiro_passport_network_pause(bool pause)
     if (pause) {
         destroy_client();
     }
+}
+
+void kiro_passport_network_register_voice_cb(kiro_passport_voice_cb_t cb, void *user_ctx)
+{
+    s_voice_cb = cb;
+    s_voice_user_ctx = user_ctx;
+}
+
+esp_err_t kiro_passport_network_voice_start(const char *history_json)
+{
+    if (!kiro_passport_network_is_connected()) return ESP_ERR_INVALID_STATE;
+    char msg[512];
+    if (history_json && history_json[0] && strcmp(history_json, "[]") != 0) {
+        snprintf(msg, sizeof(msg),
+                 "{\"v\":1,\"type\":\"voice_start\",\"format\":\"pcm_16k_16bit_mono\",\"history\":%s}",
+                 history_json);
+    } else {
+        snprintf(msg, sizeof(msg),
+                 "{\"v\":1,\"type\":\"voice_start\",\"format\":\"pcm_16k_16bit_mono\"}");
+    }
+    int ret = kiro_passport_network_send_text(msg);
+    return ret > 0 ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t kiro_passport_network_voice_send_pcm(const void *pcm_data, size_t len)
+{
+    if (!pcm_data || len == 0) return ESP_ERR_INVALID_ARG;
+    if (!kiro_passport_network_is_connected()) return ESP_ERR_INVALID_STATE;
+    int ret = kiro_passport_network_send_binary(pcm_data, len);
+    return ret > 0 ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t kiro_passport_network_voice_end(void)
+{
+    if (!kiro_passport_network_is_connected()) return ESP_ERR_INVALID_STATE;
+    static const char end_msg[] = "{\"v\":1,\"type\":\"voice_end\"}";
+    int ret = kiro_passport_network_send_text(end_msg);
+    return ret > 0 ? ESP_OK : ESP_FAIL;
 }
 

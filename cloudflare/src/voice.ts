@@ -726,6 +726,53 @@ class VoiceError extends Error {
     }
 }
 
+/** Prepend a standard 44-byte RIFF/WAVE header to raw 16-bit mono PCM. */
+export function pcmToWav(
+    pcm: Uint8Array,
+    sampleRate = 16000,
+    numChannels = 1,
+    bitsPerSample = 16,
+): Uint8Array {
+    const header = new Uint8Array(44);
+    const view = new DataView(header.buffer);
+    const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+    const blockAlign = numChannels * (bitsPerSample / 8);
+    const dataLen = pcm.byteLength;
+
+    header.set([0x52, 0x49, 0x46, 0x46], 0); // "RIFF"
+    view.setUint32(4, 36 + dataLen, true);
+    header.set([0x57, 0x41, 0x56, 0x45], 8); // "WAVE"
+
+    header.set([0x66, 0x6d, 0x74, 0x20], 12); // "fmt "
+    view.setUint32(16, 16, true); // Subchunk1Size
+    view.setUint16(20, 1, true); // AudioFormat (1 for PCM)
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitsPerSample, true);
+
+    header.set([0x64, 0x61, 0x74, 0x61], 36); // "data"
+    view.setUint32(40, dataLen, true);
+
+    const wav = new Uint8Array(44 + dataLen);
+    wav.set(header, 0);
+    wav.set(pcm, 44);
+    return wav;
+}
+
+export interface VoicePipelineResult {
+    asrText: string;
+    replyText: string;
+    mp3Bytes: Uint8Array;
+    latencyAsrMs: number;
+    latencyChatMs: number;
+    latencyTtsMs: number;
+    latencyTotalMs: number;
+}
+
+export type VoiceStageCallback = (stage: "asr" | "reply", text: string) => void;
+
 /** Whisper ASR via Cloudflare Workers AI (large-v3-turbo); defaults to Chinese recognition. */
 async function whisperTranscribe(env: Env, audio: ArrayBuffer): Promise<string> {
     try {
@@ -744,12 +791,12 @@ async function whisperTranscribe(env: Env, audio: ArrayBuffer): Promise<string> 
     }
 }
 
-interface ChatMessage {
+export interface ChatMessage {
     role: "system" | "user" | "assistant";
     content: string;
 }
 
-function validateMessages(value: unknown): ChatMessage[] | null {
+export function validateMessages(value: unknown): ChatMessage[] | null {
     if (!Array.isArray(value) || value.length === 0 || value.length > 20) return null;
     const messages: ChatMessage[] = [];
     for (const item of value) {
@@ -875,6 +922,179 @@ async function aiChat(env: Env, messages: ChatMessage[]): Promise<string> {
     return reply;
 }
 
+export async function processVoicePipeline(
+    env: Env,
+    audioWav: ArrayBuffer,
+    history: ChatMessage[] = [],
+    deviceId = "device",
+    sessionId: string | null = null,
+    onStage?: VoiceStageCallback,
+): Promise<VoicePipelineResult> {
+    if (!audioWav || audioWav.byteLength === 0) {
+        throw new VoiceError("音频数据为空", 400);
+    }
+    if (audioWav.byteLength > 2_000_000) {
+        throw new VoiceError("音频过大（单次请控制在 30 秒内）", 400);
+    }
+
+    const t0 = Date.now();
+    let asrText = "";
+    let t1 = t0;
+    try {
+        asrText = await whisperTranscribe(env, audioWav);
+        t1 = Date.now();
+        console.log(JSON.stringify({
+            tag: "voice_trace",
+            stage: "asr",
+            device_id: deviceId,
+            duration_ms: t1 - t0,
+            audio_bytes: audioWav.byteLength,
+            text: asrText,
+        }));
+    } catch (err: any) {
+        const dur = Date.now() - t0;
+        await writeVoiceLog(env, {
+            device_id: deviceId,
+            session_id: sessionId,
+            asr_text: null,
+            ai_reply: null,
+            audio_bytes: audioWav.byteLength,
+            mp3_bytes: 0,
+            latency_asr_ms: dur,
+            latency_chat_ms: 0,
+            latency_tts_ms: 0,
+            latency_total_ms: dur,
+            status: "asr_error",
+            error_msg: err?.message || String(err),
+            created_at: Math.floor(Date.now() / 1000),
+        });
+        throw err;
+    }
+
+    if (!asrText) {
+        const dur = t1 - t0;
+        await writeVoiceLog(env, {
+            device_id: deviceId,
+            session_id: sessionId,
+            asr_text: "",
+            ai_reply: null,
+            audio_bytes: audioWav.byteLength,
+            mp3_bytes: 0,
+            latency_asr_ms: dur,
+            latency_chat_ms: 0,
+            latency_tts_ms: 0,
+            latency_total_ms: dur,
+            status: "asr_empty",
+            error_msg: "未识别到有效语音",
+            created_at: Math.floor(Date.now() / 1000),
+        });
+        throw new VoiceError("未识别到有效语音", 400);
+    }
+
+    if (onStage) onStage("asr", asrText);
+
+    const messages: ChatMessage[] = [...history, { role: "user", content: asrText }];
+    let reply = "";
+    let t2 = t1;
+    try {
+        reply = await aiChat(env, messages);
+        t2 = Date.now();
+        console.log(JSON.stringify({
+            tag: "voice_trace",
+            stage: "chat",
+            device_id: deviceId,
+            duration_ms: t2 - t1,
+            reply_len: reply.length,
+            reply,
+        }));
+    } catch (err: any) {
+        const tErr = Date.now();
+        await writeVoiceLog(env, {
+            device_id: deviceId,
+            session_id: sessionId,
+            asr_text: asrText,
+            ai_reply: null,
+            audio_bytes: audioWav.byteLength,
+            mp3_bytes: 0,
+            latency_asr_ms: t1 - t0,
+            latency_chat_ms: tErr - t1,
+            latency_tts_ms: 0,
+            latency_total_ms: tErr - t0,
+            status: "ai_error",
+            error_msg: err?.message || String(err),
+            created_at: Math.floor(Date.now() / 1000),
+        });
+        throw err;
+    }
+
+    if (onStage) onStage("reply", reply);
+
+    const params: TtsParams = {
+        speed: 1.0,
+        pitch: 1.0,
+        stream: false,
+    };
+    let mp3Bytes: Uint8Array;
+    let t3 = t2;
+    try {
+        const ttsRes = await ttsEdge(env, reply, params);
+        t3 = Date.now();
+        mp3Bytes = new Uint8Array(await ttsRes.arrayBuffer());
+        console.log(JSON.stringify({
+            tag: "voice_trace",
+            stage: "tts",
+            device_id: deviceId,
+            duration_ms: t3 - t2,
+            mp3_bytes: mp3Bytes.length,
+        }));
+    } catch (err: any) {
+        const tErr = Date.now();
+        await writeVoiceLog(env, {
+            device_id: deviceId,
+            session_id: sessionId,
+            asr_text: asrText,
+            ai_reply: reply,
+            audio_bytes: audioWav.byteLength,
+            mp3_bytes: 0,
+            latency_asr_ms: t1 - t0,
+            latency_chat_ms: t2 - t1,
+            latency_tts_ms: tErr - t2,
+            latency_total_ms: tErr - t0,
+            status: "tts_error",
+            error_msg: err?.message || String(err),
+            created_at: Math.floor(Date.now() / 1000),
+        });
+        throw err;
+    }
+
+    const totalMs = t3 - t0;
+    await writeVoiceLog(env, {
+        device_id: deviceId,
+        session_id: sessionId,
+        asr_text: asrText,
+        ai_reply: reply,
+        audio_bytes: audioWav.byteLength,
+        mp3_bytes: mp3Bytes.length,
+        latency_asr_ms: t1 - t0,
+        latency_chat_ms: t2 - t1,
+        latency_tts_ms: t3 - t2,
+        latency_total_ms: totalMs,
+        status: "success",
+        error_msg: null,
+        created_at: Math.floor(Date.now() / 1000),
+    });
+
+    return {
+        asrText,
+        replyText: reply,
+        mp3Bytes,
+        latencyAsrMs: t1 - t0,
+        latencyChatMs: t2 - t1,
+        latencyTtsMs: t3 - t2,
+        latencyTotalMs: totalMs,
+    };
+}
+
 export async function handleVoice(request: Request, env: Env, url: URL): Promise<Response> {
     if (request.method === "GET" && url.pathname === "/voice") {
         const authorized = await voiceAuthorized(request, env);
@@ -895,14 +1115,17 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
 
     try {
         if (request.method === "GET" && url.pathname === "/v1/voice/status") {
+            const hasAiKey = Boolean(env.AI_API_KEY || env.GROK_API_KEY);
+            const hasTtsKey = Boolean(env.TTS_API_KEY);
+            const defaultModel = env.AI_MODEL || env.GROK_MODEL || AI_DEFAULT_MODEL;
+            const defaultVoice = env.TTS_VOICE || TTS_DEFAULT_VOICE;
             return json({
                 ok: true,
-                grok: Boolean(env.AI_API_KEY || env.GROK_API_KEY),
-                model: env.AI_MODEL || env.GROK_MODEL || AI_DEFAULT_MODEL,
-                base_url: env.AI_BASE_URL || AI_DEFAULT_BASE_URL,
-                tts: Boolean(env.TTS_API_KEY),
-                tts_base_url: env.TTS_BASE_URL || TTS_DEFAULT_BASE_URL,
-                voice: env.TTS_VOICE || TTS_DEFAULT_VOICE,
+                ai_configured: hasAiKey,
+                tts_configured: hasTtsKey,
+                model: defaultModel,
+                voice: defaultVoice,
+                asr_language: env.AI_ASR_LANGUAGE || "zh",
             });
         }
 
@@ -942,28 +1165,9 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
             const form = await request.formData().catch(() => null);
             const file = form?.get("file");
             if (!file || typeof file === "string") {
-                await writeVoiceLog(env, {
-                    device_id: deviceId,
-                    session_id: null,
-                    asr_text: null,
-                    ai_reply: null,
-                    audio_bytes: 0,
-                    mp3_bytes: 0,
-                    latency_asr_ms: 0,
-                    latency_chat_ms: 0,
-                    latency_tts_ms: 0,
-                    latency_total_ms: 0,
-                    status: "missing_audio",
-                    error_msg: "missing audio file",
-                    created_at: Math.floor(Date.now() / 1000),
-                });
                 return json({ error: "missing audio file" }, 400);
             }
             const audio = await file.arrayBuffer();
-            if (!audio || audio.byteLength === 0) return json({ error: "empty audio" }, 400);
-            if (audio.byteLength > 2_000_000) {
-                return json({ error: "音频过大（单次请控制在 30 秒内）" }, 400);
-            }
             const historyStr = form?.get("history");
             let history: ChatMessage[] = [];
             if (typeof historyStr === "string" && historyStr.length > 0) {
@@ -975,173 +1179,20 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
                 }
             }
 
-            const t0 = Date.now();
-            let asrText = "";
-            let t1 = t0;
             try {
-                asrText = await whisperTranscribe(env, audio);
-                t1 = Date.now();
-                console.log(JSON.stringify({
-                    tag: "voice_trace",
-                    stage: "asr",
-                    device_id: deviceId,
-                    duration_ms: t1 - t0,
-                    audio_bytes: audio.byteLength,
-                    text: asrText,
-                }));
+                const res = await processVoicePipeline(env, audio, history, deviceId);
+                return new Response(res.mp3Bytes, {
+                    status: 200,
+                    headers: {
+                        "Content-Type": "audio/mpeg",
+                        "Cache-Control": "no-store",
+                        "X-Asr-Text": encodeURIComponent(res.asrText),
+                        "X-Ai-Reply": encodeURIComponent(res.replyText),
+                    },
+                });
             } catch (err: any) {
-                const dur = Date.now() - t0;
-                await writeVoiceLog(env, {
-                    device_id: deviceId,
-                    session_id: null,
-                    asr_text: null,
-                    ai_reply: null,
-                    audio_bytes: audio.byteLength,
-                    mp3_bytes: 0,
-                    latency_asr_ms: dur,
-                    latency_chat_ms: 0,
-                    latency_tts_ms: 0,
-                    latency_total_ms: dur,
-                    status: "asr_error",
-                    error_msg: err?.message || String(err),
-                    created_at: Math.floor(Date.now() / 1000),
-                });
-                throw err;
+                return json({ error: err?.message || String(err) }, err instanceof VoiceError ? err.status : 500);
             }
-
-            if (!asrText) {
-                const dur = t1 - t0;
-                await writeVoiceLog(env, {
-                    device_id: deviceId,
-                    session_id: null,
-                    asr_text: "",
-                    ai_reply: null,
-                    audio_bytes: audio.byteLength,
-                    mp3_bytes: 0,
-                    latency_asr_ms: dur,
-                    latency_chat_ms: 0,
-                    latency_tts_ms: 0,
-                    latency_total_ms: dur,
-                    status: "asr_empty",
-                    error_msg: "未识别到有效语音",
-                    created_at: Math.floor(Date.now() / 1000),
-                });
-                return json({ error: "未识别到有效语音", asr: "" }, 400);
-            }
-
-            const messages: ChatMessage[] = [...history, { role: "user", content: asrText }];
-            let reply = "";
-            let t2 = t1;
-            try {
-                reply = await aiChat(env, messages);
-                t2 = Date.now();
-                console.log(JSON.stringify({
-                    tag: "voice_trace",
-                    stage: "chat",
-                    device_id: deviceId,
-                    duration_ms: t2 - t1,
-                    reply_len: reply.length,
-                    reply,
-                }));
-            } catch (err: any) {
-                const tErr = Date.now();
-                await writeVoiceLog(env, {
-                    device_id: deviceId,
-                    session_id: null,
-                    asr_text: asrText,
-                    ai_reply: null,
-                    audio_bytes: audio.byteLength,
-                    mp3_bytes: 0,
-                    latency_asr_ms: t1 - t0,
-                    latency_chat_ms: tErr - t1,
-                    latency_tts_ms: 0,
-                    latency_total_ms: tErr - t0,
-                    status: "ai_error",
-                    error_msg: err?.message || String(err),
-                    created_at: Math.floor(Date.now() / 1000),
-                });
-                throw err;
-            }
-
-            const params: TtsParams = {
-                speed: 1.0,
-                pitch: 1.0,
-                stream: false,
-            };
-            let mp3Bytes: Uint8Array;
-            let t3 = t2;
-            try {
-                const ttsRes = await ttsEdge(env, reply, params);
-                t3 = Date.now();
-                mp3Bytes = new Uint8Array(await ttsRes.arrayBuffer());
-                console.log(JSON.stringify({
-                    tag: "voice_trace",
-                    stage: "tts",
-                    device_id: deviceId,
-                    duration_ms: t3 - t2,
-                    mp3_bytes: mp3Bytes.length,
-                }));
-            } catch (err: any) {
-                const tErr = Date.now();
-                await writeVoiceLog(env, {
-                    device_id: deviceId,
-                    session_id: null,
-                    asr_text: asrText,
-                    ai_reply: reply,
-                    audio_bytes: audio.byteLength,
-                    mp3_bytes: 0,
-                    latency_asr_ms: t1 - t0,
-                    latency_chat_ms: t2 - t1,
-                    latency_tts_ms: tErr - t2,
-                    latency_total_ms: tErr - t0,
-                    status: "tts_error",
-                    error_msg: err?.message || String(err),
-                    created_at: Math.floor(Date.now() / 1000),
-                });
-                throw err;
-            }
-
-            const totalMs = t3 - t0;
-            console.log(JSON.stringify({
-                tag: "voice_converse_success",
-                device_id: deviceId,
-                asr_text: asrText,
-                ai_reply: reply,
-                audio_bytes: audio.byteLength,
-                mp3_bytes: mp3Bytes.length,
-                latencies: {
-                    asr_ms: t1 - t0,
-                    chat_ms: t2 - t1,
-                    tts_ms: t3 - t2,
-                    total_ms: totalMs,
-                },
-            }));
-
-            await writeVoiceLog(env, {
-                device_id: deviceId,
-                session_id: null,
-                asr_text: asrText,
-                ai_reply: reply,
-                audio_bytes: audio.byteLength,
-                mp3_bytes: mp3Bytes.length,
-                latency_asr_ms: t1 - t0,
-                latency_chat_ms: t2 - t1,
-                latency_tts_ms: t3 - t2,
-                latency_total_ms: totalMs,
-                status: "success",
-                error_msg: null,
-                created_at: Math.floor(Date.now() / 1000),
-            });
-
-            return new Response(mp3Bytes, {
-                status: 200,
-                headers: {
-                    "Content-Type": "audio/mpeg",
-                    "Cache-Control": "no-store",
-                    "X-Asr-Text": encodeURIComponent(asrText),
-                    "X-Ai-Reply": encodeURIComponent(reply),
-                },
-            });
         }
 
         if (request.method === "POST" && url.pathname === "/v1/voice/tts") {
