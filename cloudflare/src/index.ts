@@ -136,6 +136,9 @@ export default {
             if (request.method === "POST" && url.pathname === "/admin/hook/push") {
                 return adminHookPush(request, env);
             }
+            if (request.method === "GET" && url.pathname === "/admin/hook-logs") {
+                return adminHookLogs(request, env);
+            }
             if (request.method === "GET" && url.pathname === "/admin/dashboard-data") {
                 return adminDashboardData(request, env);
             }
@@ -370,6 +373,21 @@ body {
 }
 .nav-tab:hover { background: rgba(255,255,255,0.06); color: var(--text); }
 .nav-tab.active { background: var(--accent-soft); border-color: rgba(31,111,235,0.35); color: #58a6ff; }
+/* Sub-tabs inside a page (e.g. notify: Agent 接入 / 手动发送). Must NOT reuse
+   .nav-tab, which the dashboard script binds to switchTab(tab.dataset.tab). */
+.sub-tab {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    padding: 0.45rem 0.95rem;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.sub-tab:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+.sub-tab.active { background: var(--accent-soft); border-color: rgba(31,111,235,0.35); color: #58a6ff; }
 .topnav-actions { margin-left: auto; display: flex; gap: 0.5rem; align-items: center; }
 .nav-btn { background: #21262d; border: 1px solid var(--border); color: var(--text); }
 .nav-btn:hover { border-color: #484f58; }
@@ -601,6 +619,26 @@ tr:hover td { background: rgba(255,255,255,0.02); }
     word-break: break-word;
     white-space: normal;
 }
+/* Hook 推送日志表：紧凑间距，设备 ID / 时间 / 状态 / 结果列不折行，
+   标题与内容列限制宽度并省略，外层 .log-table-scroll 兜底横向滚动 */
+.hook-log-table th, .hook-log-table td { padding: 0.7rem 0.85rem; }
+.hook-log-table .td-nowrap { white-space: nowrap; }
+.hook-log-table .td-device { min-width: 170px; }
+.hook-log-table .td-device .code-mono {
+    font-size: 0.76rem;
+    padding: 0.1rem 0.35rem;
+    white-space: nowrap;
+    letter-spacing: -0.01em;
+}
+.hook-log-table .td-time { color: var(--text-muted); font-size: 0.78rem; white-space: nowrap; }
+.hook-log-table .td-title { min-width: 100px; max-width: 150px; }
+.hook-log-table .td-content { min-width: 180px; max-width: 340px; }
+.hook-log-table .td-status { font-size: 0.85rem; }
+.hook-log-table .td-status .dot { margin-right: 0.35rem; vertical-align: -1px; }
+.hook-log-table .td-result { min-width: 116px; }
+.log-table-scroll { overflow-x: auto; }
+.log-table-scroll::-webkit-scrollbar { height: 8px; }
+.log-table-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 .form-group { display: flex; flex-direction: column; gap: 0.35rem; }
 .form-input, .form-select {
     background: #0d1117;
@@ -960,12 +998,12 @@ function renderHookLogRows(hookLogs: HookNotifyLogRow[]): string {
                 : `<span class="badge" style="color:#f85149;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.1);">✗ 失败</span>`;
         rows += `
         <tr>
-            <td><span class="code-mono">${escapeHtml(log.device_id)}</span></td>
-            <td>${formatDate(log.created_at)}</td>
-            <td class="cell-clamp-1" title="${escapeHtml(log.title)}" style="max-width:180px;">${escapeHtml(log.title)}</td>
-            <td class="cell-clamp" title="${escapeHtml(log.content)}" style="max-width:300px;"><span style="color:var(--text-muted);">${escapeHtml(log.content)}</span></td>
-            <td>${log.online ? '🟢 在线' : '⚪ 离线'}</td>
-            <td>${resultBadge}</td>
+            <td class="td-nowrap td-device"><span class="code-mono">${escapeHtml(log.device_id)}</span></td>
+            <td class="td-time">${formatDate(log.created_at)}</td>
+            <td class="td-title"><div class="cell-clamp-1" data-tip="${escapeHtml(log.title)}">${escapeHtml(log.title)}</div></td>
+            <td class="td-content"><div class="cell-clamp" data-tip="${escapeHtml(log.content)}"><span style="color:var(--text-muted);">${escapeHtml(log.content)}</span></div></td>
+            <td class="td-nowrap td-status"><span class="dot ${log.online ? 'dot-online' : 'dot-offline'}"></span>${log.online ? '在线' : '离线'}</td>
+            <td class="td-nowrap td-result">${resultBadge}</td>
         </tr>`;
     }
     return rows;
@@ -1226,6 +1264,10 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
     const deviceOptions = renderDeviceOptions(data.deviceList);
     const hookLogsRows = renderHookLogRows(data.hookLogs);
     const pushLogRows = renderPushLogRows(data.pushLogs);
+    // Agent-hook panel: expose HOOK_AUTH_SECRET (same secret the /v1/devices/:id/notify
+    // endpoint trusts) to the admin page so the user can copy it into an agent's
+    // hook configuration. The admin page is already behind Basic Auth.
+    const hookSecretSafe = escapeHtml(env.HOOK_AUTH_SECRET || "");
 
     let galleryHtml = "";
     if (images.length === 0) {
@@ -1606,6 +1648,267 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 <h1>🔔 通知推送</h1>
                 <p class="page-desc">向设备推送通知内容（支持中文，显示在设备屏幕），并查看 Hook 推送日志</p>
             </div>
+            <div class="nav-tabs" style="margin-bottom:1rem;">
+                <button type="button" class="sub-tab active" id="notifyTabManual" onclick="notifySwitchTab('manual')">🚀 手动发送</button>
+                <button type="button" class="sub-tab" id="notifyTabAgent" onclick="notifySwitchTab('agent')">🤖 Agent 接入</button>
+            </div>
+            <div id="agentHookPanel" style="display:none;">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">🤖 Agent Hook 接入地址（kiro / 自定义 Agent → 设备）</div>
+                </div>
+                <div class="push-form">
+                    <div class="push-grid">
+                        <div class="form-group">
+                            <label class="form-label">绑定设备</label>
+                            <select id="agentHookDevice" class="form-select" onchange="refreshAgentHook()">${deviceOptions}</select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Hook 接入地址（POST）</label>
+                        <div style="display:flex;gap:8px;">
+                            <input id="agentHookUrl" type="text" class="form-input code-mono" readonly spellcheck="false">
+                            <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookUrl')">📋 复制</button>
+                        </div>
+                        <div style="color:var(--text-muted);font-size:0.75rem;margin-top:4px;">device_id 已固定在该地址里；供 kiro 的 stop-hook / 任务完成回调或其他 agent 调用，与下方日志联动。</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">鉴权 Header（Bearer，与审批推送共用密钥）</label>
+                        <div style="display:flex;gap:8px;">
+                            <input id="agentHookAuth" type="text" class="form-input code-mono" readonly spellcheck="false">
+                            <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookAuth')">📋 复制</button>
+                        </div>
+                        <div style="color:var(--text-muted);font-size:0.75rem;margin-top:4px;">即 HOOK_AUTH_SECRET。只填进受信任的 agent 进程，不要提交到代码仓库。</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">请求 Body（JSON）</label>
+                        <div style="display:flex;gap:8px;align-items:flex-start;">
+                            <pre id="agentHookBody" style="flex:1;margin:0;background:rgba(13,17,23,0.75);border:1px solid rgba(110,118,129,0.4);border-radius:6px;padding:0.5rem 0.65rem;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:0.8rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;"></pre>
+                            <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookBody')">📋 复制</button>
+                        </div>
+                        <div style="color:var(--text-muted);font-size:0.75rem;margin-top:4px;">title 最长 32、建议用 ASCII（中文标题会被过滤为 "Agent"）；content 最长 2000、支持中文，显示在设备「Kiro Passport」页面。</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">curl 示例（复制到 agent 里直接用）</label>
+                        <pre id="agentHookCurl" style="margin:0;background:rgba(13,17,23,0.75);border:1px solid rgba(110,118,129,0.4);border-radius:6px;padding:0.5rem 0.65rem;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:0.8rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;"></pre>
+                        <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookCurl')">📋 复制 curl</button>
+                    </div>
+                    <details style="margin-top:8px;">
+                        <summary style="cursor:pointer;color:var(--text-muted);font-size:0.85rem;">怎么配置 hook（接入步骤）</summary>
+                        <ol style="margin:10px 0 0 18px;padding:0;color:var(--text);font-size:0.85rem;line-height:1.9;">
+                            <li>选择上面「绑定设备」为要接收通知的护照，复制「接入地址」「鉴权 Header」「curl 示例」三项。</li>
+                            <li>打开 kiro（或你的 agent）的 hook / 通知配置，新建一个 <b>HTTP Request / Webhook</b>：Method = <b>POST</b>，URL = 上面的接入地址，鉴权选 <b>Bearer Token</b> 并粘贴密钥。</li>
+                            <li>请求 Body 用上面示例的 JSON；<b>content</b> 写想让护照屏幕显示的内容（支持中文），<b>title</b> 保持英文或省略。</li>
+                            <li>触发时机：在 agent 任务结束（stop / done 回调）时调用一次即可；无需等待响应。</li>
+                            <li>调用后结果会出现在本页下方「Hook 推送日志」，并在设备屏幕顶部提示。</li>
+                        </ol>
+                    </details>
+                    <div class="form-group" id="agentHookTestWrap" style="display:none;margin-top:10px;">
+                        <label class="form-label">从 Agent 入口发一条测试（验证地址 + 密钥链路）</label>
+                        <textarea id="agentHookTestContent" class="form-input" rows="2" maxlength="2000" placeholder="例如：任务完成：已为你查好明天的航班时刻"></textarea>
+                        <button type="button" id="agentHookTestBtn" class="btn btn-primary" style="margin-top:8px;padding:0.6rem 1rem;font-size:0.9rem;" onclick="sendAgentHookTest()">📤 用 Hook 地址发送测试</button>
+                        <div id="agentHookTestStatus" style="display:none;padding:0.6rem;border-radius:6px;font-size:0.85rem;"></div>
+                    </div>
+                </div>
+                <input type="hidden" id="agentHookSecret" value="${hookSecretSafe}">
+            </div>
+            <script>
+            // Agent Hook 接入面板逻辑（自包含，先于页面主脚本执行）
+            (function () {
+                "use strict";
+                var secretEl = document.getElementById("agentHookSecret");
+                var HOOK_SECRET = secretEl ? secretEl.value : "";
+                var deviceSel = document.getElementById("agentHookDevice");
+
+                function notifyUrl(deviceId) {
+                    return location.protocol + "//" + location.host + "/v1/devices/" + encodeURIComponent(deviceId) + "/notify";
+                }
+                function sampleBody() {
+                    return JSON.stringify({ title: "Agent done", content: "任务完成：一句话总结（content 支持中文）" });
+                }
+                function legacyCopy(text) {
+                    var ta = document.createElement("textarea");
+                    ta.value = text;
+                    ta.style.position = "fixed";
+                    ta.style.opacity = "0";
+                    document.body.appendChild(ta);
+                    ta.select();
+                    try { document.execCommand("copy"); alert("已复制"); } catch (e) { alert("复制失败，请手动选择后 Ctrl+C"); }
+                    document.body.removeChild(ta);
+                }
+                window.refreshAgentHook = function () {
+                    var urlEl = document.getElementById("agentHookUrl");
+                    var authEl = document.getElementById("agentHookAuth");
+                    var bodyEl = document.getElementById("agentHookBody");
+                    var curlEl = document.getElementById("agentHookCurl");
+                    var testWrap = document.getElementById("agentHookTestWrap");
+                    var deviceId = deviceSel ? deviceSel.value : "";
+                    if (!deviceId) {
+                        urlEl.value = "";
+                        authEl.value = "";
+                        bodyEl.textContent = "（请先在「设备管理」注册设备，再回到本页选择）";
+                        curlEl.textContent = "";
+                        if (testWrap) testWrap.style.display = "none";
+                        return;
+                    }
+                    var url = notifyUrl(deviceId);
+                    var body = sampleBody();
+                    urlEl.value = url;
+                    authEl.value = "Authorization: Bearer " + HOOK_SECRET;
+                    bodyEl.textContent = body;
+                    if (HOOK_SECRET) {
+                        curlEl.textContent = "curl -X POST '" + url + "' -H 'Authorization: Bearer " + HOOK_SECRET + "' -H 'Content-Type: application/json' -d '" + body + "'";
+                    } else {
+                        curlEl.textContent = "（HOOK_AUTH_SECRET 未设置。请先在 Cloudflare / wrangler 配置：npx wrangler secret put HOOK_AUTH_SECRET）";
+                    }
+                    if (testWrap) testWrap.style.display = "block";
+                };
+                window.copyAgentText = function (id) {
+                    var el = document.getElementById(id);
+                    var text = el ? (el.value !== undefined ? el.value : el.textContent) : "";
+                    if (!text) { alert("没有可复制的内容"); return; }
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(text).then(function () { alert("已复制"); }, function () { legacyCopy(text); });
+                    } else {
+                        legacyCopy(text);
+                    }
+                };
+                window.sendAgentHookTest = function () {
+                    var btn = document.getElementById("agentHookTestBtn");
+                    var statusBox = document.getElementById("agentHookTestStatus");
+                    var content = document.getElementById("agentHookTestContent").value.trim();
+                    var deviceId = deviceSel ? deviceSel.value : "";
+                    var url = notifyUrl(deviceId);
+                    function show(kind, text) {
+                        statusBox.style.display = "block";
+                        if (kind === "ok") { statusBox.style.background = "rgba(46,160,67,0.15)"; statusBox.style.color = "#3fb950"; }
+                        else if (kind === "warn") { statusBox.style.background = "rgba(235,179,56,0.15)"; statusBox.style.color = "#d29922"; }
+                        else { statusBox.style.background = "rgba(248,81,73,0.15)"; statusBox.style.color = "#f85149"; }
+                        statusBox.innerHTML = text;
+                    }
+                    if (!deviceId) { show("err", "❌ 请先选择目标设备"); return; }
+                    if (!content) { show("err", "❌ 请输入测试内容"); return; }
+                    if (!HOOK_SECRET) { show("err", "❌ HOOK_AUTH_SECRET 未配置，无法调用该地址"); return; }
+                    btn.disabled = true;
+                    btn.innerText = "发送中...";
+                    statusBox.style.display = "none";
+                    fetch(url, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + HOOK_SECRET },
+                        body: JSON.stringify({ title: "Agent done", content: content })
+                    }).then(function (res) {
+                        return res.json().catch(function () { return {}; }).then(function (data) { return { status: res.status, data: data }; });
+                    }).then(function (r) {
+                        if (r.data.ok) {
+                            if (r.data.sent) show("ok", "✅ 已通过 Agent Hook 地址送达设备。可在设备「Kiro Passport」页面查看，下方日志同步记录。");
+                            else if (r.data.online) show("warn", "⚠️ 设备在线但页面未就绪，本次未送达。");
+                            else show("warn", "⚠️ 设备当前离线：已写入 Hook 日志，设备上线后不会自动补发，可稍后重试。");
+                        } else if (r.status === 401) {
+                            show("err", "❌ 401：HOOK_AUTH_SECRET 无效或未配置。");
+                        } else {
+                            show("err", "❌ 发送失败（HTTP " + r.status + "）：" + (r.data.error || "未知错误"));
+                        }
+                    }).catch(function (err) {
+                        show("err", "❌ 网络请求失败：" + err);
+                    }).finally(function () {
+                        btn.disabled = false;
+                        btn.innerText = "📤 用 Hook 地址发送测试";
+                        if (window.refreshHookLogs) window.refreshHookLogs();
+                    });
+                };
+                window.notifySwitchTab = function (name) {
+                    var agentBtn = document.getElementById("notifyTabAgent");
+                    var manualBtn = document.getElementById("notifyTabManual");
+                    var agentPanel = document.getElementById("agentHookPanel");
+                    var manualPanel = document.getElementById("manualHookPanel");
+                    var isAgent = name === "agent";
+                    if (!agentPanel || !manualPanel) return;
+                    agentPanel.style.display = isAgent ? "" : "none";
+                    manualPanel.style.display = isAgent ? "none" : "";
+                    if (agentBtn) agentBtn.classList.toggle("active", isAgent);
+                    if (manualBtn) manualBtn.classList.toggle("active", !isAgent);
+                };
+                window.refreshHookLogs = function () {
+                    var btn = document.getElementById("hookLogRefreshBtn");
+                    var body = document.getElementById("hookLogBody");
+                    var title = document.getElementById("hookLogTitle");
+                    hideHookTip();
+                    if (btn) { btn.disabled = true; btn.textContent = "刷新中..."; }
+                    fetch("/admin/hook-logs", { headers: { "Accept": "application/json" } }).then(function (res) {
+                        return res.json();
+                    }).then(function (data) {
+                        if (data && typeof data.rows === "string") {
+                            if (body) body.innerHTML = data.rows;
+                            if (title) title.textContent = "🔔 Hook 推送日志 (最近 " + data.count + " 条)";
+                            if (btn) btn.textContent = "✅ 已刷新";
+                        } else if (btn) {
+                            btn.textContent = "❌ 刷新失败";
+                        }
+                    }).catch(function () {
+                        if (btn) btn.textContent = "❌ 刷新失败";
+                    }).finally(function () {
+                        if (btn) {
+                            btn.disabled = false;
+                            window.setTimeout(function () { btn.textContent = "🔄 手动刷新"; }, 1500);
+                        }
+                    });
+                };
+                // 日志表全文悬浮提示：跟随鼠标移动并贴边，避免宽框盖到右侧列产生“错位”观感
+                var hookTipEl = null;
+                var hookTipCell = null;
+                function getHookTip() {
+                    if (!hookTipEl) {
+                        hookTipEl = document.createElement("div");
+                        hookTipEl.style.cssText = "position:fixed;z-index:9999;display:none;max-width:360px;max-height:200px;overflow:auto;padding:8px 10px;background:#161b22;border:1px solid rgba(148,163,184,0.4);border-radius:8px;color:#e6edf3;font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-word;box-shadow:0 8px 24px rgba(0,0,0,0.55);pointer-events:none;";
+                        document.body.appendChild(hookTipEl);
+                    }
+                    return hookTipEl;
+                }
+                function placeHookTip(event) {
+                    var el = getHookTip();
+                    var gap = 12;
+                    var left = event.clientX + gap;
+                    var top = event.clientY + gap;
+                    if (left + el.offsetWidth > window.innerWidth - 6) left = Math.max(6, event.clientX - el.offsetWidth - gap);
+                    if (top + el.offsetHeight > window.innerHeight - 6) top = Math.max(6, event.clientY - el.offsetHeight - gap);
+                    el.style.left = left + "px";
+                    el.style.top = top + "px";
+                }
+                function showHookTip(event, text) {
+                    var el = getHookTip();
+                    el.textContent = text;
+                    el.style.display = "block";
+                    placeHookTip(event);
+                }
+                function hideHookTip() {
+                    hookTipCell = null;
+                    if (hookTipEl) hookTipEl.style.display = "none";
+                }
+                document.addEventListener("mouseover", function (event) {
+                    var target = event.target;
+                    if (!target || !target.closest) return;
+                    var cell = target.closest("#hookLogBody [data-tip]");
+                    if (cell) {
+                        hookTipCell = cell;
+                        showHookTip(event, cell.getAttribute("data-tip") || "");
+                    }
+                });
+                document.addEventListener("mousemove", function (event) {
+                    if (hookTipCell && hookTipEl && hookTipEl.style.display === "block") placeHookTip(event);
+                });
+                document.addEventListener("mouseout", function (event) {
+                    var target = event.target;
+                    if (!target || !target.closest) return;
+                    if (target.closest("#hookLogBody [data-tip]")) {
+                        var related = event.relatedTarget;
+                        if (!related || !related.closest || !related.closest("#hookLogBody [data-tip]")) hideHookTip();
+                    }
+                });
+                window.refreshAgentHook();
+            })();
+            </script>
+            </div>
+            <div id="manualHookPanel">
             <div class="card">
                 <div class="card-header">
                     <div class="card-title">🚀 在线发送通知 (Hook Notify)</div>
@@ -1631,11 +1934,14 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     <div id="hookStatus" style="display:none;padding:0.75rem;border-radius:6px;font-size:0.85rem;"></div>
                 </div>
             </div>
+            </div>
             <div class="card">
                 <div class="card-header">
-                    <div class="card-title">🔔 Hook 推送日志 (最近 ${hookLogs.length} 条)</div>
+                    <div class="card-title" id="hookLogTitle">🔔 Hook 推送日志 (最近 ${hookLogs.length} 条)</div>
+                    <button type="button" class="btn btn-sm" id="hookLogRefreshBtn" onclick="refreshHookLogs()">🔄 手动刷新</button>
                 </div>
-                <table>
+                <div class="log-table-scroll">
+                <table class="hook-log-table">
                     <thead>
                         <tr>
                             <th>设备 ID</th>
@@ -1648,6 +1954,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     </thead>
                     <tbody id="hookLogBody">${hookLogsRows}</tbody>
                 </table>
+                </div>
             </div>
         </section>
 
@@ -1937,10 +2244,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     const body = document.getElementById("pushLogBody");
                     if (body && body.innerHTML !== data.pushLogRows) body.innerHTML = data.pushLogRows;
                 }
-                if (data.hookLogRows) {
-                    const body = document.getElementById("hookLogBody");
-                    if (body && body.innerHTML !== data.hookLogRows) body.innerHTML = data.hookLogRows;
-                }
+                // Hook 日志不做自动刷新：notify 页默认只靠「🔄 手动刷新」更新。
                 // 设备页激活时同步刷新心跳监控
                 const activePage = document.querySelector(".page.active");
                 if (activePage && activePage.dataset.page === "devices") {
@@ -2727,6 +3031,14 @@ async function adminHookPush(request: Request, env: Env): Promise<Response> {
     } catch (err) { console.error("Admin hook log write failed", err); }
 
     return json({ ok: true, sent, online, relay_ok: relayOk });
+}
+
+async function adminHookLogs(request: Request, env: Env): Promise<Response> {
+    const username = await verifyAdminBasicAuth(request, env);
+    if (!username) return json({ error: "unauthorized" }, 401);
+    // Partial refresh for the notify-page log card: returns pre-rendered, escaped rows.
+    const logs = await listHookNotifyLogs(env, { limit: 50 }).catch(() => []);
+    return json({ ok: true, count: logs.length, rows: renderHookLogRows(logs) });
 }
 
 async function adminDeleteImageWeb(request: Request, env: Env): Promise<Response> {
