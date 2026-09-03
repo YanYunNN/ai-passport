@@ -304,7 +304,17 @@ static esp_err_t chat_play_mp3_stream(void)
         if (buf_len == 0) break;
 
         int offset = MP3FindSyncWord(buf, (int)buf_len);
-        if (offset < 0) break;
+        if (offset < 0) {
+            if (flash_off < s_mp3_len) {
+                // 跳过 ID3/非音频元数据头，保留末尾 3 字节以防跨包同步字截断
+                if (buf_len > 3) {
+                    memmove(buf, buf + buf_len - 3, 3);
+                    buf_len = 3;
+                }
+                continue;
+            }
+            break;
+        }
         unsigned char *in = buf + offset;
         int in_left = (int)(buf_len - offset);
         int before = in_left;
@@ -322,6 +332,11 @@ static esp_err_t chat_play_mp3_stream(void)
                     break;
                 }
                 format_set = true;
+                // 软渐入前 160 个采样，消除解码器冷启动爆破杂音
+                size_t ramp_samps = info.outputSamps > 160 ? 160 : info.outputSamps;
+                for (size_t i = 0; i < ramp_samps; i++) {
+                    pcm[i] = (int16_t)((int32_t)pcm[i] * i / ramp_samps);
+                }
             }
             size_t pcm_bytes = (size_t)info.outputSamps * (info.nChans > 1 ? 2u : 1u) * sizeof(int16_t);
             if (bsp_audio_write(pcm, pcm_bytes) != ESP_OK) break;
