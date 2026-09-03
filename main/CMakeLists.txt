@@ -34,5 +34,5 @@ idf_component_register(
          "kiro_passport_network.c"
          "screencast.c"
     INCLUDE_DIRS "."
-    REQUIRES bsp esp_event esp_http_client esp_http_server esp_netif esp_wifi esp_websocket_client json lwip nvs_flash esp-tls esp_pm wpa_supplicant
+    REQUIRES bsp esp_event esp_http_client esp_http_server esp_netif esp_wifi esp_websocket_client json lwip nvs_flash esp-tls esp_pm wpa_supplicant esp_ringbuf
 )

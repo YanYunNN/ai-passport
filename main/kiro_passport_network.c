@@ -18,12 +18,24 @@
 #include "time_sync.h"
 #include "wifi_manager.h"
 #include "mbedtls/base64.h"
+#include "esp_partition.h"
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
-static uint8_t s_active_image_data[24576];
+static const char *TAG = "passport_wss";
+
+#define IMAGE_FLASH_PART_TYPE ESP_PARTITION_TYPE_DATA
+#define IMAGE_FLASH_PART_SUBTYPE 0x40
+#define IMAGE_FLASH_PART_NAME "chatrec"
+#define IMAGE_FLASH_OFFSET 0
+#define IMAGE_FLASH_MAX_SIZE 65536
+
+static const esp_partition_t *s_image_part = NULL;
+static esp_partition_mmap_handle_t s_image_mmap_handle = 0;
+static const void *s_image_mmap_ptr = NULL;
+
 static size_t s_active_image_size = 0;
 static char s_active_image_id[64] = {0};
 static char s_active_image_title[64] = {0};
@@ -35,6 +47,16 @@ static size_t s_b64_carry_len = 0;
 static char s_ctrl_rx_buffer[1024];
 static size_t s_ctrl_rx_len = 0;
 
+static void image_flash_init_locked(void)
+{
+    if (!s_image_part) {
+        s_image_part = esp_partition_find_first(IMAGE_FLASH_PART_TYPE, IMAGE_FLASH_PART_SUBTYPE, IMAGE_FLASH_PART_NAME);
+        if (!s_image_part) {
+            ESP_LOGW(TAG, "未找到图片存储分区 %s", IMAGE_FLASH_PART_NAME);
+        }
+    }
+}
+
 /* 本机通知：静态分配（无 PSRAM），由 s_notify_lock 保护。
  * content 缓冲 900 字节，可容纳约 900/3≈290 个 UTF-8 中文字符。 */
 static kiro_passport_notify_info_t s_notify;
@@ -42,11 +64,24 @@ static SemaphoreHandle_t s_notify_lock = NULL;
 
 bool kiro_passport_network_get_image(kiro_passport_image_info_t *out_info)
 {
-    if (!out_info || s_active_image_size == 0) return false;
+    if (!out_info) return false;
     if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
     if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+    if (s_active_image_size == 0) {
+        if (s_image_lock) xSemaphoreGive(s_image_lock);
+        return false;
+    }
+    image_flash_init_locked();
+    if (!s_image_mmap_ptr && s_image_part) {
+        esp_partition_mmap(s_image_part, IMAGE_FLASH_OFFSET, IMAGE_FLASH_MAX_SIZE,
+                           ESP_PARTITION_MMAP_DATA, &s_image_mmap_ptr, &s_image_mmap_handle);
+    }
+    if (!s_image_mmap_ptr) {
+        if (s_image_lock) xSemaphoreGive(s_image_lock);
+        return false;
+    }
     out_info->size = s_active_image_size;
-    out_info->data = s_active_image_data;
+    out_info->data = (const uint8_t *)s_image_mmap_ptr;
     out_info->version = s_active_image_version;
     strlcpy(out_info->id, s_active_image_id, sizeof(out_info->id));
     strlcpy(out_info->title, s_active_image_title, sizeof(out_info->title));
@@ -106,6 +141,8 @@ void kiro_passport_network_clear_notify(void)
 #define KIRO_NETWORK_URI_MAX 192
 #define KIRO_NETWORK_HEADER_MAX 224
 #define KIRO_NETWORK_RECONNECT_MS 5000
+#define KIRO_NETWORK_BACKOFF_INIT_MS 1000
+#define KIRO_NETWORK_BACKOFF_MAX_MS 30000
 #define KIRO_NETWORK_MIN_VALID_EPOCH 1704067200 /* 2024-01-01 UTC */
 #define KIRO_ENROLLMENT_DEVICE_CODE_MAX 44
 #define KIRO_ENROLLMENT_RESPONSE_MAX 512
@@ -115,8 +152,6 @@ void kiro_passport_network_clear_notify(void)
 #define KIRO_ENROLLMENT_MAX_LIFETIME_SECONDS 600
 #define KIRO_ENROLLMENT_MIN_INTERVAL_SECONDS 5
 #define KIRO_ENROLLMENT_MAX_INTERVAL_SECONDS 60
-
-static const char *TAG = "passport_wss";
 
 static kiro_passport_voice_cb_t s_voice_cb = NULL;
 static void *s_voice_user_ctx = NULL;
@@ -142,6 +177,8 @@ typedef struct {
     size_t message_length;
     volatile bool transport_failed;
     volatile bool paused;
+    uint32_t reconnect_backoff_ms;
+    TickType_t reconnect_retry_at;
 } network_context_t;
 
 static network_context_t s_network;
@@ -379,6 +416,15 @@ static void image_stream_feed(const char *data, size_t len, bool is_first, bool 
     const char *end = data + len;
 
     if (is_first) {
+        image_flash_init_locked();
+        if (s_image_part) {
+            if (s_image_mmap_ptr) {
+                esp_partition_munmap(s_image_mmap_handle);
+                s_image_mmap_ptr = NULL;
+                s_image_mmap_handle = 0;
+            }
+            esp_partition_erase_range(s_image_part, IMAGE_FLASH_OFFSET, IMAGE_FLASH_MAX_SIZE);
+        }
         s_active_image_size = 0;
         s_b64_carry_len = 0;
         s_is_streaming_image = true;
@@ -413,11 +459,13 @@ static void image_stream_feed(const char *data, size_t len, bool is_first, bool 
         if (is_b64_char(*p)) {
             s_b64_carry[s_b64_carry_len++] = *p;
             if (s_b64_carry_len == 4) {
-                if (s_active_image_size + 3 < sizeof(s_active_image_data)) {
+                if (s_active_image_size + 3 < IMAGE_FLASH_MAX_SIZE) {
+                    uint8_t raw[4];
                     size_t olen = 0;
-                    if (mbedtls_base64_decode(s_active_image_data + s_active_image_size,
-                                              sizeof(s_active_image_data) - s_active_image_size,
-                                              &olen, (const unsigned char *)s_b64_carry, 4) == 0) {
+                    if (mbedtls_base64_decode(raw, sizeof(raw), &olen, (const unsigned char *)s_b64_carry, 4) == 0 && olen > 0) {
+                        if (s_image_part) {
+                            esp_partition_write(s_image_part, IMAGE_FLASH_OFFSET + s_active_image_size, raw, olen);
+                        }
                         s_active_image_size += olen;
                     }
                 }
@@ -432,11 +480,13 @@ static void image_stream_feed(const char *data, size_t len, bool is_first, bool 
             while (s_b64_carry_len < 4) {
                 s_b64_carry[s_b64_carry_len++] = '=';
             }
-            if (s_active_image_size + 3 < sizeof(s_active_image_data)) {
+            if (s_active_image_size + 3 < IMAGE_FLASH_MAX_SIZE) {
+                uint8_t raw[4];
                 size_t olen = 0;
-                if (mbedtls_base64_decode(s_active_image_data + s_active_image_size,
-                                          sizeof(s_active_image_data) - s_active_image_size,
-                                          &olen, (const unsigned char *)s_b64_carry, 4) == 0) {
+                if (mbedtls_base64_decode(raw, sizeof(raw), &olen, (const unsigned char *)s_b64_carry, 4) == 0 && olen > 0) {
+                    if (s_image_part) {
+                        esp_partition_write(s_image_part, IMAGE_FLASH_OFFSET + s_active_image_size, raw, olen);
+                    }
                     s_active_image_size += olen;
                 }
             }
@@ -446,7 +496,12 @@ static void image_stream_feed(const char *data, size_t len, bool is_first, bool 
         s_active_image_version++;
         s_is_streaming_image = false;
 
-        ESP_LOGI(TAG, "流式接收并解码图片完成: id=%s, title=%s, size=%zu bytes, v=%lu",
+        if (s_image_part && s_active_image_size > 0) {
+            esp_partition_mmap(s_image_part, IMAGE_FLASH_OFFSET, IMAGE_FLASH_MAX_SIZE,
+                               ESP_PARTITION_MMAP_DATA, &s_image_mmap_ptr, &s_image_mmap_handle);
+        }
+
+        ESP_LOGI(TAG, "流式接收并写入 Flash 完成: id=%s, title=%s, size=%zu bytes, v=%lu",
                  s_active_image_id, s_active_image_title, s_active_image_size,
                  (unsigned long)s_active_image_version);
     }
@@ -503,6 +558,15 @@ static void process_message(const char *message)
     if (strstr(message, "\"type\":\"image_start\"") || strstr(message, "\"type\": \"image_start\"")) {
         if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
         if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+        image_flash_init_locked();
+        if (s_image_part) {
+            if (s_image_mmap_ptr) {
+                esp_partition_munmap(s_image_mmap_handle);
+                s_image_mmap_ptr = NULL;
+                s_image_mmap_handle = 0;
+            }
+            esp_partition_erase_range(s_image_part, IMAGE_FLASH_OFFSET, IMAGE_FLASH_MAX_SIZE);
+        }
         s_active_image_size = 0;
         s_b64_carry_len = 0;
         s_active_image_id[0] = '\0';
@@ -520,15 +584,16 @@ static void process_message(const char *message)
         if (extract_json_string(message, "data", NULL, 0, &chunk_data, &chunk_len) && chunk_data && chunk_len > 0) {
             if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
             if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
-            if (s_active_image_size + chunk_len <= sizeof(s_active_image_data)) {
-                size_t olen = 0;
-                int ret = mbedtls_base64_decode(s_active_image_data + s_active_image_size,
-                                                sizeof(s_active_image_data) - s_active_image_size,
-                                                &olen, (const unsigned char *)chunk_data, chunk_len);
-                if (ret == 0) {
-                    s_active_image_size += olen;
-                } else {
-                    ESP_LOGE(TAG, "Base64 chunk decode 失败: ret=%d", ret);
+            if (s_active_image_size + chunk_len <= IMAGE_FLASH_MAX_SIZE) {
+                uint8_t *dec_chunk = malloc(chunk_len);
+                if (dec_chunk) {
+                    size_t olen = 0;
+                    int ret = mbedtls_base64_decode(dec_chunk, chunk_len, &olen, (const unsigned char *)chunk_data, chunk_len);
+                    if (ret == 0 && olen > 0 && s_image_part) {
+                        esp_partition_write(s_image_part, IMAGE_FLASH_OFFSET + s_active_image_size, dec_chunk, olen);
+                        s_active_image_size += olen;
+                    }
+                    free(dec_chunk);
                 }
             }
             if (s_image_lock) xSemaphoreGive(s_image_lock);
@@ -539,8 +604,17 @@ static void process_message(const char *message)
     if (strstr(message, "\"type\":\"image_end\"") || strstr(message, "\"type\": \"image_end\"")) {
         if (!s_image_lock) s_image_lock = xSemaphoreCreateMutex();
         if (s_image_lock) xSemaphoreTake(s_image_lock, portMAX_DELAY);
+        if (s_image_part && s_active_image_size > 0) {
+            if (s_image_mmap_ptr) {
+                esp_partition_munmap(s_image_mmap_handle);
+                s_image_mmap_ptr = NULL;
+                s_image_mmap_handle = 0;
+            }
+            esp_partition_mmap(s_image_part, IMAGE_FLASH_OFFSET, IMAGE_FLASH_MAX_SIZE,
+                               ESP_PARTITION_MMAP_DATA, &s_image_mmap_ptr, &s_image_mmap_handle);
+        }
         s_active_image_version++;
-        ESP_LOGI(TAG, "图片推送接收完成: id=%s, title=%s, size=%zu bytes, v=%lu",
+        ESP_LOGI(TAG, "图片推送接收完成并已映射: id=%s, title=%s, size=%zu bytes, v=%lu",
                  s_active_image_id, s_active_image_title, s_active_image_size,
                  (unsigned long)s_active_image_version);
         if (s_image_lock) xSemaphoreGive(s_image_lock);
@@ -556,63 +630,49 @@ static void process_message(const char *message)
         return;
     }
 
-    if (strstr(message, "\"voice_\"")) {
+    if (strstr(message, "\"voice_")) {
         if (strstr(message, "\"type\":\"voice_start_ack\"") || strstr(message, "\"type\": \"voice_start_ack\"")) {
+            ESP_LOGI(TAG, "收到 voice_start_ack");
             if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_START_ACK, NULL, 0, s_voice_user_ctx);
             return;
         }
         if (strstr(message, "\"type\":\"voice_asr\"") || strstr(message, "\"type\": \"voice_asr\"")) {
-            cJSON *root = cJSON_Parse(message);
-            if (root) {
-                cJSON *text = cJSON_GetObjectItemCaseSensitive(root, "text");
-                if (cJSON_IsString(text) && text->valuestring && s_voice_cb) {
-                    s_voice_cb(KIRO_PASSPORT_VOICE_EVT_ASR, text->valuestring, strlen(text->valuestring), s_voice_user_ctx);
-                }
-                cJSON_Delete(root);
+            static char s_asr_text[512];
+            if (extract_json_string(message, "text", s_asr_text, sizeof(s_asr_text), NULL, NULL) && s_voice_cb) {
+                ESP_LOGI(TAG, "收到 voice_asr: %s", s_asr_text);
+                s_voice_cb(KIRO_PASSPORT_VOICE_EVT_ASR, s_asr_text, strlen(s_asr_text), s_voice_user_ctx);
             }
             return;
         }
         if (strstr(message, "\"type\":\"voice_reply\"") || strstr(message, "\"type\": \"voice_reply\"")) {
-            cJSON *root = cJSON_Parse(message);
-            if (root) {
-                cJSON *text = cJSON_GetObjectItemCaseSensitive(root, "text");
-                if (cJSON_IsString(text) && text->valuestring && s_voice_cb) {
-                    s_voice_cb(KIRO_PASSPORT_VOICE_EVT_REPLY, text->valuestring, strlen(text->valuestring), s_voice_user_ctx);
-                }
-                cJSON_Delete(root);
+            static char s_reply_text[512];
+            if (extract_json_string(message, "text", s_reply_text, sizeof(s_reply_text), NULL, NULL) && s_voice_cb) {
+                ESP_LOGI(TAG, "收到 voice_reply: %s", s_reply_text);
+                s_voice_cb(KIRO_PASSPORT_VOICE_EVT_REPLY, s_reply_text, strlen(s_reply_text), s_voice_user_ctx);
             }
             return;
         }
         if (strstr(message, "\"type\":\"voice_tts_start\"") || strstr(message, "\"type\": \"voice_tts_start\"")) {
-            cJSON *root = cJSON_Parse(message);
-            size_t total = 0;
-            if (root) {
-                cJSON *tb = cJSON_GetObjectItemCaseSensitive(root, "total_bytes");
-                if (cJSON_IsNumber(tb)) total = (size_t)tb->valueint;
-                cJSON_Delete(root);
-            }
-            if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_TTS_START, NULL, total, s_voice_user_ctx);
+            uint32_t total = 0;
+            extract_json_u32(message, "total_bytes", &total);
+            ESP_LOGI(TAG, "收到 voice_tts_start: total=%lu", (unsigned long)total);
+            if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_TTS_START, NULL, (size_t)total, s_voice_user_ctx);
             return;
         }
         if (strstr(message, "\"type\":\"voice_tts_end\"") || strstr(message, "\"type\": \"voice_tts_end\"")) {
-            cJSON *root = cJSON_Parse(message);
-            size_t total = 0;
-            if (root) {
-                cJSON *tb = cJSON_GetObjectItemCaseSensitive(root, "total_bytes");
-                if (cJSON_IsNumber(tb)) total = (size_t)tb->valueint;
-                cJSON_Delete(root);
-            }
-            if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_TTS_END, NULL, total, s_voice_user_ctx);
+            uint32_t total = 0;
+            extract_json_u32(message, "total_bytes", &total);
+            ESP_LOGI(TAG, "收到 voice_tts_end: total=%lu", (unsigned long)total);
+            if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_TTS_END, NULL, (size_t)total, s_voice_user_ctx);
             return;
         }
         if (strstr(message, "\"type\":\"voice_error\"") || strstr(message, "\"type\": \"voice_error\"")) {
-            cJSON *root = cJSON_Parse(message);
-            if (root) {
-                cJSON *msg = cJSON_GetObjectItemCaseSensitive(root, "message");
-                const char *err = (cJSON_IsString(msg) && msg->valuestring) ? msg->valuestring : "Voice error";
-                if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_ERROR, err, strlen(err), s_voice_user_ctx);
-                cJSON_Delete(root);
+            static char s_err_msg[128];
+            if (!extract_json_string(message, "message", s_err_msg, sizeof(s_err_msg), NULL, NULL)) {
+                strlcpy(s_err_msg, "Voice error", sizeof(s_err_msg));
             }
+            ESP_LOGE(TAG, "收到 voice_error: %s", s_err_msg);
+            if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_ERROR, s_err_msg, strlen(s_err_msg), s_voice_user_ctx);
             return;
         }
     }
@@ -634,6 +694,8 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t event_id, 
     esp_websocket_event_data_t *event = event_data;
     if (event_id == WEBSOCKET_EVENT_CONNECTED) {
         ESP_LOGI(TAG, "Relay WebSocket 已连接成功! Session ID: %s", s_network.session_id);
+        s_network.reconnect_backoff_ms = KIRO_NETWORK_BACKOFF_INIT_MS;
+        s_network.reconnect_retry_at = 0;
         kiro_passport_set_connection(true, s_network.session_id);
         set_state(KIRO_PASSPORT_NETWORK_CONNECTED);
         const char quote = '"';
@@ -754,8 +816,8 @@ static esp_err_t start_client(void)
         .buffer_size = 2048,
         .task_stack = 4096,
         .task_prio = 5,
-        .ping_interval_sec = 60,
-        .pingpong_timeout_sec = 20,
+        .ping_interval_sec = 20,
+        .pingpong_timeout_sec = 8,
         .keep_alive_enable = true,
         .keep_alive_idle = 20,
         .keep_alive_interval = 10,
@@ -1078,6 +1140,15 @@ static void network_task(void *argument)
         if (s_network.transport_failed) {
             s_network.transport_failed = false;
             destroy_client();
+            uint32_t jitter = (uint32_t)(esp_random() % 500);
+            uint32_t delay_ms = s_network.reconnect_backoff_ms + jitter;
+            s_network.reconnect_retry_at = xTaskGetTickCount() + pdMS_TO_TICKS(delay_ms);
+            ESP_LOGW(TAG, "Relay 连接断开，将在 %lu ms 后尝试重连 (退避基数: %lu ms)",
+                     (unsigned long)delay_ms, (unsigned long)s_network.reconnect_backoff_ms);
+            s_network.reconnect_backoff_ms *= 2;
+            if (s_network.reconnect_backoff_ms > KIRO_NETWORK_BACKOFF_MAX_MS) {
+                s_network.reconnect_backoff_ms = KIRO_NETWORK_BACKOFF_MAX_MS;
+            }
         }
         if (s_network.paused) {
             destroy_client();
@@ -1096,11 +1167,22 @@ static void network_task(void *argument)
             set_state(KIRO_PASSPORT_NETWORK_WAITING_CLOCK);
             if (time_sync_get_state() != TIME_SYNC_SYNCING) time_sync_request();
         } else if (!s_network.client) {
-            set_state(KIRO_PASSPORT_NETWORK_CONNECTING);
-            if (start_client() != ESP_OK) {
-                set_state(KIRO_PASSPORT_NETWORK_ERROR);
-                vTaskDelay(pdMS_TO_TICKS(KIRO_NETWORK_RECONNECT_MS));
-                continue;
+            if (s_network.reconnect_retry_at != 0 && !ticks_reached(s_network.reconnect_retry_at)) {
+                // 处于指数退避冷静期，暂缓发起连接
+            } else {
+                set_state(KIRO_PASSPORT_NETWORK_CONNECTING);
+                s_network.reconnect_retry_at = 0;
+                if (start_client() != ESP_OK) {
+                    set_state(KIRO_PASSPORT_NETWORK_ERROR);
+                    uint32_t jitter = (uint32_t)(esp_random() % 500);
+                    uint32_t delay_ms = s_network.reconnect_backoff_ms + jitter;
+                    s_network.reconnect_retry_at = xTaskGetTickCount() + pdMS_TO_TICKS(delay_ms);
+                    s_network.reconnect_backoff_ms *= 2;
+                    if (s_network.reconnect_backoff_ms > KIRO_NETWORK_BACKOFF_MAX_MS) {
+                        s_network.reconnect_backoff_ms = KIRO_NETWORK_BACKOFF_MAX_MS;
+                    }
+                    continue;
+                }
             }
         }
 
@@ -1152,11 +1234,13 @@ esp_err_t kiro_passport_network_init(void)
     if (!s_network.lock || !s_network.rejections) return ESP_ERR_NO_MEM;
     s_network.state = KIRO_PASSPORT_NETWORK_UNCONFIGURED;
     s_network.enrollment.state = KIRO_PASSPORT_ENROLLMENT_IDLE;
+    s_network.reconnect_backoff_ms = KIRO_NETWORK_BACKOFF_INIT_MS;
+    s_network.reconnect_retry_at = 0;
     esp_err_t result = load_config();
     if (result != ESP_OK) return result;
     result = kiro_passport_init(s_network.config.device_id);
     if (result != ESP_OK) return result;
-    if (xTaskCreate(network_task, "passport_wss", 6144, NULL, 5, NULL) != pdPASS) return ESP_ERR_NO_MEM;
+    if (xTaskCreate(network_task, "passport_wss", 4096, NULL, 5, NULL) != pdPASS) return ESP_ERR_NO_MEM;
     return ESP_OK;
 }
 
