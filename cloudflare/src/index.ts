@@ -16,6 +16,7 @@ import { isDeviceId, parseApprovalInput, REQUEST_ID_PATTERN, type ApprovalInput 
 import { handleSimulatorBinProxy, handleSimulatorPresets, simulatorPage } from "./simulator";
 import { renderWallpaperJpeg, weatherCodeLabel } from "./wallpaper";
 import { handleVoice } from "./voice";
+import { UI_CSS } from "./ui";
 
 export { PassportRelay };
 
@@ -294,670 +295,8 @@ function htmlPage(title: string, content: string, status = 200, additionalHeader
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)} - Kiro Passport Relay</title>
 <style>
-:root {
-    --bg: #0d1117;
-    --card-bg: #161b22;
-    --border: #30363d;
-    --text: #e6edf3;
-    --text-muted: #8b949e;
-    --primary: #238636;
-    --primary-hover: #2ea043;
-    --accent: #1f6feb;
-    --accent-hover: #388bfd;
-    --accent-soft: rgba(31, 111, 235, 0.14);
-    --danger: #da3633;
-    --danger-hover: #f85149;
-    --online: #3fb950;
-    --offline: #6e7681;
-    --radius: 10px;
-}
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: var(--bg);
-    background-image:
-        radial-gradient(1200px 500px at 20% -10%, rgba(31, 111, 235, 0.08), transparent 60%),
-        radial-gradient(900px 420px at 90% 0%, rgba(35, 134, 54, 0.06), transparent 60%);
-    color: var(--text);
-    line-height: 1.5;
-    min-height: 100vh;
-}
-.container { max-width: 960px; margin: 0 auto; padding: 2rem 1rem 0.5rem; }
-
-/* Top navigation */
-.topnav {
-    position: sticky;
-    top: 0;
-    z-index: 100;
-    background: rgba(13, 17, 23, 0.85);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    border-bottom: 1px solid var(--border);
-}
-.topnav-inner {
-    max-width: 960px;
-    margin: 0 auto;
-    padding: 0.6rem 1rem;
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-}
-.brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
-    color: var(--text);
-    text-decoration: none;
-    font-size: 1.05rem;
-    font-weight: 700;
-    letter-spacing: 0.01em;
-}
-.brand span {
-    background: linear-gradient(90deg, #58a6ff, #3fb950);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-.nav-tabs { display: flex; gap: 0.3rem; flex-wrap: wrap; }
-.nav-tab {
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--text-muted);
-    padding: 0.4rem 0.85rem;
-    border-radius: 8px;
-    font-size: 0.88rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-.nav-tab:hover { background: rgba(255,255,255,0.06); color: var(--text); }
-.nav-tab.active { background: var(--accent-soft); border-color: rgba(31,111,235,0.35); color: #58a6ff; }
-/* Sub-tabs inside a page (e.g. notify: Agent 接入 / 手动发送). Must NOT reuse
-   .nav-tab, which the dashboard script binds to switchTab(tab.dataset.tab). */
-.sub-tab {
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--text-muted);
-    padding: 0.45rem 0.95rem;
-    border-radius: 8px;
-    font-size: 0.88rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-.sub-tab:hover { background: rgba(255,255,255,0.06); color: var(--text); }
-.sub-tab.active { background: var(--accent-soft); border-color: rgba(31,111,235,0.35); color: #58a6ff; }
-.topnav-actions { margin-left: auto; display: flex; gap: 0.5rem; align-items: center; }
-.nav-btn { background: #21262d; border: 1px solid var(--border); color: var(--text); }
-.nav-btn:hover { border-color: #484f58; }
-
-/* Page sections (tabbed) */
-.page { display: none; }
-.page.active { display: block; animation: pageIn 0.28s ease; }
-@keyframes pageIn {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: none; }
-}
-.page-head { margin-bottom: 1.5rem; }
-.page-head h1 { font-size: 1.35rem; font-weight: 700; margin-bottom: 0.3rem; }
-.page-desc { color: var(--text-muted); font-size: 0.9rem; }
-.section-title { font-size: 0.9rem; font-weight: 600; color: var(--text-muted); margin: 0 0 0.9rem; }
-
-/* Legacy nav on public pairing pages */
-.nav-bar { margin-bottom: 1.5rem; }
-.nav-link { color: var(--accent); text-decoration: none; font-size: 0.9rem; }
-.nav-link:hover { text-decoration: underline; }
-
-/* Stats */
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 1rem;
-    margin-bottom: 2rem;
-}
-.stat-card {
-    background: linear-gradient(180deg, #1b222c 0%, var(--card-bg) 100%);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1.3rem 1.4rem;
-    position: relative;
-    overflow: hidden;
-    transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
-}
-.stat-card::after {
-    content: "";
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, var(--accent), transparent 70%);
-    opacity: 0.6;
-}
-.stat-card:hover { border-color: #3d4650; transform: translateY(-2px); box-shadow: 0 10px 28px rgba(0,0,0,0.35); }
-.stat-icon { font-size: 1.5rem; margin-bottom: 0.6rem; }
-.stat-label { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.25rem; }
-.stat-value { font-size: 1.75rem; font-weight: 700; }
-
-/* Quick actions */
-.quick-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
-.quick-card {
-    display: flex;
-    align-items: center;
-    gap: 0.9rem;
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1.15rem 1.25rem;
-    text-decoration: none;
-    color: var(--text);
-    transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
-}
-.quick-card:hover { border-color: rgba(31,111,235,0.6); transform: translateY(-2px); box-shadow: 0 10px 28px rgba(0,0,0,0.35); }
-.quick-icon { font-size: 1.7rem; }
-.quick-title { font-weight: 600; font-size: 0.95rem; }
-.quick-desc { color: var(--text-muted); font-size: 0.78rem; margin-top: 0.15rem; }
-
-.card {
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-    margin-bottom: 2rem;
-    transition: border-color 0.2s ease;
-}
-.card:hover { border-color: #3d4650; }
-.card-header {
-    padding: 1rem 1.25rem;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-}
-.card-title { font-size: 1.05rem; font-weight: 600; }
-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }
-th, td { padding: 0.85rem 1.25rem; border-bottom: 1px solid var(--border); }
-th { background: #13171e; color: var(--text-muted); font-weight: 600; }
-tr:last-child td { border-bottom: none; }
-tr:hover td { background: rgba(255,255,255,0.02); }
-.badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.2rem 0.55rem;
-    border-radius: 20px;
-    font-size: 0.75rem;
-    font-weight: 600;
-}
-.badge-active { background: rgba(46, 160, 67, 0.15); color: #3fb950; border: 1px solid rgba(46, 160, 67, 0.3); }
-.badge-revoked { background: rgba(248, 81, 73, 0.15); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.3); }
-.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.dot-online { background: var(--online); box-shadow: 0 0 6px var(--online); }
-.dot-offline { background: var(--offline); }
-.code-mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.9em; background: #21262d; padding: 0.15rem 0.4rem; border-radius: 4px; }
-.btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.45rem 0.9rem;
-    border-radius: 6px;
-    font-size: 0.85rem;
-    font-weight: 500;
-    cursor: pointer;
-    border: 1px solid transparent;
-    text-decoration: none;
-    transition: all 0.15s ease;
-}
-.btn-primary { background: var(--primary); color: #fff; border-color: rgba(255,255,255,0.1); }
-.btn-primary:hover { background: var(--primary-hover); }
-.btn-accent { background: var(--accent); color: #fff; }
-.btn-accent:hover { background: var(--accent-hover); }
-.btn-danger { background: rgba(218, 54, 51, 0.15); color: #f85149; border-color: rgba(218, 54, 51, 0.3); }
-.btn-danger:hover { background: var(--danger); color: #fff; }
-.btn-sm { padding: 0.25rem 0.6rem; font-size: 0.75rem; }
-.btn-block { width: 100%; padding: 0.75rem; font-size: 1rem; margin-top: 1rem; }
-.actions-cell { display: flex; gap: 0.4rem; align-items: center; }
-.empty-state { padding: 2.5rem; text-align: center; color: var(--text-muted); }
-.pair-card { max-width: 420px; margin: 1.25rem auto 2rem; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 2rem; }
-.form-label { display: block; margin-bottom: 0.5rem; font-weight: 500; }
-.code-input {
-    width: 100%;
-    padding: 0.75rem;
-    font-size: 1.5rem;
-    letter-spacing: 0.2em;
-    text-align: center;
-    font-family: monospace;
-    background: #0d1117;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text);
-}
-.code-input:focus { outline: none; border-color: var(--accent); }
-.notice { background: rgba(56, 139, 253, 0.1); border: 1px solid rgba(56, 139, 253, 0.3); color: #58a6ff; padding: 1rem; border-radius: 6px; margin-bottom: 1.5rem; }
-.desc { color: var(--text-muted); margin-bottom: 1.5rem; }
-
-/* Image Studio Styles */
-.image-studio {
-    display: grid;
-    grid-template-columns: 280px 1fr;
-    gap: 1.5rem;
-    padding: 1.25rem;
-}
-@media (max-width: 680px) {
-    .image-studio { grid-template-columns: 1fr; }
-}
-.preview-pane {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    background: #0d1117;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1rem;
-}
-.screen-frame {
-    width: 240px;
-    height: 320px;
-    border-radius: 6px;
-    background: #000;
-    border: 2px solid #30363d;
-    overflow: hidden;
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-}
-.screen-frame canvas {
-    width: 240px;
-    height: 320px;
-    display: block;
-}
-.screen-placeholder {
-    color: #484f58;
-    text-align: center;
-    font-size: 0.85rem;
-    padding: 1rem;
-}
-.upload-pane {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-}
-.push-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    padding: 1.25rem;
-}
-.push-grid {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: 1rem;
-}
-@media (max-width: 560px) {
-    .push-grid { grid-template-columns: 1fr; }
-}
-/* 表格长文本: 固定最大行高 + 省略号, hover 用 title 展示全文 */
-.cell-clamp {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    line-height: 1.4;
-    word-break: break-word;
-    white-space: normal;
-}
-.cell-clamp-1 {
-    display: -webkit-box;
-    -webkit-line-clamp: 1;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    word-break: break-word;
-    white-space: normal;
-}
-/* Hook 推送日志表：紧凑间距，设备 ID / 时间 / 状态 / 结果列不折行，
-   标题与内容列限制宽度并省略，外层 .log-table-scroll 兜底横向滚动 */
-.hook-log-table th, .hook-log-table td { padding: 0.7rem 0.85rem; }
-.hook-log-table .td-nowrap { white-space: nowrap; }
-.hook-log-table .td-device { min-width: 170px; }
-.hook-log-table .td-device .code-mono {
-    font-size: 0.76rem;
-    padding: 0.1rem 0.35rem;
-    white-space: nowrap;
-    letter-spacing: -0.01em;
-}
-.hook-log-table .td-time { color: var(--text-muted); font-size: 0.78rem; white-space: nowrap; }
-.hook-log-table .td-title { min-width: 100px; max-width: 150px; }
-.hook-log-table .td-content { min-width: 180px; max-width: 340px; }
-.hook-log-table .td-status { font-size: 0.85rem; }
-.hook-log-table .td-status .dot { margin-right: 0.35rem; vertical-align: -1px; }
-.hook-log-table .td-result { min-width: 116px; }
-.log-table-scroll { overflow-x: auto; }
-.log-table-scroll::-webkit-scrollbar { height: 8px; }
-.log-table-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-.form-group { display: flex; flex-direction: column; gap: 0.35rem; }
-.form-input, .form-select {
-    background: #0d1117;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 0.6rem 0.75rem;
-    color: var(--text);
-    font-size: 0.9rem;
-}
-.form-input:focus, .form-select:focus { outline: none; border-color: var(--accent); }
-.gallery-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 1rem;
-    padding: 1.25rem;
-}
-.gallery-item {
-    background: #0d1117;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    transition: border-color 0.2s ease, transform 0.2s ease;
-}
-.gallery-item:hover { border-color: #3d4650; transform: translateY(-2px); }
-.gallery-thumb {
-    width: 100%;
-    height: 180px;
-    object-fit: cover;
-    background: #000;
-}
-.gallery-info {
-    padding: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    flex: 1;
-}
-.gallery-title { font-weight: 600; font-size: 0.85rem; word-break: break-all; }
-.gallery-date { font-size: 0.75rem; color: var(--text-muted); }
-.gallery-actions { display: flex; gap: 0.5rem; margin-top: auto; padding-top: 0.5rem; }
-
-.footer { text-align: center; color: var(--text-muted); font-size: 0.78rem; padding: 2.5rem 1rem 1.5rem; }
-
-/* ============ 视觉升级层 (Design System) ============ */
-:root {
-    --bg: #080a10;
-    --card-bg: #0e1117;
-    --border: rgba(148, 163, 184, 0.14);
-    --text: #e7ecf3;
-    --text-muted: #8b94a3;
-    --accent: #6366f1;
-    --accent-hover: #818cf8;
-    --accent-soft: rgba(99, 102, 241, 0.16);
-    --primary: #4f46e5;
-    --primary-hover: #6366f1;
-    --radius: 12px;
-    --shadow-card: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -12px rgba(0,0,0,0.6);
-    --glow: 0 0 24px rgba(99, 102, 241, 0.25);
-}
-* { scrollbar-width: thin; scrollbar-color: rgba(148,163,184,0.3) transparent; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.25); border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
-::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.4); border: 2px solid transparent; background-clip: content-box; }
-::selection { background: rgba(99,102,241,0.35); color: #fff; }
-body {
-    background-color: var(--bg);
-    background-image:
-        radial-gradient(1100px 520px at 12% -12%, rgba(99,102,241,0.14), transparent 60%),
-        radial-gradient(900px 480px at 92% -8%, rgba(6,182,212,0.10), transparent 55%),
-        radial-gradient(700px 500px at 50% 115%, rgba(139,92,246,0.08), transparent 60%);
-    letter-spacing: 0.01em;
-}
-.container { padding-top: 2.25rem; }
-.topnav {
-    background: rgba(8, 10, 16, 0.72);
-    backdrop-filter: blur(18px) saturate(1.4);
-    -webkit-backdrop-filter: blur(18px) saturate(1.4);
-    border-bottom: 1px solid rgba(148,163,184,0.12);
-    box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset;
-}
-.brand { font-size: 1.08rem; }
-.brand span {
-    background: linear-gradient(92deg, #818cf8, #c084fc 55%, #22d3ee);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-.nav-tab { border-radius: 9px; font-weight: 550; letter-spacing: 0.01em; }
-.nav-tab:hover { background: rgba(255,255,255,0.07); color: var(--text); transform: translateY(-1px); }
-.nav-tab.active {
-    background: linear-gradient(180deg, rgba(99,102,241,0.22), rgba(99,102,241,0.10));
-    border-color: rgba(129,140,248,0.35);
-    color: #c7d2fe;
-    box-shadow: 0 0 16px rgba(99,102,241,0.18) inset, 0 0 20px rgba(99,102,241,0.10);
-}
-.nav-btn { background: rgba(148,163,184,0.08); border-color: rgba(148,163,184,0.16); }
-.nav-btn:hover { background: rgba(148,163,184,0.14); border-color: rgba(148,163,184,0.3); }
-.page-head h1 { font-size: 1.5rem; letter-spacing: -0.02em; }
-
-/* 页面切换: 子元素依次上浮 (轻量 CSS 动画) */
-.page.active > * { animation: fadeUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
-.page.active > *:nth-child(2) { animation-delay: 0.05s; }
-.page.active > *:nth-child(3) { animation-delay: 0.10s; }
-.page.active > *:nth-child(4) { animation-delay: 0.15s; }
-.page.active > *:nth-child(5) { animation-delay: 0.20s; }
-.page.active > *:nth-child(6) { animation-delay: 0.25s; }
-@keyframes fadeUp {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: none; }
-}
-
-/* 卡片 */
-.card {
-    background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.012)), var(--card-bg);
-    border: 1px solid rgba(148,163,184,0.12);
-    border-radius: 14px;
-    box-shadow: var(--shadow-card);
-    transition: transform 0.22s cubic-bezier(0.22,1,0.36,1), border-color 0.22s ease, box-shadow 0.22s ease;
-}
-.card:hover { border-color: rgba(148,163,184,0.24); box-shadow: 0 2px 4px rgba(0,0,0,0.4), 0 16px 40px -16px rgba(0,0,0,0.7); }
-.card-header { padding: 1.05rem 1.3rem; background: rgba(255,255,255,0.015); }
-.card-title { font-size: 1.05rem; letter-spacing: -0.01em; }
-
-/* 统计卡片 */
-.stat-card {
-    background: linear-gradient(160deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015)), #0e1117;
-    border: 1px solid rgba(148,163,184,0.12);
-    border-radius: 14px;
-    box-shadow: var(--shadow-card);
-}
-.stat-card::after {
-    height: 2.5px;
-    background: linear-gradient(90deg, rgba(99,102,241,0.9), rgba(34,211,238,0.5), transparent 80%);
-    opacity: 1;
-}
-.stat-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-card), var(--glow); }
-.stat-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 42px;
-    height: 42px;
-    border-radius: 11px;
-    font-size: 1.25rem;
-    background: linear-gradient(140deg, rgba(99,102,241,0.25), rgba(34,211,238,0.12));
-    border: 1px solid rgba(129,140,248,0.25);
-    box-shadow: 0 0 18px rgba(99,102,241,0.15) inset;
-    margin-bottom: 0.9rem;
-}
-.stat-label { text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.08em; }
-.stat-value { font-size: 2rem; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
-
-/* 快捷操作 */
-.quick-card {
-    border-radius: 14px;
-    background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.01)), var(--card-bg);
-    box-shadow: var(--shadow-card);
-}
-.quick-card:hover {
-    transform: translateY(-3px);
-    border-color: rgba(129,140,248,0.45);
-    box-shadow: var(--shadow-card), 0 0 28px rgba(99,102,241,0.12);
-}
-.quick-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 46px;
-    height: 46px;
-    border-radius: 12px;
-    font-size: 1.5rem;
-    background: linear-gradient(140deg, rgba(99,102,241,0.18), rgba(6,182,212,0.10));
-    border: 1px solid rgba(148,163,184,0.16);
-}
-
-/* 按钮 */
-.btn { border-radius: 9px; font-weight: 550; }
-.btn:active { transform: translateY(1px) scale(0.99); }
-.btn-primary {
-    background: linear-gradient(135deg, #4f46e5, #7c3aed);
-    border-color: rgba(255,255,255,0.14);
-    box-shadow: 0 4px 16px -4px rgba(79,70,229,0.55), 0 1px 2px rgba(0,0,0,0.3);
-}
-.btn-primary:hover {
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-    box-shadow: 0 6px 20px -4px rgba(99,102,241,0.65);
-    transform: translateY(-1px);
-}
-.btn-accent { background: linear-gradient(135deg, #0ea5e9, #6366f1); }
-.btn-accent:hover { transform: translateY(-1px); box-shadow: 0 6px 20px -4px rgba(14,165,233,0.5); }
-.btn-danger:hover { transform: translateY(-1px); }
-.btn:focus-visible, .nav-tab:focus-visible, .quick-card:focus-visible, a:focus-visible, button:focus-visible {
-    outline: 2px solid rgba(129,140,248,0.7);
-    outline-offset: 2px;
-}
-
-/* 表格 */
-th { background: rgba(148,163,184,0.06); color: var(--text-muted); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.06em; }
-tr:hover td { background: rgba(129,140,248,0.05); }
-td { transition: background 0.15s ease; }
-
-/* 徽章 / 状态点 */
-.badge { border-radius: 999px; }
-.badge-active { color: #4ade80; background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.28); }
-.badge-revoked { color: #f87171; background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.28); }
-.dot { position: relative; }
-.dot-online { background: #34d399; box-shadow: 0 0 8px #34d399; animation: pulseDot 2s ease infinite; }
-@keyframes pulseDot {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0.45); }
-    50% { box-shadow: 0 0 0 5px rgba(52,211,153,0); }
-}
-
-/* 表单 */
-.form-input, .form-select {
-    background: rgba(255,255,255,0.03);
-    border-color: rgba(148,163,184,0.18);
-    border-radius: 9px;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
-}
-.form-input:hover, .form-select:hover { border-color: rgba(148,163,184,0.32); }
-.form-input:focus, .form-select:focus {
-    border-color: rgba(129,140,248,0.65);
-    box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
-    background: rgba(255,255,255,0.045);
-}
-
-/* 推送结果提示弹出动画 */
-#pushResult, #hookStatus, #statusAlert, #castAlert { animation: popIn 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
-@keyframes popIn {
-    from { opacity: 0; transform: translateY(6px) scale(0.98); }
-    to { opacity: 1; transform: none; }
-}
-
-/* 屏幕预览框光晕 + 图库 */
-.screen-frame { border-color: rgba(148,163,184,0.25); box-shadow: 0 0 0 1px rgba(148,163,184,0.08), 0 12px 32px -8px rgba(0,0,0,0.7), 0 0 32px rgba(99,102,241,0.08); }
-.gallery-item { border-radius: 12px; box-shadow: 0 2px 10px -4px rgba(0,0,0,0.5); }
-.gallery-item:hover { transform: translateY(-3px); box-shadow: 0 10px 26px -8px rgba(0,0,0,0.7); }
-.footer { color: var(--text-muted); opacity: 0.8; }
-
-/* 设备心跳监控 */
-.monitor-stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 0.9rem;
-    padding: 1.1rem 1.25rem 0.4rem;
-}
-.monitor-stats .stat-card { padding: 1rem; }
-.monitor-chart { padding: 0.8rem 1.25rem 0.4rem; }
-.monitor-chart canvas {
-    width: 100%;
-    height: 160px;
-    display: block;
-    border-radius: 10px;
-    background: rgba(255,255,255,0.02);
-    border: 1px solid rgba(148,163,184,0.1);
-}
-.chart-hint { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.4rem; text-align: center; }
-.monitor-body {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1.2rem;
-    padding: 0.8rem 1.25rem 1.25rem;
-}
-@media (max-width: 680px) {
-    .monitor-body { grid-template-columns: 1fr; }
-}
-.monitor-subtitle {
-    font-size: 0.74rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 0.5rem;
-}
-.mon-device-row, .mon-event-row {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    padding: 0.42rem 0.5rem;
-    border-radius: 8px;
-    font-size: 0.82rem;
-}
-.mon-device-row:hover, .mon-event-row:hover { background: rgba(129,140,248,0.06); }
-.mon-uptime-bar {
-    flex: 1;
-    min-width: 60px;
-    height: 6px;
-    border-radius: 4px;
-    background: rgba(148,163,184,0.14);
-    overflow: hidden;
-}
-.mon-uptime-fill {
-    height: 100%;
-    border-radius: 4px;
-    background: linear-gradient(90deg, #6366f1, #22d3ee);
-    transition: width 0.4s ease;
-}
-.mon-pct {
-    width: 48px;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-    color: var(--text-muted);
-}
-.mon-event-badge {
-    padding: 0.08rem 0.45rem;
-    border-radius: 999px;
-    font-size: 0.7rem;
-    font-weight: 600;
-    white-space: nowrap;
-}
-.mon-event-online { background: rgba(34,197,94,0.14); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
-.mon-event-offline { background: rgba(239,68,68,0.14); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
-
-/* 减少动态效果偏好 */
-@media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
-}
+${UI_CSS}
+${ADMIN_PAGE_CSS}
 </style>
 </head>
 <body>
@@ -979,6 +318,574 @@ ${nav}
     return new Response(body, { status, headers });
 }
 
+const ADMIN_PAGE_CSS = `
+/* ===== Admin console & shared relay pages ===== */
+body {
+    background-color: var(--void);
+    background-image:
+        radial-gradient(1000px 480px at 18% -14%, rgba(204, 145, 102, 0.05), transparent 60%),
+        radial-gradient(800px 420px at 88% -8%, rgba(226, 227, 233, 0.03), transparent 55%);
+    font-size: 14px;
+    letter-spacing: 0.01em;
+}
+.container { max-width: 1120px; margin: 0 auto; padding: 2.25rem 1rem 0.5rem; }
+
+/* Top navigation */
+.topnav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(8, 8, 10, 0.78);
+    backdrop-filter: blur(18px) saturate(1.3);
+    -webkit-backdrop-filter: blur(18px) saturate(1.3);
+    border-bottom: 1px solid var(--graphite);
+}
+.topnav-inner {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 0.55rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--bone);
+    text-decoration: none;
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+.brand span { color: var(--white); font-weight: 700; }
+.nav-tabs { display: flex; gap: 0.15rem; flex-wrap: wrap; }
+.nav-tab {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--steel);
+    padding: 0.42rem 0.8rem;
+    border-radius: 6px;
+    font-size: 0.86rem;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+    transition: color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+.nav-tab:hover { color: var(--bone); background: rgba(226, 227, 233, 0.05); }
+.nav-tab.active {
+    color: var(--bone);
+    background: transparent;
+    box-shadow: inset 0 -2px 0 var(--copper);
+    border-radius: 6px 6px 0 0;
+}
+/* Sub-tabs inside a page (e.g. notify: Agent 接入 / 手动发送). Must NOT reuse
+   .nav-tab, which the dashboard script binds to switchTab(tab.dataset.tab). */
+.sub-tab {
+    background: transparent;
+    border: 1px solid var(--graphite);
+    color: var(--steel);
+    padding: 0.4rem 0.9rem;
+    border-radius: var(--r-pill);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.sub-tab:hover { border-color: var(--slate); color: var(--bone); }
+.sub-tab.active {
+    background: rgba(226, 227, 233, 0.08);
+    border-color: var(--slate);
+    color: var(--white);
+}
+.topnav-actions { margin-left: auto; display: flex; gap: 0.5rem; align-items: center; }
+.nav-btn {
+    background: rgba(226, 227, 233, 0.05);
+    border-color: var(--graphite);
+    color: var(--bone);
+}
+.nav-btn:hover { background: rgba(226, 227, 233, 0.1); border-color: var(--slate); }
+
+/* Legacy nav on public pairing pages */
+.nav-bar { margin-bottom: 1.5rem; }
+.nav-link { color: var(--copper-hi); text-decoration: none; font-size: 0.9rem; }
+.nav-link:hover { text-decoration: underline; }
+
+/* Page sections (tabbed) */
+.page { display: none; }
+.page.active { display: block; }
+.page.active > * { animation: fadeUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.page.active > *:nth-child(2) { animation-delay: 0.04s; }
+.page.active > *:nth-child(3) { animation-delay: 0.08s; }
+.page.active > *:nth-child(4) { animation-delay: 0.12s; }
+.page.active > *:nth-child(5) { animation-delay: 0.16s; }
+.page.active > *:nth-child(6) { animation-delay: 0.2s; }
+@keyframes fadeUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+}
+.page-head { margin-bottom: 1.5rem; }
+.page-head h1 {
+    font-size: 1.55rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.35rem;
+    color: var(--white);
+}
+.page-desc { color: var(--fog); font-size: 0.88rem; }
+.section-title {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--steel);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin: 0 0 0.9rem;
+}
+.desc { color: var(--fog); margin-bottom: 1.5rem; font-size: 0.9rem; }
+
+/* Notice / result banners */
+.notice {
+    background: var(--copper-soft);
+    border: 1px solid rgba(204, 145, 102, 0.3);
+    color: var(--copper-hi);
+    padding: 0.85rem 1.05rem;
+    border-radius: var(--r-card);
+    margin-bottom: 1.5rem;
+    font-size: 0.9rem;
+}
+#pushResult, #hookStatus, #statusAlert, #castAlert { animation: popIn 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes popIn {
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+}
+
+/* Stats */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+.stat-card {
+    background: var(--onyx);
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-card);
+    padding: 1.2rem 1.3rem;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s ease;
+}
+.stat-card:hover { border-color: var(--slate); }
+.stat-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: var(--r-pill);
+    font-size: 1.1rem;
+    background: var(--carbon);
+    border: 1px solid var(--graphite);
+    margin-bottom: 0.85rem;
+}
+.stat-label {
+    color: var(--steel);
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    margin-bottom: 0.3rem;
+}
+.stat-value {
+    font-size: 1.9rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.03em;
+    color: var(--white);
+    line-height: 1.15;
+}
+
+/* Quick actions */
+.quick-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+.quick-card {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    background: var(--onyx);
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-card);
+    padding: 1rem 1.1rem;
+    text-decoration: none;
+    color: var(--bone);
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+.quick-card:hover { border-color: rgba(204, 145, 102, 0.45); background: rgba(204, 145, 102, 0.04); }
+.quick-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border-radius: var(--r-pill);
+    font-size: 1.25rem;
+    background: var(--carbon);
+    border: 1px solid var(--graphite);
+    flex: none;
+}
+.quick-title { font-weight: 600; font-size: 0.93rem; color: var(--white); }
+.quick-desc { color: var(--steel); font-size: 0.76rem; margin-top: 0.15rem; }
+
+/* Cards */
+.card {
+    background: var(--onyx);
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-card);
+    overflow: hidden;
+    margin-bottom: 2rem;
+    transition: border-color 0.2s ease;
+}
+.card:hover { border-color: var(--slate); }
+.card-header {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--graphite);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+.card-title { font-size: 1rem; font-weight: 600; color: var(--bone); letter-spacing: -0.01em; }
+.header-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.88rem; }
+th, td { padding: 0.8rem 1.25rem; border-bottom: 1px solid rgba(226, 227, 233, 0.07); vertical-align: top; }
+th {
+    background: transparent;
+    color: var(--steel);
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+}
+td { color: var(--mist); transition: background 0.15s ease; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(226, 227, 233, 0.025); }
+
+/* Badges & status dots */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.18rem 0.6rem;
+    border-radius: var(--r-pill);
+    font-size: 0.72rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+.badge-active { background: var(--ok-bg); color: var(--ok); border-color: var(--ok-line); }
+.badge-revoked { background: var(--err-bg); color: var(--err); border-color: var(--err-line); }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; position: relative; flex: none; }
+.dot-online { background: var(--ok); animation: pulseDot 2.4s ease infinite; }
+@keyframes pulseDot {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(126, 207, 159, 0.4); }
+    50% { box-shadow: 0 0 0 5px rgba(126, 207, 159, 0); }
+}
+.dot-offline { background: var(--ash); }
+
+/* Mono snippets */
+.code-mono {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    background: var(--carbon);
+    border: 1px solid var(--graphite);
+    padding: 0.12rem 0.4rem;
+    border-radius: 5px;
+    color: var(--mist);
+}
+
+/* Buttons */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.44rem 0.95rem;
+    border-radius: var(--r-pill);
+    font-size: 0.85rem;
+    font-weight: 550;
+    cursor: pointer;
+    border: 1px solid transparent;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.btn:active { transform: translateY(1px) scale(0.99); }
+/* scarce white solid: the one primary action of a screen */
+.btn-primary {
+    background: var(--white);
+    color: #08080a;
+    border-color: var(--white);
+    font-weight: 600;
+}
+.btn-primary:hover { background: var(--bone); border-color: var(--bone); }
+.btn-accent {
+    background: transparent;
+    color: var(--bone);
+    border-color: rgba(226, 227, 233, 0.24);
+}
+.btn-accent:hover { background: rgba(226, 227, 233, 0.06); border-color: rgba(226, 227, 233, 0.4); }
+.btn-danger {
+    background: transparent;
+    color: var(--err);
+    border-color: var(--err-line);
+}
+.btn-danger:hover { background: var(--err-bg); }
+.btn-sm { padding: 0.22rem 0.6rem; font-size: 0.75rem; }
+.btn-block { width: 100%; padding: 0.72rem; font-size: 0.95rem; margin-top: 1rem; }
+.actions-cell { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+.empty-state { padding: 2.5rem; text-align: center; color: var(--steel); }
+
+/* Pairing */
+.pair-card {
+    max-width: 420px;
+    margin: 1.25rem auto 2rem;
+    background: var(--onyx);
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-card);
+    padding: 2rem;
+}
+.form-label { display: block; margin-bottom: 0.45rem; font-weight: 550; font-size: 0.88rem; color: var(--mist); }
+.code-input {
+    width: 100%;
+    padding: 0.75rem;
+    font-size: 1.5rem;
+    letter-spacing: 0.2em;
+    text-align: center;
+    font-family: var(--font-mono);
+    background: var(--carbon);
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-card);
+    color: var(--bone);
+}
+.code-input:focus { outline: none; border-color: var(--copper); }
+
+/* Image studio */
+.image-studio {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 1.5rem;
+    padding: 1.25rem;
+}
+@media (max-width: 680px) {
+    .image-studio { grid-template-columns: 1fr; }
+}
+.preview-pane {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: var(--carbon);
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-card);
+    padding: 1rem;
+}
+.screen-frame {
+    width: 240px;
+    height: 320px;
+    border-radius: 10px;
+    background: #000;
+    border: 1px solid var(--slate);
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 10px 28px -10px rgba(0, 0, 0, 0.65);
+}
+.screen-frame canvas { width: 240px; height: 320px; display: block; }
+.screen-placeholder {
+    color: var(--smoke);
+    text-align: center;
+    font-size: 0.85rem;
+    padding: 1rem;
+}
+.upload-pane { display: flex; flex-direction: column; gap: 1rem; }
+.push-form { display: flex; flex-direction: column; gap: 1rem; padding: 1.25rem; }
+.push-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; }
+@media (max-width: 560px) {
+    .push-grid { grid-template-columns: 1fr; }
+}
+
+/* Multi-line table cells: clamp to fixed lines, hover title shows full text */
+.cell-clamp {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.4;
+    word-break: break-word;
+    white-space: normal;
+}
+.cell-clamp-1 {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
+    white-space: normal;
+}
+
+/* Hook push log table: compact rows; device/time/status/result never wrap,
+   title & content are width-limited with ellipsis; .log-table-scroll reserves
+   horizontal scrolling as a last resort */
+.hook-log-table th, .hook-log-table td { padding: 0.68rem 0.85rem; }
+.hook-log-table .td-nowrap { white-space: nowrap; }
+.hook-log-table .td-device { min-width: 170px; }
+.hook-log-table .td-device .code-mono {
+    font-size: 0.76rem;
+    padding: 0.1rem 0.35rem;
+    white-space: nowrap;
+    letter-spacing: -0.01em;
+}
+.hook-log-table .td-time { color: var(--steel); font-size: 0.76rem; white-space: nowrap; }
+.hook-log-table .td-title { min-width: 100px; max-width: 150px; }
+.hook-log-table .td-content { min-width: 180px; max-width: 340px; }
+.hook-log-table .td-status { font-size: 0.85rem; }
+.hook-log-table .td-status .dot { margin-right: 0.35rem; vertical-align: -1px; }
+.hook-log-table .td-result { min-width: 116px; }
+.log-table-scroll { overflow-x: auto; }
+.log-table-scroll::-webkit-scrollbar { height: 8px; }
+
+/* Forms */
+.form-group { display: flex; flex-direction: column; gap: 0.35rem; }
+.form-input, .form-select {
+    background: var(--carbon);
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-pill);
+    padding: 0.55rem 0.9rem;
+    color: var(--bone);
+    font-size: 0.9rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.form-input:hover, .form-select:hover { border-color: var(--slate); }
+.form-input:focus, .form-select:focus {
+    outline: none;
+    border-color: var(--copper);
+    box-shadow: 0 0 0 3px rgba(204, 145, 102, 0.12);
+}
+
+/* Gallery */
+.gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1rem;
+    padding: 1.25rem;
+}
+.gallery-item {
+    background: var(--onyx);
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-card);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: border-color 0.2s ease;
+}
+.gallery-item:hover { border-color: var(--slate); }
+.gallery-thumb {
+    width: 100%;
+    height: 180px;
+    object-fit: cover;
+    background: #000;
+}
+.gallery-info { padding: 0.75rem; display: flex; flex-direction: column; gap: 0.35rem; flex: 1; }
+.gallery-title { font-weight: 600; font-size: 0.85rem; word-break: break-all; color: var(--mist); }
+.gallery-date { font-size: 0.75rem; color: var(--ash); }
+.gallery-actions { display: flex; gap: 0.5rem; margin-top: auto; padding-top: 0.5rem; }
+
+.footer { text-align: center; color: var(--ash); font-size: 0.76rem; padding: 2.5rem 1rem 1.5rem; }
+
+/* Device heartbeat monitoring */
+.monitor-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.9rem;
+    padding: 1.1rem 1.25rem 0.4rem;
+}
+.monitor-stats .stat-card { padding: 1rem; }
+.monitor-chart { padding: 0.8rem 1.25rem 0.4rem; }
+.monitor-chart canvas {
+    width: 100%;
+    height: 160px;
+    display: block;
+    border-radius: var(--r-card);
+    background: rgba(226, 227, 233, 0.015);
+    border: 1px solid var(--graphite);
+}
+.chart-hint { font-size: 0.72rem; color: var(--ash); margin-top: 0.4rem; text-align: center; }
+.monitor-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.2rem;
+    padding: 0.8rem 1.25rem 1.25rem;
+}
+@media (max-width: 680px) {
+    .monitor-body { grid-template-columns: 1fr; }
+}
+.monitor-subtitle {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--steel);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.5rem;
+}
+.mon-device-row, .mon-event-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.42rem 0.5rem;
+    border-radius: var(--r-card);
+    font-size: 0.82rem;
+}
+.mon-device-row:hover, .mon-event-row:hover { background: rgba(226, 227, 233, 0.03); }
+.mon-uptime-bar {
+    flex: 1;
+    min-width: 60px;
+    height: 6px;
+    border-radius: var(--r-pill);
+    background: rgba(226, 227, 233, 0.09);
+    overflow: hidden;
+}
+.mon-uptime-fill {
+    height: 100%;
+    border-radius: var(--r-pill);
+    background: linear-gradient(90deg, rgba(174, 147, 87, 0.65), rgba(208, 180, 120, 0.95));
+    transition: width 0.4s ease;
+}
+.mon-pct {
+    width: 48px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--steel);
+    font-size: 0.78rem;
+}
+.mon-event-badge {
+    padding: 0.08rem 0.45rem;
+    border-radius: var(--r-pill);
+    font-size: 0.68rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.mon-event-online { background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok-line); }
+.mon-event-offline { background: var(--err-bg); color: var(--err); border: 1px solid var(--err-line); }
+
+`;
+
 function escapeHtml(value: string): string {
     return value.replaceAll(/[&<>"']/gu, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] ?? character);
 }
@@ -994,8 +901,8 @@ function renderHookLogRows(hookLogs: HookNotifyLogRow[]): string {
         const resultBadge = log.result === "sent"
             ? `<span class="badge badge-active">✓ 已送达</span>`
             : log.result === "offline"
-                ? `<span class="badge" style="color:#d29922;border:1px solid rgba(210,153,34,0.3);background:rgba(210,153,34,0.1);">● 离线</span>`
-                : `<span class="badge" style="color:#f85149;border:1px solid rgba(248,81,73,0.3);background:rgba(248,81,73,0.1);">✗ 失败</span>`;
+                ? `<span class="badge" style="color:#d9b98a;border:1px solid rgba(217,185,138,0.3);background:rgba(217,185,138,0.12);">● 离线</span>`
+                : `<span class="badge" style="color:#eb9090;border:1px solid rgba(235,144,144,0.3);background:rgba(235,144,144,0.1);">✗ 失败</span>`;
         rows += `
         <tr>
             <td class="td-nowrap td-device"><span class="code-mono">${escapeHtml(log.device_id)}</span></td>
@@ -1046,7 +953,7 @@ function renderDeviceRows(deviceList: DeviceWithOnline[]): string {
                     </form>` : ""}
                     <form method="post" action="/admin/devices/delete" onsubmit="return confirm('确定要彻底删除设备 ${escapeHtml(d.device_id)} 吗？');">
                         <input type="hidden" name="device_id" value="${escapeHtml(d.device_id)}">
-                        <button type="submit" class="btn btn-sm" style="background: #21262d; color: var(--text-muted); border: 1px solid var(--border);">删除</button>
+                        <button type="submit" class="btn btn-sm" style="background: rgba(226,227,233,0.06); color: var(--text-muted); border: 1px solid var(--border);">删除</button>
                     </form>
                 </div>
             </td>
@@ -1072,7 +979,7 @@ function renderPushLogRows(pushLogs: ApprovalLogRow[]): string {
         let badge: string;
         if (log.status === "allow") badge = `<span class="badge badge-active">✅ 已批准</span>`;
         else if (log.status === "deny") badge = `<span class="badge badge-revoked">❌ 已拒绝</span>`;
-        else badge = `<span class="badge" style="background: rgba(31,111,235,0.15); color: #58a6ff; border: 1px solid rgba(31,111,235,0.3);">⏳ 待审批</span>`;
+        else badge = `<span class="badge" style="background: rgba(204,145,102,0.13); color: #cc9166; border: 1px solid rgba(204,145,102,0.3);">⏳ 待审批</span>`;
         const resultText = log.status === "pending"
             ? "等待设备决定"
             : (reasonLabels[log.reason ?? ""] ?? log.reason ?? "—");
@@ -1317,7 +1224,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 <div class="stat-card">
                     <div class="stat-icon">⏳</div>
                     <div class="stat-label">待处理配对</div>
-                    <div class="stat-value" id="statPending" style="color: #58a6ff;">${pendingCount}</div>
+                    <div class="stat-value" id="statPending" style="color: #cc9166;">${pendingCount}</div>
                 </div>
             </div>
 
@@ -1377,7 +1284,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             <div class="card">
                 <div class="card-header">
                     <div class="card-title">远程屏幕快照与截屏 (Remote Snapshot - 240×320)</div>
-                    <div id="castStatusBadge" class="badge" style="background: rgba(110, 118, 129, 0.2); color: var(--text-muted);">
+                    <div id="castStatusBadge" class="badge" style="background: rgba(226,227,233,0.06); color: var(--text-muted);">
                         <span id="castStatusDot" class="dot dot-offline"></span> <span id="castStatusText">未连接</span>
                     </div>
                 </div>
@@ -1385,8 +1292,8 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     <div class="preview-pane">
                         <div class="screen-frame" id="castFrame">
                             <canvas id="castCanvas" width="240" height="320" style="image-rendering: pixelated;"></canvas>
-                            <div id="castPlaceholder" class="screen-placeholder" style="position: absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; background: rgba(13,17,23,0.85);">
-                                📱 板子屏幕快照<br><span style="font-size:0.75rem; color:#6e7681; margin-top:0.5rem;">点击「立即抓取屏幕快照」</span>
+                            <div id="castPlaceholder" class="screen-placeholder" style="position: absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; background: rgba(4,4,6,0.88);">
+                                📱 板子屏幕快照<br><span style="font-size:0.75rem; color:#777a88; margin-top:0.5rem;">点击「立即抓取屏幕快照」</span>
                             </div>
                         </div>
                         <div id="castMetrics" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.75rem; display: flex; gap: 0.75rem;">
@@ -1414,10 +1321,10 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                             </label>
                         </div>
                         <div style="display: flex; gap: 0.5rem;">
-                            <button type="button" class="btn" style="background: #21262d; border: 1px solid var(--border); color: var(--text); flex: 1;" onclick="downloadScreenshot()">
+                            <button type="button" class="btn" style="background: rgba(226,227,233,0.06); border: 1px solid var(--border); color: var(--text); flex: 1;" onclick="downloadScreenshot()">
                                 💾 保存高清截图 (PNG)
                             </button>
-                            <button type="button" class="btn" style="background: #21262d; border: 1px solid var(--border); color: var(--text-muted);" onclick="reconnectCastWs()">
+                            <button type="button" class="btn" style="background: rgba(226,227,233,0.06); border: 1px solid var(--border); color: var(--text-muted);" onclick="reconnectCastWs()">
                                 🔄 刷新连接
                             </button>
                         </div>
@@ -1441,7 +1348,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     <div class="preview-pane">
                         <div class="screen-frame" id="screenFrame">
                             <div class="screen-placeholder" id="placeholder">
-                                📱 240 × 320 预览<br><span style="font-size:0.75rem; color:#6e7681;">请选择要推送的图片</span>
+                                📱 240 × 320 预览<br><span style="font-size:0.75rem; color:#777a88;">请选择要推送的图片</span>
                             </div>
                             <canvas id="previewCanvas" width="240" height="320" style="display:none;"></canvas>
                         </div>
@@ -1506,7 +1413,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                             <label class="form-label">今日日程 / 备注（最多 3 行，建议英文数字）</label>
                             <textarea id="wallpaperNotes" class="form-input" rows="4" placeholder="Water plants&#10;Call mom&#10;Read book"></textarea>
                         </div>
-                        <button type="button" class="btn" style="background:#21262d;border:1px solid var(--border);" onclick="saveWallpaperNotes()">💾 保存备注</button>
+                        <button type="button" class="btn" style="background:rgba(226,227,233,0.06);border:1px solid var(--border);" onclick="saveWallpaperNotes()">💾 保存备注</button>
                         <div id="wallpaperStatus" style="display:none;padding:0.75rem;border-radius:6px;font-size:0.85rem;"></div>
                         <p class="desc" style="font-size:0.78rem;margin:0.4rem 0 0;">壁纸内容：大时钟 + 日期 + 天气（Open-Meteo 免费接口，城市在 WALLPAPER_CITY 配置）+ 备注。每小时整点自动推送一次。</p>
                     </div>
@@ -1601,7 +1508,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             <div class="card">
                 <div class="card-header">
                     <div class="card-title">📈 设备心跳监控 (24h)</div>
-                    <div id="monitorUpdatedAt" class="badge" style="background: rgba(148,163,184,0.12); color: var(--text-muted);">等待数据...</div>
+                    <div id="monitorUpdatedAt" class="badge" style="background: rgba(226,227,233,0.06); color: var(--text-muted);">等待数据...</div>
                 </div>
                 <div class="monitor-stats">
                     <div class="stat-card">
@@ -1683,14 +1590,14 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     <div class="form-group">
                         <label class="form-label">请求 Body（JSON）</label>
                         <div style="display:flex;gap:8px;align-items:flex-start;">
-                            <pre id="agentHookBody" style="flex:1;margin:0;background:rgba(13,17,23,0.75);border:1px solid rgba(110,118,129,0.4);border-radius:6px;padding:0.5rem 0.65rem;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:0.8rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;"></pre>
+                            <pre id="agentHookBody" style="flex:1;margin:0;background:rgba(8,9,12,0.85);border:1px solid rgba(46,48,56,0.9);border-radius:6px;padding:0.5rem 0.65rem;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:0.8rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;"></pre>
                             <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookBody')">📋 复制</button>
                         </div>
                         <div style="color:var(--text-muted);font-size:0.75rem;margin-top:4px;">title 最长 32、建议用 ASCII（中文标题会被过滤为 "Agent"）；content 最长 2000、支持中文，显示在设备「Kiro Passport」页面。</div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">curl 示例（复制到 agent 里直接用）</label>
-                        <pre id="agentHookCurl" style="margin:0;background:rgba(13,17,23,0.75);border:1px solid rgba(110,118,129,0.4);border-radius:6px;padding:0.5rem 0.65rem;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:0.8rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;"></pre>
+                        <pre id="agentHookCurl" style="margin:0;background:rgba(8,9,12,0.85);border:1px solid rgba(46,48,56,0.9);border-radius:6px;padding:0.5rem 0.65rem;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:0.8rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;"></pre>
                         <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookCurl')">📋 复制 curl</button>
                     </div>
                     <details style="margin-top:8px;">
@@ -1781,9 +1688,9 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     var url = notifyUrl(deviceId);
                     function show(kind, text) {
                         statusBox.style.display = "block";
-                        if (kind === "ok") { statusBox.style.background = "rgba(46,160,67,0.15)"; statusBox.style.color = "#3fb950"; }
-                        else if (kind === "warn") { statusBox.style.background = "rgba(235,179,56,0.15)"; statusBox.style.color = "#d29922"; }
-                        else { statusBox.style.background = "rgba(248,81,73,0.15)"; statusBox.style.color = "#f85149"; }
+                        if (kind === "ok") { statusBox.style.background = "rgba(126,207,159,0.12)"; statusBox.style.color = "#7ecf9f"; }
+                        else if (kind === "warn") { statusBox.style.background = "rgba(217,185,138,0.12)"; statusBox.style.color = "#d9b98a"; }
+                        else { statusBox.style.background = "rgba(235,144,144,0.12)"; statusBox.style.color = "#eb9090"; }
                         statusBox.innerHTML = text;
                     }
                     if (!deviceId) { show("err", "❌ 请先选择目标设备"); return; }
@@ -1859,7 +1766,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 function getHookTip() {
                     if (!hookTipEl) {
                         hookTipEl = document.createElement("div");
-                        hookTipEl.style.cssText = "position:fixed;z-index:9999;display:none;max-width:360px;max-height:200px;overflow:auto;padding:8px 10px;background:#161b22;border:1px solid rgba(148,163,184,0.4);border-radius:8px;color:#e6edf3;font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-word;box-shadow:0 8px 24px rgba(0,0,0,0.55);pointer-events:none;";
+                        hookTipEl.style.cssText = "position:fixed;z-index:9999;display:none;max-width:360px;max-height:200px;overflow:auto;padding:8px 10px;background:#121317;border:1px solid rgba(46,48,56,0.9);border-radius:8px;color:#e2e3e9;font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-word;box-shadow:0 8px 24px rgba(0,0,0,0.55);pointer-events:none;";
                         document.body.appendChild(hookTipEl);
                     }
                     return hookTipEl;
@@ -1983,17 +1890,17 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
 
         function updateCastStatus(status, text) {
             if (status === "connected") {
-                castStatusBadge.style.background = "rgba(46, 160, 67, 0.15)";
-                castStatusBadge.style.color = "#3fb950";
+                castStatusBadge.style.background = "rgba(126, 207, 159, 0.12)";
+                castStatusBadge.style.color = "#7ecf9f";
                 castStatusDot.className = "dot dot-online";
                 castStatusText.innerText = text || "已就绪";
             } else if (status === "receiving") {
-                castStatusBadge.style.background = "rgba(31, 111, 235, 0.15)";
-                castStatusBadge.style.color = "#58a6ff";
+                castStatusBadge.style.background = "rgba(204, 145, 102, 0.13)";
+                castStatusBadge.style.color = "#cc9166";
                 castStatusDot.className = "dot dot-online";
                 castStatusText.innerText = text || "正在传输快照...";
             } else {
-                castStatusBadge.style.background = "rgba(110, 118, 129, 0.2)";
+                castStatusBadge.style.background = "rgba(226,227,233,0.06)";
                 castStatusBadge.style.color = "var(--text-muted)";
                 castStatusDot.className = "dot dot-offline";
                 castStatusText.innerText = text || "未连接";
@@ -2129,8 +2036,8 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 const result = await res.json();
                 if (!result.sent) {
                     castAlert.style.display = "block";
-                    castAlert.style.background = "rgba(235, 179, 56, 0.15)";
-                    castAlert.style.color = "#d29922";
+                    castAlert.style.background = "rgba(217, 185, 138, 0.12)";
+                    castAlert.style.color = "#d9b98a";
                     castAlert.innerText = "⚠️ 设备可能处于离线状态，指令已尝试下发。";
                 } else {
                     castAlert.style.display = "none";
@@ -2353,9 +2260,9 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             ctx.font = "10px ui-monospace, SFMono-Regular, Consolas, monospace";
             ctx.lineWidth = 1;
             for (const gv of [0, 25, 50, 75, 100]) {
-                ctx.strokeStyle = "rgba(148,163,184,0.12)";
+                ctx.strokeStyle = "rgba(226,227,233,0.06)";
                 ctx.beginPath(); ctx.moveTo(padL, y(gv)); ctx.lineTo(cssW - padR, y(gv)); ctx.stroke();
-                ctx.fillStyle = "rgba(148,163,184,0.65)";
+                ctx.fillStyle = "#777a88";
                 ctx.fillText(gv + "%", 4, y(gv) + 3);
             }
 
@@ -2364,26 +2271,26 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             for (let i = 1; i < 24; i++) ctx.lineTo(x(i), y(hourly[i] || 0));
             ctx.lineTo(x(23), padT + h); ctx.lineTo(x(0), padT + h); ctx.closePath();
             const grad = ctx.createLinearGradient(0, padT, 0, padT + h);
-            grad.addColorStop(0, "rgba(99,102,241,0.4)");
-            grad.addColorStop(1, "rgba(99,102,241,0.02)");
+            grad.addColorStop(0, "rgba(208,180,120,0.3)");
+            grad.addColorStop(1, "rgba(208,180,120,0)");
             ctx.fillStyle = grad; ctx.fill();
 
             ctx.beginPath();
             ctx.moveTo(x(0), y(hourly[0] || 0));
             for (let i = 1; i < 24; i++) ctx.lineTo(x(i), y(hourly[i] || 0));
-            ctx.strokeStyle = "#818cf8";
+            ctx.strokeStyle = "#d0b478";
             ctx.lineWidth = 2;
             ctx.stroke();
 
             for (let i = 0; i < 24; i += 6) {
                 const t = new Date((now - (23 - i) * 3600) * 1000);
                 const label = String(t.getHours()).padStart(2, "0") + ":00";
-                ctx.fillStyle = "rgba(148,163,184,0.7)";
+                ctx.fillStyle = "#777a88";
                 ctx.fillText(label, x(i) - 14, cssH - 6);
             }
 
             if (typeof hoverIdx === "number") {
-                ctx.strokeStyle = "rgba(129,140,248,0.6)";
+                ctx.strokeStyle = "rgba(208,180,120,0.7)";
                 ctx.setLineDash([4, 4]);
                 ctx.beginPath(); ctx.moveTo(x(hoverIdx), padT); ctx.lineTo(x(hoverIdx), padT + h); ctx.stroke();
                 ctx.setLineDash([]);
@@ -2391,9 +2298,9 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 ctx.font = "10px ui-monospace, SFMono-Regular, Consolas, monospace";
                 const tw = ctx.measureText(val).width + 10;
                 const tx = Math.min(Math.max(x(hoverIdx) - tw / 2, 2), cssW - tw - 2);
-                ctx.fillStyle = "rgba(8,10,16,0.92)";
+                ctx.fillStyle = "rgba(10,10,13,0.94)";
                 ctx.fillRect(tx, 2, tw, 16);
-                ctx.fillStyle = "#c7d2fe";
+                ctx.fillStyle = "#c7c9d1";
                 ctx.fillText(val, tx + 5, 14);
             }
         }
@@ -2426,17 +2333,17 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             if (!box) return;
             box.style.display = "block";
             if (kind === "success") {
-                box.style.background = "rgba(46, 160, 67, 0.15)";
-                box.style.border = "1px solid rgba(46, 160, 67, 0.3)";
-                box.style.color = "#3fb950";
+                box.style.background = "rgba(126, 207, 159, 0.12)";
+                box.style.border = "1px solid rgba(126, 207, 159, 0.3)";
+                box.style.color = "#7ecf9f";
             } else if (kind === "error") {
-                box.style.background = "rgba(248, 81, 73, 0.15)";
-                box.style.border = "1px solid rgba(248, 81, 73, 0.3)";
-                box.style.color = "#f85149";
+                box.style.background = "rgba(235, 144, 144, 0.12)";
+                box.style.border = "1px solid rgba(235, 144, 144, 0.3)";
+                box.style.color = "#eb9090";
             } else {
-                box.style.background = "rgba(56, 139, 253, 0.1)";
-                box.style.border = "1px solid rgba(56, 139, 253, 0.3)";
-                box.style.color = "#58a6ff";
+                box.style.background = "rgba(204, 145, 102, 0.1)";
+                box.style.border = "1px solid rgba(204, 145, 102, 0.3)";
+                box.style.color = "#cc9166";
             }
             box.innerText = text;
         }
@@ -2580,20 +2487,20 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 alertBox.style.display = "block";
                 if (result.ok) {
                     if (result.online && result.sent) {
-                        alertBox.style.background = "rgba(46, 160, 67, 0.15)";
-                        alertBox.style.border = "1px solid rgba(46, 160, 67, 0.3)";
-                        alertBox.style.color = "#3fb950";
+                        alertBox.style.background = "rgba(126, 207, 159, 0.12)";
+                        alertBox.style.border = "1px solid rgba(126, 207, 159, 0.3)";
+                        alertBox.style.color = "#7ecf9f";
                         alertBox.innerHTML = "✅ <strong>推送成功！</strong> 图片已通过 WebSocket 实时推送到设备屏幕并存入历史。";
                     } else {
-                        alertBox.style.background = "rgba(235, 179, 56, 0.15)";
-                        alertBox.style.border = "1px solid rgba(235, 179, 56, 0.3)";
-                        alertBox.style.color = "#d29922";
+                        alertBox.style.background = "rgba(217, 185, 138, 0.12)";
+                        alertBox.style.border = "1px solid rgba(217, 185, 138, 0.3)";
+                        alertBox.style.color = "#d9b98a";
                         alertBox.innerHTML = "💾 <strong>图片已保存！</strong> 设备当前处于离线态，开机连接后可查看。";
                     }
                 } else {
-                    alertBox.style.background = "rgba(248, 81, 73, 0.15)";
-                    alertBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
-                    alertBox.style.color = "#f85149";
+                    alertBox.style.background = "rgba(235, 144, 144, 0.12)";
+                    alertBox.style.border = "1px solid rgba(235, 144, 144, 0.3)";
+                    alertBox.style.color = "#eb9090";
                     alertBox.innerHTML = "❌ 推送失败: " + (result.error || "未知错误");
                 }
             } catch (err) {
@@ -2628,32 +2535,32 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 statusBox.style.display = "block";
                 if (result.ok) {
                     if (result.sent) {
-                        statusBox.style.background = "rgba(46, 160, 67, 0.15)";
-                        statusBox.style.border = "1px solid rgba(46, 160, 67, 0.3)";
-                        statusBox.style.color = "#3fb950";
+                        statusBox.style.background = "rgba(126, 207, 159, 0.12)";
+                        statusBox.style.border = "1px solid rgba(126, 207, 159, 0.3)";
+                        statusBox.style.color = "#7ecf9f";
                         statusBox.innerHTML = "✅ <strong>已发送到设备</strong>（设备在线）。请到设备「Kiro Passport」页面查看。";
                     } else if (result.online) {
-                        statusBox.style.background = "rgba(235, 179, 56, 0.15)";
-                        statusBox.style.border = "1px solid rgba(235, 179, 56, 0.3)";
-                        statusBox.style.color = "#d29922";
+                        statusBox.style.background = "rgba(217, 185, 138, 0.12)";
+                        statusBox.style.border = "1px solid rgba(217, 185, 138, 0.3)";
+                        statusBox.style.color = "#d9b98a";
                         statusBox.innerHTML = "⚠️ 设备在线但未送达（可能页面未就绪）。";
                     } else {
-                        statusBox.style.background = "rgba(235, 179, 56, 0.15)";
-                        statusBox.style.border = "1px solid rgba(235, 179, 56, 0.3)";
-                        statusBox.style.color = "#d29922";
+                        statusBox.style.background = "rgba(217, 185, 138, 0.12)";
+                        statusBox.style.border = "1px solid rgba(217, 185, 138, 0.3)";
+                        statusBox.style.color = "#d9b98a";
                         statusBox.innerHTML = "⚠️ 设备当前处于<strong>离线</strong>状态。已记录到 Hook 日志，设备上线后可重发。";
                     }
                 } else {
-                    statusBox.style.background = "rgba(248, 81, 73, 0.15)";
-                    statusBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
-                    statusBox.style.color = "#f85149";
+                    statusBox.style.background = "rgba(235, 144, 144, 0.12)";
+                    statusBox.style.border = "1px solid rgba(235, 144, 144, 0.3)";
+                    statusBox.style.color = "#eb9090";
                     statusBox.innerHTML = "❌ 发送失败: " + (result.error || "未知错误");
                 }
             } catch (err) {
                 statusBox.style.display = "block";
-                statusBox.style.background = "rgba(248, 81, 73, 0.15)";
-                statusBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
-                statusBox.style.color = "#f85149";
+                statusBox.style.background = "rgba(235, 144, 144, 0.12)";
+                statusBox.style.border = "1px solid rgba(235, 144, 144, 0.3)";
+                statusBox.style.color = "#eb9090";
                 statusBox.innerHTML = "❌ 网络请求失败: " + err;
             } finally {
                 btn.disabled = false;
@@ -2686,17 +2593,17 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
         function showPushResult(kind, text) {
             pushResultBox.style.display = "block";
             if (kind === "success") {
-                pushResultBox.style.background = "rgba(46, 160, 67, 0.15)";
-                pushResultBox.style.border = "1px solid rgba(46, 160, 67, 0.3)";
-                pushResultBox.style.color = "#3fb950";
+                pushResultBox.style.background = "rgba(126, 207, 159, 0.12)";
+                pushResultBox.style.border = "1px solid rgba(126, 207, 159, 0.3)";
+                pushResultBox.style.color = "#7ecf9f";
             } else if (kind === "error") {
-                pushResultBox.style.background = "rgba(248, 81, 73, 0.15)";
-                pushResultBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
-                pushResultBox.style.color = "#f85149";
+                pushResultBox.style.background = "rgba(235, 144, 144, 0.12)";
+                pushResultBox.style.border = "1px solid rgba(235, 144, 144, 0.3)";
+                pushResultBox.style.color = "#eb9090";
             } else {
-                pushResultBox.style.background = "rgba(56, 139, 253, 0.1)";
-                pushResultBox.style.border = "1px solid rgba(56, 139, 253, 0.3)";
-                pushResultBox.style.color = "#58a6ff";
+                pushResultBox.style.background = "rgba(204, 145, 102, 0.1)";
+                pushResultBox.style.border = "1px solid rgba(204, 145, 102, 0.3)";
+                pushResultBox.style.color = "#cc9166";
             }
             pushResultBox.innerText = text;
         }
@@ -2796,32 +2703,32 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 statusBox.style.display = "block";
                 if (result.ok) {
                     if (result.sent) {
-                        statusBox.style.background = "rgba(46, 160, 67, 0.15)";
-                        statusBox.style.border = "1px solid rgba(46, 160, 67, 0.3)";
-                        statusBox.style.color = "#3fb950";
+                        statusBox.style.background = "rgba(126, 207, 159, 0.12)";
+                        statusBox.style.border = "1px solid rgba(126, 207, 159, 0.3)";
+                        statusBox.style.color = "#7ecf9f";
                         statusBox.innerHTML = "✅ <strong>已发送到设备</strong>（设备在线）。请到设备「Kiro Passport」页面查看。";
                     } else if (result.online) {
-                        statusBox.style.background = "rgba(235, 179, 56, 0.15)";
-                        statusBox.style.border = "1px solid rgba(235, 179, 56, 0.3)";
-                        statusBox.style.color = "#d29922";
+                        statusBox.style.background = "rgba(217, 185, 138, 0.12)";
+                        statusBox.style.border = "1px solid rgba(217, 185, 138, 0.3)";
+                        statusBox.style.color = "#d9b98a";
                         statusBox.innerHTML = "⚠️ 设备在线但未送达（可能页面未就绪）。";
                     } else {
-                        statusBox.style.background = "rgba(235, 179, 56, 0.15)";
-                        statusBox.style.border = "1px solid rgba(235, 179, 56, 0.3)";
-                        statusBox.style.color = "#d29922";
+                        statusBox.style.background = "rgba(217, 185, 138, 0.12)";
+                        statusBox.style.border = "1px solid rgba(217, 185, 138, 0.3)";
+                        statusBox.style.color = "#d9b98a";
                         statusBox.innerHTML = "⚠️ 设备当前处于<strong>离线</strong>状态。已记录到 Hook 日志，设备上线后可重发。";
                     }
                 } else {
-                    statusBox.style.background = "rgba(248, 81, 73, 0.15)";
-                    statusBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
-                    statusBox.style.color = "#f85149";
+                    statusBox.style.background = "rgba(235, 144, 144, 0.12)";
+                    statusBox.style.border = "1px solid rgba(235, 144, 144, 0.3)";
+                    statusBox.style.color = "#eb9090";
                     statusBox.innerHTML = "❌ 发送失败: " + (result.error || "未知错误");
                 }
             } catch (err) {
                 statusBox.style.display = "block";
-                statusBox.style.background = "rgba(248, 81, 73, 0.15)";
-                statusBox.style.border = "1px solid rgba(248, 81, 73, 0.3)";
-                statusBox.style.color = "#f85149";
+                statusBox.style.background = "rgba(235, 144, 144, 0.12)";
+                statusBox.style.border = "1px solid rgba(235, 144, 144, 0.3)";
+                statusBox.style.color = "#eb9090";
                 statusBox.innerHTML = "❌ 网络请求失败: " + err;
             } finally {
                 btn.disabled = false;
@@ -3215,7 +3122,7 @@ function adminUnauthorizedPage(): Response {
 function pairUnavailablePage(message: string, status: number): Response {
     return htmlPage("设备配对", `
         <div class="pair-card" style="text-align: center;">
-            <div class="notice" style="background: rgba(248, 81, 73, 0.1); border-color: rgba(248, 81, 73, 0.3); color: #f85149;">
+            <div class="notice" style="background: rgba(235, 144, 144, 0.1); border-color: rgba(235, 144, 144, 0.3); color: #eb9090;">
                 ${escapeHtml(message)}
             </div>
             <a href="/admin/pair" class="btn btn-primary btn-block">输入其他配对码</a>

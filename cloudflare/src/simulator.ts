@@ -1,3 +1,4 @@
+import { UI_CSS } from "./ui";
 export interface SimulatorPreset {
     id: string;
     name: string;
@@ -111,81 +112,59 @@ export function handleSimulatorPresets(): Response {
     });
 }
 
-export function simulatorPage(): Response {
-    const html = `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FoloToy AI Passport - 真实硬件在线烧录 & 模拟器</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
-<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
-<script src="https://unpkg.com/esptool-js@0.5.4/bundle.js"></script>
-<style>
-:root {
-    --bg-main: #0b0f17;
-    --bg-card: #131b26;
-    --bg-card-header: #1a2434;
-    --border-color: #223044;
-    --border-focus: #388bfd;
-    --text-primary: #e6edf3;
-    --text-muted: #8b949e;
-    --text-accent: #58a6ff;
-    --color-success: #238636;
-    --color-success-hover: #2ea043;
-    --color-danger: #da3633;
-    --color-warning: #d29922;
-    --device-casing: linear-gradient(145deg, #1e242d, #14181f);
-    --device-border: #333d4b;
-    --screen-bezel: #090c10;
-}
-* { box-sizing: border-box; margin: 0; padding: 0; }
+const SIM_PAGE_CSS = `
+/* Web simulator & flash tool page */
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: var(--bg-main);
-    color: var(--text-primary);
-    min-height: 100vh;
+    font-size: 14px;
     display: flex;
     flex-direction: column;
+    background-image: radial-gradient(1000px 500px at 85% -14%, rgba(204, 145, 102, 0.045), transparent 60%);
 }
 header {
-    background: var(--bg-card);
-    border-bottom: 1px solid var(--border-color);
-    padding: 0.85rem 1.5rem;
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    background: rgba(8, 8, 10, 0.8);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--graphite);
+    padding: 0.7rem 1.5rem;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
 }
-.brand {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
+.brand { display: flex; align-items: center; gap: 0.8rem; min-width: 0; }
 .brand-badge {
-    background: #1f6feb;
-    color: #fff;
-    font-size: 0.7rem;
-    font-weight: 700;
-    padding: 2px 7px;
-    border-radius: 4px;
-    letter-spacing: 0.5px;
+    background: transparent;
+    border: 1px solid var(--slate);
+    color: var(--copper-hi);
+    font-size: 0.62rem;
+    font-weight: 650;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    white-space: nowrap;
 }
 .brand-title {
-    font-size: 1.15rem;
-    font-weight: 600;
-    color: var(--text-primary);
+    font-size: 1.04rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: var(--white);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .header-links a {
-    color: var(--text-muted);
+    color: var(--steel);
     text-decoration: none;
     font-size: 0.85rem;
-    margin-left: 1.25rem;
+    margin-left: 1.1rem;
     transition: color 0.15s ease;
 }
-.header-links a:hover {
-    color: var(--text-accent);
-}
+.header-links a:hover { color: var(--copper-hi); }
 .main-layout {
     flex: 1;
     display: grid;
@@ -197,74 +176,70 @@ header {
     width: 100%;
 }
 @media (max-width: 1080px) {
-    .main-layout {
-        grid-template-columns: 1fr;
-    }
+    .main-layout { grid-template-columns: 1fr; }
 }
 
-/* Device Column */
-.device-col {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-}
+/* Device column */
+.device-col { display: flex; flex-direction: column; align-items: center; min-width: 0; }
 .device-wrapper {
     position: relative;
     width: 380px;
-    padding: 24px 22px;
+    max-width: 100%;
+    padding: 22px 20px;
     background: var(--device-casing);
-    border: 2px solid var(--device-border);
-    border-radius: 36px;
-    box-shadow: 0 20px 50px rgba(0,0,0,0.8), inset 0 1px 1px rgba(255,255,255,0.15), inset 0 -2px 4px rgba(0,0,0,0.6);
+    border: 1px solid var(--device-border);
+    border-radius: 30px;
+    box-shadow: 0 30px 60px -24px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 -2px 6px rgba(0, 0, 0, 0.5);
 }
 .device-top-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
     padding: 0 6px;
 }
 .led-indicator {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #3fb950;
-    box-shadow: 0 0 8px #3fb950;
+    background: var(--ok);
+    box-shadow: 0 0 8px rgba(126, 207, 159, 0.7);
     transition: all 0.3s ease;
 }
 .led-indicator.flashing {
-    background: #d29922;
-    box-shadow: 0 0 10px #d29922;
+    background: var(--warn);
+    box-shadow: 0 0 10px rgba(217, 185, 138, 0.8);
     animation: blink 0.2s infinite alternate;
 }
 .led-indicator.error {
-    background: #f85149;
-    box-shadow: 0 0 8px #f85149;
+    background: var(--err);
+    box-shadow: 0 0 8px rgba(235, 144, 144, 0.8);
 }
 @keyframes blink {
     from { opacity: 0.2; }
     to { opacity: 1; }
 }
 .device-brand-text {
-    font-size: 0.72rem;
+    font-size: 0.66rem;
     font-weight: 700;
-    letter-spacing: 1.5px;
-    color: #7d8590;
+    letter-spacing: 2.5px;
+    color: var(--steel);
     text-transform: uppercase;
 }
 .screen-housing {
     position: relative;
     width: 270px;
+    max-width: 100%;
     height: 350px;
     margin: 0 auto;
-    background: var(--screen-bezel);
-    border-radius: 14px;
-    border: 3px solid #1a202c;
+    background: #000;
+    border-radius: 16px;
+    border: 1px solid var(--slate);
     padding: 10px;
     display: flex;
     justify-content: center;
     align-items: center;
-    box-shadow: inset 0 2px 8px rgba(0,0,0,0.9);
+    box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.9);
 }
 #screen-canvas {
     width: 240px;
@@ -272,24 +247,25 @@ header {
     background: #000;
     border-radius: 4px;
     image-rendering: pixelated;
-    box-shadow: 0 0 15px rgba(56, 139, 253, 0.15);
+    box-shadow: 0 0 22px rgba(208, 180, 120, 0.09);
 }
 .device-keypad {
     display: flex;
     justify-content: space-around;
     align-items: center;
-    margin-top: 24px;
+    margin-top: 22px;
     padding: 0 10px;
 }
 .hw-btn {
     width: 78px;
     height: 52px;
-    background: linear-gradient(180deg, #2d3748 0%, #1a202c 100%);
-    border: 1px solid #4a5568;
+    background: linear-gradient(180deg, #202127, #141519 100%);
+    border: 1px solid var(--slate);
     border-radius: 12px;
-    color: #e2e8f0;
-    font-weight: 700;
-    font-size: 0.75rem;
+    color: var(--silver);
+    font-weight: 650;
+    font-size: 0.72rem;
+    font-family: inherit;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -297,21 +273,22 @@ header {
     gap: 3px;
     cursor: pointer;
     user-select: none;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.15);
-    transition: transform 0.06s ease, box-shadow 0.06s ease, background 0.1s ease;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    transition: transform 0.06s ease, box-shadow 0.06s ease, background 0.1s ease, border-color 0.1s ease;
 }
 .hw-btn:hover {
-    background: linear-gradient(180deg, #374151 0%, #202736 100%);
+    background: linear-gradient(180deg, #282a31, #191a1f 100%);
+    border-color: var(--smoke);
 }
 .hw-btn:active, .hw-btn.active {
     transform: translateY(2px);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.6), inset 0 2px 4px rgba(0,0,0,0.4);
-    background: #1a202c;
-    border-color: #388bfd;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.6), inset 0 2px 4px rgba(0, 0, 0, 0.4);
+    background: #191a1f;
+    border-color: var(--copper);
 }
 .hw-btn-hint {
-    font-size: 0.62rem;
-    color: #94a3b8;
+    font-size: 0.6rem;
+    color: var(--steel);
     font-weight: normal;
 }
 .device-bottom-ports {
@@ -324,334 +301,323 @@ header {
 .port-slot {
     width: 32px;
     height: 7px;
-    background: #090c10;
-    border: 1px solid #2d3748;
-    border-radius: 3px;
+    background: #05060a;
+    border: 1px solid var(--slate);
+    border-radius: 4px;
 }
 
-/* Hardware Specs Table */
+/* Hardware specs table */
 .hw-specs-card {
     width: 380px;
+    max-width: 100%;
     margin-top: 1rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
+    background: var(--onyx);
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-card);
     padding: 0.85rem 1rem;
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--fog);
 }
 .hw-specs-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.4rem;
-    margin-top: 0.4rem;
+    margin-top: 0.5rem;
 }
 .hw-specs-grid div {
-    background: #0b0f17;
+    background: rgba(226, 227, 233, 0.03);
+    border: 1px solid rgba(226, 227, 233, 0.04);
     padding: 4px 6px;
-    border-radius: 4px;
+    border-radius: 6px;
+    color: var(--steel);
 }
-.hw-specs-grid b {
-    color: var(--text-accent);
-}
+.hw-specs-grid b { color: var(--bone); font-weight: 600; }
 
-/* Workspace Column */
-.workspace-col {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-}
+/* Workspace column */
+.workspace-col { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
 .tabs-nav {
     display: flex;
-    gap: 0.5rem;
-    border-bottom: 1px solid var(--border-color);
-    padding-bottom: 0.5rem;
+    gap: 0.4rem;
+    border-bottom: 1px solid var(--graphite);
+    padding-bottom: 0.1rem;
+    flex-wrap: wrap;
 }
 .tab-btn {
     background: transparent;
-    border: none;
-    color: var(--text-muted);
+    border: 1px solid transparent;
+    color: var(--steel);
     font-size: 0.9rem;
     font-weight: 500;
     padding: 0.5rem 1rem;
     border-radius: 6px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
-.tab-btn:hover {
-    color: var(--text-primary);
-    background: rgba(255,255,255,0.05);
-}
+.tab-btn:hover { color: var(--bone); background: rgba(226, 227, 233, 0.05); }
 .tab-btn.active {
-    color: var(--text-accent);
-    background: #162234;
+    color: var(--bone);
+    box-shadow: inset 0 -2px 0 var(--copper);
+    border-radius: 6px 6px 0 0;
     font-weight: 600;
 }
-.tab-pane {
-    display: none;
-}
-.tab-pane.active {
-    display: block;
+.tab-pane { display: none; }
+.tab-pane.active { display: block; animation: pop 0.25s ease; }
+@keyframes pop {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
 }
 
-/* Flasher Panel */
+/* Flasher panel cards */
 .card-box {
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
+    background: var(--onyx);
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-card);
     overflow: hidden;
     margin-bottom: 1.25rem;
+    transition: border-color 0.2s ease;
 }
+.card-box:hover { border-color: var(--slate); }
 .card-box-header {
-    background: var(--bg-card-header);
-    padding: 0.75rem 1.25rem;
+    background: rgba(226, 227, 233, 0.02);
+    padding: 0.72rem 1.25rem;
     font-size: 0.9rem;
     font-weight: 600;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-bottom: 1px solid var(--border-color);
+    gap: 0.75rem;
+    border-bottom: 1px solid var(--graphite);
+    color: var(--bone);
 }
-.card-box-body {
-    padding: 1.25rem;
-}
-.form-group {
-    margin-bottom: 1rem;
-}
+.card-box-body { padding: 1.25rem; }
+.form-group { margin-bottom: 1rem; }
 .form-label {
     display: block;
-    font-size: 0.8rem;
-    color: var(--text-muted);
+    font-size: 0.78rem;
+    color: var(--fog);
     margin-bottom: 0.4rem;
 }
 .form-control {
     width: 100%;
-    background: #0b0f17;
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    padding: 0.6rem 0.85rem;
-    color: var(--text-primary);
+    background: var(--carbon);
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-pill);
+    padding: 0.58rem 0.95rem;
+    color: var(--bone);
     font-size: 0.85rem;
     font-family: inherit;
     outline: none;
-    transition: border-color 0.15s ease;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
+.form-control::placeholder { color: var(--ash); }
 .form-control:focus {
-    border-color: var(--border-focus);
+    border-color: rgba(204, 145, 102, 0.6);
+    box-shadow: 0 0 0 3px rgba(204, 145, 102, 0.12);
 }
 .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    padding: 0.6rem 1.15rem;
+    padding: 0.58rem 1.2rem;
     font-size: 0.85rem;
     font-weight: 600;
-    border-radius: 6px;
+    border-radius: var(--r-pill);
     cursor: pointer;
     border: 1px solid transparent;
+    white-space: nowrap;
     transition: all 0.15s ease;
+    font-family: inherit;
 }
+.btn:active { transform: translateY(1px) scale(0.99); }
 .btn-primary {
-    background: var(--color-success);
-    color: #fff;
+    background: var(--white);
+    color: #08080a;
+    border-color: var(--white);
 }
-.btn-primary:hover {
-    background: var(--color-success-hover);
-}
+.btn-primary:hover { background: var(--bone); border-color: var(--bone); }
 .btn-secondary {
-    background: #21262d;
-    border-color: var(--border-color);
-    color: var(--text-primary);
+    background: transparent;
+    border-color: var(--slate);
+    color: var(--bone);
 }
-.btn-secondary:hover {
-    background: #30363d;
-}
+.btn-secondary:hover { background: rgba(226, 227, 233, 0.08); border-color: var(--smoke); }
 .btn-accent {
-    background: #1f6feb;
-    color: #fff;
+    background: transparent;
+    border-color: rgba(226, 227, 233, 0.24);
+    color: var(--bone);
 }
-.btn-accent:hover {
-    background: #388bfd;
-}
+.btn-accent:hover { background: rgba(226, 227, 233, 0.06); border-color: rgba(226, 227, 233, 0.4); }
 .btn-danger {
-    background: var(--color-danger);
-    color: #fff;
+    background: transparent;
+    border-color: var(--err-line);
+    color: var(--err);
 }
-.input-btn-group {
-    display: flex;
-    gap: 0.5rem;
-}
+.btn-danger:hover { background: var(--err-bg); }
+.btn-sm { padding: 0.3rem 0.75rem; font-size: 0.75rem; }
+.input-btn-group { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.input-btn-group .form-control { flex: 1; min-width: 220px; }
 
-/* Drag Drop Zone */
+/* Drag & drop zone */
 .dropzone {
-    border: 2px dashed var(--border-color);
-    border-radius: 8px;
+    border: 1.5px dashed var(--slate);
+    border-radius: var(--r-card);
     padding: 1.5rem 1rem;
     text-align: center;
     cursor: pointer;
-    background: rgba(11, 15, 23, 0.4);
-    transition: all 0.2s ease;
+    background: rgba(226, 227, 233, 0.015);
+    transition: border-color 0.2s ease, background 0.2s ease;
 }
 .dropzone:hover, .dropzone.dragover {
-    border-color: var(--border-focus);
-    background: rgba(56, 139, 253, 0.06);
+    border-color: var(--copper);
+    background: rgba(204, 145, 102, 0.05);
 }
-.dropzone-icon {
-    font-size: 1.75rem;
-    margin-bottom: 0.5rem;
-    color: var(--text-muted);
-}
-.dropzone-text {
-    font-size: 0.85rem;
-    color: var(--text-primary);
-}
-.dropzone-subtext {
-    font-size: 0.72rem;
-    color: var(--text-muted);
-    margin-top: 0.25rem;
-}
+.dropzone-icon { font-size: 1.75rem; margin-bottom: 0.5rem; }
+.dropzone-text { font-size: 0.85rem; color: var(--bone); }
+.dropzone-subtext { font-size: 0.72rem; color: var(--steel); margin-top: 0.25rem; }
+.dropzone code { background: var(--carbon); border: 1px solid var(--graphite); padding: 0.05rem 0.35rem; border-radius: 5px; color: var(--copper-hi); font-size: 0.78em; }
 
-/* Preset Cards */
+/* Preset cards */
 .preset-list {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 0.85rem;
 }
 .preset-card {
-    background: #0e141e;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
+    background: var(--onyx);
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-card);
     padding: 0.85rem 1rem;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    transition: border-color 0.15s ease, transform 0.15s ease;
+    gap: 0.75rem;
+    transition: border-color 0.15s ease;
 }
-.preset-card:hover {
-    border-color: #388bfd;
-    transform: translateY(-2px);
-}
-.preset-title {
-    font-size: 0.9rem;
-    font-weight: 600;
-    margin-bottom: 0.25rem;
-    color: var(--text-primary);
-}
-.preset-desc {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    margin-bottom: 0.75rem;
-    line-height: 1.4;
-}
+.preset-card:hover { border-color: rgba(204, 145, 102, 0.45); }
+.preset-title { font-size: 0.9rem; font-weight: 600; color: var(--white); margin-bottom: 0.25rem; }
+.preset-desc { font-size: 0.75rem; color: var(--steel); line-height: 1.45; }
 .preset-meta {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 0.5rem;
     margin-top: auto;
+    flex-wrap: wrap;
 }
 .preset-badge {
-    background: #21262d;
-    color: var(--text-accent);
+    background: var(--carbon);
+    border: 1px solid var(--graphite);
+    color: var(--mist);
     font-size: 0.68rem;
-    padding: 2px 6px;
-    border-radius: 4px;
+    font-weight: 600;
+    padding: 2px 9px;
+    border-radius: var(--r-pill);
 }
 
-/* Progress bar */
-.flash-progress-wrap {
-    margin-top: 1rem;
-    display: none;
-}
+/* Flash progress */
+.flash-progress-wrap { margin-top: 1rem; display: none; }
 .flash-progress-bar {
-    height: 8px;
-    background: #21262d;
-    border-radius: 4px;
+    height: 6px;
+    background: rgba(226, 227, 233, 0.09);
+    border-radius: var(--r-pill);
     overflow: hidden;
     margin-bottom: 0.5rem;
 }
 .flash-progress-inner {
     height: 100%;
     width: 0%;
-    background: linear-gradient(90deg, #1f6feb, #388bfd);
+    background: linear-gradient(90deg, var(--gold), var(--gold-hi));
     transition: width 0.1s ease;
 }
 .flash-status-text {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--steel);
     display: flex;
     justify-content: space-between;
 }
 
-/* Terminal View */
+/* Terminal view */
 .terminal-container {
-    background: #05070a;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
+    background: #05060a;
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-card);
     padding: 8px;
     height: 480px;
 }
-#terminal-wrapper {
-    height: 100%;
-    width: 100%;
-}
+#terminal-wrapper { height: 100%; width: 100%; }
 .terminal-actions {
     display: flex;
     gap: 0.5rem;
     margin-bottom: 0.75rem;
     align-items: center;
+    flex-wrap: wrap;
 }
 
-/* Wokwi Hardware Sandbox Embed */
+/* Wokwi hardware sandbox embed */
 .wokwi-frame-container {
     width: 100%;
     height: 540px;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border: 1px solid var(--graphite);
+    border-radius: var(--r-card);
     overflow: hidden;
     background: #000;
 }
-.wokwi-frame {
-    width: 100%;
-    height: 100%;
-    border: none;
-}
+.wokwi-frame { width: 100%; height: 100%; border: none; }
 
-/* Binary Info Banner */
+/* Binary info banner */
 .binary-info-banner {
-    background: #162234;
-    border: 1px solid #1f6feb;
-    border-radius: 8px;
+    background: rgba(204, 145, 102, 0.06);
+    border: 1px solid rgba(204, 145, 102, 0.32);
+    border-radius: var(--r-card);
     padding: 0.75rem 1rem;
     margin-bottom: 1rem;
     display: none;
     font-size: 0.8rem;
 }
-.binary-info-banner.active {
-    display: block;
-}
+.binary-info-banner.active { display: block; }
 .binary-info-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 0.5rem;
-    margin-top: 0.4rem;
+    margin-top: 0.5rem;
 }
 .binary-info-item {
-    background: #0b0f17;
+    background: rgba(226, 227, 233, 0.03);
+    border: 1px solid rgba(226, 227, 233, 0.05);
     padding: 0.35rem 0.6rem;
-    border-radius: 4px;
+    border-radius: 6px;
+    color: var(--mist);
 }
-
+.binary-info-item b { color: var(--bone); font-weight: 600; }
 .real-hardware-box {
-    background: linear-gradient(145deg, #182333, #0f1824);
-    border: 1px solid #238636;
-    border-radius: 8px;
+    background: rgba(126, 207, 159, 0.04);
+    border: 1px solid rgba(126, 207, 159, 0.28);
+    border-radius: var(--r-card);
     padding: 1.1rem;
     margin-top: 1rem;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
 }
+`;
+
+export function simulatorPage(): Response {
+    const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FoloToy AI Passport - 真实硬件在线烧录 & 模拟器</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<script src="https://unpkg.com/esptool-js@0.5.4/bundle.js"></script>
+<style>
+${UI_CSS}
+${SIM_PAGE_CSS}
 </style>
 </head>
 <body>
@@ -703,9 +669,9 @@ header {
         </div>
 
         <div class="hw-specs-card">
-            <div style="font-weight: 600; color: #c9d1d9; display: flex; justify-content: space-between;">
+            <div style="font-weight: 600; color: var(--bone); display: flex; justify-content: space-between;">
                 <span>板级物理参数 (bsp_pins.h)</span>
-                <span style="color:#58a6ff;">ESP32-C3</span>
+                <span style="color:var(--copper-hi);">ESP32-C3</span>
             </div>
             <div class="hw-specs-grid">
                 <div>LCD: <b>ST7789P3 240x320</b></div>
@@ -732,12 +698,12 @@ header {
         <div class="tab-pane active" id="tab-flasher">
             <!-- Binary Info Banner -->
             <div class="binary-info-banner" id="binary-info-banner">
-                <div style="font-weight:600; color:#58a6ff;">🔍 正在加载固件 ELF/Image 解析信息</div>
+                <div style="font-weight:600; color:var(--copper-hi);">🔍 正在加载固件 ELF/Image 解析信息</div>
                 <div class="binary-info-grid">
-                    <div class="binary-info-item"><span style="color:#8b949e;">工程:</span> <b id="bin-proj-name">--</b></div>
-                    <div class="binary-info-item"><span style="color:#8b949e;">版本:</span> <b id="bin-proj-ver">--</b></div>
-                    <div class="binary-info-item"><span style="color:#8b949e;">IDF:</span> <b id="bin-idf-ver">--</b></div>
-                    <div class="binary-info-item"><span style="color:#8b949e;">大小:</span> <b id="bin-app-size">--</b></div>
+                    <div class="binary-info-item"><span style="color:var(--steel);">工程:</span> <b id="bin-proj-name">--</b></div>
+                    <div class="binary-info-item"><span style="color:var(--steel);">版本:</span> <b id="bin-proj-ver">--</b></div>
+                    <div class="binary-info-item"><span style="color:var(--steel);">IDF:</span> <b id="bin-idf-ver">--</b></div>
+                    <div class="binary-info-item"><span style="color:var(--steel);">大小:</span> <b id="bin-app-size">--</b></div>
                 </div>
             </div>
 
@@ -769,8 +735,8 @@ header {
                     <!-- Web Serial Real Flash Box -->
                     <div class="real-hardware-box">
                         <div>
-                            <div style="font-weight:600; color:#3fb950; margin-bottom:3px;">🔌 真实烧录到物理开发板 (Web Serial API)</div>
-                            <div style="font-size:0.75rem; color:#8b949e;">使用 USB Type-C 连接真实 FoloToy AI Passport 开发板，以 460800 波特率直接写入 0x0 Flash</div>
+                            <div style="font-weight:600; color:var(--ok); margin-bottom:3px;">🔌 真实烧录到物理开发板 (Web Serial API)</div>
+                            <div style="font-size:0.75rem; color:var(--steel);">使用 USB Type-C 连接真实 FoloToy AI Passport 开发板，以 460800 波特率直接写入 0x0 Flash</div>
                         </div>
                         <button class="btn btn-primary" id="btn-web-serial-flash">🔌 真实硬件 USB 烧录</button>
                     </div>
@@ -857,17 +823,17 @@ const state = {
 // Initialize Terminal (xterm.js)
 const term = new Terminal({
     theme: {
-        background: "#05070a",
-        foreground: "#d1d5db",
-        cursor: "#58a6ff",
-        black: "#21262d",
-        red: "#f85149",
-        green: "#3fb950",
-        yellow: "#d29922",
-        blue: "#58a6ff",
-        magenta: "#bc8cff",
-        cyan: "#39c5cf",
-        white: "#b1bac4"
+        background: "#0a0b0e",
+        foreground: "#c9ccd4",
+        cursor: "#e0b28c",
+        black: "#1c1d22",
+        red: "#eb9090",
+        green: "#7ecf9f",
+        yellow: "#d9b98a",
+        blue: "#9aa4c9",
+        magenta: "#c9a0c6",
+        cyan: "#8fc9cf",
+        white: "#b7bcc6"
     },
     fontFamily: "Menlo, Monaco, 'Courier New', monospace",
     fontSize: 12,
@@ -913,31 +879,31 @@ requestAnimationFrame(simLoop);
 
 // Screen Renderer for arbitrary bin
 function renderScreen(now) {
-    ctx.fillStyle = "#0c1017";
+    ctx.fillStyle = "#0a0b0e";
     ctx.fillRect(0, 0, 240, 320);
 
     // Header bar
-    ctx.fillStyle = "#161d27";
+    ctx.fillStyle = "#121317";
     ctx.fillRect(0, 0, 240, 26);
-    ctx.fillStyle = "#58a6ff";
+    ctx.fillStyle = "#c7c9d1";
     ctx.font = "bold 11px sans-serif";
     ctx.textAlign = "left";
     ctx.fillText("AI Passport - 固件在线运行", 8, 17);
 
-    ctx.fillStyle = "#3fb950";
+    ctx.fillStyle = "#7ecf9f";
     ctx.font = "10px sans-serif";
     ctx.textAlign = "right";
     ctx.fillText("87% 🔋", 232, 17);
 
     // Frame content
-    ctx.fillStyle = "#131b26";
+    ctx.fillStyle = "#0e0f13";
     ctx.beginPath();
     ctx.roundRect(14, 38, 212, 266, 8);
     ctx.fill();
-    ctx.strokeStyle = "#223044";
+    ctx.strokeStyle = "#2e3038";
     ctx.stroke();
 
-    ctx.fillStyle = "#3fb950";
+    ctx.fillStyle = "#7ecf9f";
     ctx.font = "bold 13px sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("● 固件已动态加载就绪", 120, 85);
@@ -946,23 +912,23 @@ function renderScreen(now) {
     ctx.font = "bold 13.5px sans-serif";
     ctx.fillText(state.parsedMeta.projName, 120, 120);
 
-    ctx.fillStyle = "#8b949e";
+    ctx.fillStyle = "#9194a1";
     ctx.font = "11px sans-serif";
     ctx.fillText(\`版本: \${state.parsedMeta.version}  IDF: \${state.parsedMeta.idfVer}\`, 120, 145);
     ctx.fillText(\`二进制大小: \${state.parsedMeta.sizeKb} KB\`, 120, 168);
 
-    ctx.strokeStyle = "#223044";
+    ctx.strokeStyle = "#2e3038";
     ctx.beginPath();
     ctx.moveTo(30, 190);
     ctx.lineTo(210, 190);
     ctx.stroke();
 
-    ctx.fillStyle = "#58a6ff";
+    ctx.fillStyle = "#cc9166";
     ctx.font = "11.5px sans-serif";
     ctx.fillText("ST7789P3 240x320 SPI2 @ 40MHz", 120, 220);
     ctx.fillText("ESP32-C3 RV32IMC @ 160MHz", 120, 240);
 
-    ctx.fillStyle = "#3fb950";
+    ctx.fillStyle = "#7ecf9f";
     ctx.font = "bold 11px sans-serif";
     ctx.fillText("可点击下方「真实硬件 USB 烧录」", 120, 275);
 }
