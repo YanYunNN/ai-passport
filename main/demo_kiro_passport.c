@@ -26,9 +26,20 @@ static lv_timer_t *s_refresh_timer;
 /* 是否允许 UP/DOWN 翻页。 */
 static bool s_paged_content = false;
 
-/* 记录当前已渲染的正文与标题，避免 300ms 刷新打断用户滚动位置。 */
-static char s_displayed_body[256] = {0};
-static char s_displayed_title[64] = {0};
+/* 记录当前已渲染的正文与标题哈希，避免 300ms 刷新打断用户滚动位置。
+ * 使用 32 位哈希彻底支持任意长度长文本（防止 256 字节截断导致每次刷新都重置滚动位置）。 */
+static uint32_t s_displayed_body_hash = 0;
+static uint32_t s_displayed_title_hash = 0;
+
+static uint32_t str_hash(const char *s)
+{
+    if (!s || !s[0]) return 0;
+    uint32_t hash = 5381;
+    while (*s) {
+        hash = ((hash << 5) + hash) + (uint8_t)(*s++);
+    }
+    return hash ? hash : 1;
+}
 
 /* 最近一次已显示过的通知版本；用于判断是否有更新的通知需要展示。 */
 static uint32_t s_displayed_notify_version = 0;
@@ -60,15 +71,17 @@ static void set_request_paged(const char *title, const char *body, uint32_t titl
     const char *safe_body = body ? body : "";
 
     lv_obj_set_style_text_color(s_request_title, lv_color_hex(title_color), 0);
-    if (strcmp(s_displayed_title, safe_title) != 0) {
-        snprintf(s_displayed_title, sizeof(s_displayed_title), "%s", safe_title);
+    uint32_t title_hash = str_hash(safe_title);
+    if (s_displayed_title_hash != title_hash) {
+        s_displayed_title_hash = title_hash;
         lv_label_set_text(s_request_title, safe_title);
     }
 
     if (safe_body[0]) {
         lv_obj_clear_flag(s_request_cont, LV_OBJ_FLAG_HIDDEN);
-        if (strcmp(s_displayed_body, safe_body) != 0) {
-            snprintf(s_displayed_body, sizeof(s_displayed_body), "%s", safe_body);
+        uint32_t body_hash = str_hash(safe_body);
+        if (s_displayed_body_hash != body_hash) {
+            s_displayed_body_hash = body_hash;
             lv_label_set_text(s_request, safe_body);
             lv_obj_set_height(s_request, LV_SIZE_CONTENT);
             lv_obj_update_layout(s_request);
@@ -76,7 +89,7 @@ static void set_request_paged(const char *title, const char *body, uint32_t titl
             lv_obj_scroll_to_y(s_request_cont, 0, LV_ANIM_OFF);
         }
     } else {
-        s_displayed_body[0] = '\0';
+        s_displayed_body_hash = 0;
         lv_obj_add_flag(s_request_cont, LV_OBJ_FLAG_HIDDEN);
     }
 }
@@ -84,7 +97,7 @@ static void set_request_paged(const char *title, const char *body, uint32_t titl
 static void page_scroll(int32_t delta_y)
 {
     if (s_request_cont) {
-        lv_obj_scroll_by_bounded(s_request_cont, 0, delta_y, LV_ANIM_OFF);
+        lv_obj_scroll_by_bounded(s_request_cont, 0, delta_y, LV_ANIM_ON);
     }
 }
 
@@ -104,11 +117,10 @@ static void refresh_page(lv_timer_t *timer)
 
     kiro_passport_snapshot_t snapshot;
     kiro_passport_get_snapshot(&snapshot);
-    lv_label_set_text(s_connection, connection_text(&snapshot));
-
     kiro_passport_notify_info_t notify;
 
     if (snapshot.pending) {
+        lv_label_set_text(s_connection, connection_text(&snapshot));
         /* 审批模式：展示待审批请求的工具与摘要，结合吉祥物跳跃。 */
         ui_pixel_mascot_stop_bounce(s_mascot);
         lv_label_set_text(s_state, "APPROVAL REQUIRED");
@@ -119,40 +131,48 @@ static void refresh_page(lv_timer_t *timer)
         s_paged_content = false; /* 审批交互不吃翻页键，避免和 Allow/Deny 冲突 */
         mascot_nudge_pending(&snapshot);
     } else if (kiro_passport_network_get_notify(&notify) && notify.present) {
-        /* 有待显示的通知：持续显示，直到用户按 OK 关闭/已读（dismiss 会清 present）。
-         * version 只用于记录当前已展示的通知，避免把即将消失的通知顶掉。 */
+        /* 有通知时：隐藏 Relay ready，避免打扰通知展示，保持界面清爽。 */
+        lv_label_set_text(s_connection, "");
         s_displayed_notify_version = notify.version;
         lv_label_set_text(s_state, notify.title);
         set_request_paged(NULL, notify.content, UI_SYSTEM_TEXT);
-        lv_label_set_text(s_hint, "OK: Read   UP/DOWN: Page");
         s_paged_content = true;
-        /* 新消息推送提醒：小机器人持续跳动，直到按 OK 确认已读 */
-        ui_pixel_mascot_start_bounce(s_mascot);
+        if (!notify.read) {
+            /* 未读新消息推送提醒：小机器人持续跳动，单行按键提示 */
+            lv_label_set_text(s_hint, "OK: Read   UP/DN: Page");
+            ui_pixel_mascot_start_bounce(s_mascot);
+        } else {
+            /* 已按 OK 确认已读：小机器人停跳落地，内容保留，单行按键提示 */
+            lv_label_set_text(s_hint, "Hold OK: Back   UP/DN: Page");
+            ui_pixel_mascot_stop_bounce(s_mascot);
+        }
     } else if (snapshot.decision[0]) {
+        lv_label_set_text(s_connection, connection_text(&snapshot));
         ui_pixel_mascot_stop_bounce(s_mascot);
         lv_label_set_text(s_state, state_text(&snapshot));
         set_request_paged("DECISION",
                           strcmp(snapshot.decision, "allow") == 0 ? "Approved on Passport"
                                                                   : "Denied on Passport",
                           UI_SYSTEM_ACCENT);
-        lv_label_set_text(s_hint, "Long OK: Back to menu");
+        lv_label_set_text(s_hint, "Hold OK: Back to menu");
         s_paged_content = true;
     } else {
+        lv_label_set_text(s_connection, connection_text(&snapshot));
         ui_pixel_mascot_stop_bounce(s_mascot);
         lv_label_set_text(s_state, state_text(&snapshot));
         set_request_paged("KIRO GUARD",
                           "Monitors high-risk AI tool calls.\n"
                           "Tool requests arrive here for approval.",
                           UI_SYSTEM_ACCENT);
-        lv_label_set_text(s_hint, "Long OK: Back to menu");
+        lv_label_set_text(s_hint, "Hold OK: Back to menu");
         s_paged_content = true;
     }
 }
 
 void demo_kiro_passport_enter(void)
 {
-    s_displayed_body[0] = '\0';
-    s_displayed_title[0] = '\0';
+    s_displayed_body_hash = 0;
+    s_displayed_title_hash = 0;
 
     s_screen = ui_system_screen_create();
 
@@ -194,6 +214,9 @@ void demo_kiro_passport_enter(void)
     lv_obj_set_style_border_width(s_request_cont, 0, 0);
     lv_obj_set_style_pad_all(s_request_cont, 0, 0);
     lv_obj_add_flag(s_request_cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_request_cont, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    lv_obj_remove_flag(s_request_cont, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    lv_obj_set_scroll_dir(s_request_cont, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(s_request_cont, LV_SCROLLBAR_MODE_AUTO);
 
     s_request = ui_system_label(s_request_cont, "", &ui_font_noto_sc_14,
@@ -203,11 +226,12 @@ void demo_kiro_passport_enter(void)
     lv_obj_set_style_text_line_space(s_request, 4, 0);
     lv_obj_set_pos(s_request, 0, 0);
 
-    s_hint = ui_system_label(s_screen, "Long OK: Back to menu", &ui_font_noto_sc_14,
+    s_hint = ui_system_label(s_screen, "Hold OK: Back to menu", &ui_font_noto_sc_14,
                              UI_SYSTEM_MUTED);
-    lv_obj_set_width(s_hint, 208);
+    lv_obj_set_width(s_hint, 240);
+    lv_label_set_long_mode(s_hint, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(s_hint, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_pos(s_hint, 16, 284);
+    lv_obj_set_pos(s_hint, 0, 284);
 
     s_refresh_timer = lv_timer_create(refresh_page, 300, NULL);
     refresh_page(NULL);
@@ -233,40 +257,43 @@ void demo_kiro_passport_exit(void)
     s_request = NULL;
     s_hint = NULL;
     s_paged_content = false;
-    s_displayed_body[0] = '\0';
-    s_displayed_title[0] = '\0';
+    s_displayed_body_hash = 0;
+    s_displayed_title_hash = 0;
 }
 
 void demo_kiro_passport_key(bsp_btn_t btn, bsp_btn_ev_t event)
 {
-    if (event != BSP_BTN_CLICK) return;
+    if (event != BSP_BTN_CLICK && event != BSP_BTN_HOLD) return;
 
     static kiro_passport_snapshot_t snapshot;
     kiro_passport_get_snapshot(&snapshot);
 
-    /* 无待审批请求时，OK 键用于已读并关闭当前显示的通知；待审批时仍走审批流程。 */
-    if (!snapshot.pending && btn == BSP_BTN_OK) {
-        if (kiro_passport_network_has_notify()) {
-            ESP_LOGI(TAG, "已读通知，停止跳动");
-            kiro_passport_network_clear_notify();
+    /* 无待审批请求时，OK 键用于已读通知并平稳停跳，保留通知内容显示。仅响应单次点击。 */
+    if (!snapshot.pending && btn == BSP_BTN_OK && event == BSP_BTN_CLICK) {
+        if (kiro_passport_network_has_unread_notify()) {
+            ESP_LOGI(TAG, "已读通知，机器人停跳落地，保持内容显示");
+            kiro_passport_network_mark_notify_read();
             ui_pixel_mascot_stop_bounce(s_mascot);
             if (s_refresh_timer) lv_timer_ready(s_refresh_timer);
             return;
         }
     }
 
-    /* 长正文（如通知）支持 UP/DOWN 上下翻页；审批态不进入此处。 */
+    /* 长正文（如通知）支持 UP/DOWN 上下翻页：
+     * - 单击：步进 72 像素（4 行，占容器 ~80% 高度，保留 1 行视觉衔接上下文），大幅减少按键次数；
+     * - 长按：支持 BSP_BTN_HOLD 连发平滑快翻（每次 54 像素 / 3 行），按住即可快速滑读长消息。 */
     if (s_paged_content) {
+        int32_t step = (event == BSP_BTN_HOLD) ? 54 : 72;
         if (btn == BSP_BTN_UP) {
-            page_scroll(36); /* 上一页/向上滚动 */
+            page_scroll(step); /* 上一页/向上滚动 */
             return;
         } else if (btn == BSP_BTN_DOWN) {
-            page_scroll(-36); /* 下一页/向下滚动 */
+            page_scroll(-step); /* 下一页/向下滚动 */
             return;
         }
     }
 
-    if (!snapshot.pending) return;
+    if (!snapshot.pending || event != BSP_BTN_CLICK) return;
 
     if (btn == BSP_BTN_OK) {
         ESP_LOGI(TAG, "批准 Kiro 请求 %s", snapshot.request_id);

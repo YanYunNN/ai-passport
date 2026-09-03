@@ -78,15 +78,22 @@ typedef struct {
     char content[900];
     uint32_t version; /* 每次收到新通知递增 */
     bool present;
+    bool read;        /* 用户是否已按 OK 确认已读 */
 } kiro_passport_notify_info_t;
 
 /* 获取最近一次的通知快照，若无已接收通知返回 false */
 bool kiro_passport_network_get_notify(kiro_passport_notify_info_t *out_info);
 
-/* 快速检查当前是否存在未读/未关闭的通知（轻量，不消耗调用栈空间） */
+/* 快速检查当前是否存在有效通知（轻量，不消耗调用栈空间） */
 bool kiro_passport_network_has_notify(void);
 
-/* 清除当前通知的 present 标志（version 保持不变），用于用户关闭通知 */
+/* 快速检查当前是否存在未读通知（present && !read） */
+bool kiro_passport_network_has_unread_notify(void);
+
+/* 标记当前通知为已读（机器人停跳，但通知内容保持在屏幕上） */
+void kiro_passport_network_mark_notify_read(void);
+
+/* 清除当前通知的 present 标志（version 保持不变），用于完全移除通知 */
 void kiro_passport_network_clear_notify(void);
 
 /* 发送自定义文本消息到已连接的 WebSocket (成功返回发送字节数，失败返回 -1) */

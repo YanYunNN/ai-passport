@@ -44,17 +44,17 @@ static lv_timer_t *s_menu_timer;
 
 static void menu_refresh(void)
 {
-    bool has_notify = kiro_passport_network_has_notify();
+    bool has_unread = kiro_passport_network_has_unread_notify();
 
     for (size_t i = 0; i < DEMO_COUNT; i++) {
         const char *status_str = s_ok[i] ? "" : "不可用";
-        if (i == 3 && s_ok[3] && has_notify) {
+        if (i == 3 && s_ok[3] && has_unread) {
             status_str = "● 新消息";
         }
         lv_label_set_text(s_status[i], status_str);
         ui_system_set_item_state(s_cards[i], s_rows[i], s_status[i],
                                  s_indicators[i], (int)i == s_sel, s_ok[i]);
-        if (i == 3 && s_ok[3] && has_notify) {
+        if (i == 3 && s_ok[3] && has_unread) {
             lv_obj_set_style_text_color(s_status[i], lv_color_hex(UI_SYSTEM_ACCENT), 0);
         }
     }
@@ -64,10 +64,10 @@ static void menu_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
     if (s_active < 0 && s_menu_scr) {
-        static bool s_last_has_notify = false;
-        bool has_notify = kiro_passport_network_has_notify();
-        if (has_notify != s_last_has_notify) {
-            s_last_has_notify = has_notify;
+        static bool s_last_has_unread = false;
+        bool has_unread = kiro_passport_network_has_unread_notify();
+        if (has_unread != s_last_has_unread) {
+            s_last_has_unread = has_unread;
             menu_refresh();
         }
     }

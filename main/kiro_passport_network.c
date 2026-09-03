@@ -74,11 +74,29 @@ bool kiro_passport_network_has_notify(void)
     return present;
 }
 
+bool kiro_passport_network_has_unread_notify(void)
+{
+    if (!s_notify_lock) s_notify_lock = xSemaphoreCreateMutex();
+    if (s_notify_lock) xSemaphoreTake(s_notify_lock, portMAX_DELAY);
+    bool unread = (s_notify.present && !s_notify.read);
+    if (s_notify_lock) xSemaphoreGive(s_notify_lock);
+    return unread;
+}
+
+void kiro_passport_network_mark_notify_read(void)
+{
+    if (!s_notify_lock) s_notify_lock = xSemaphoreCreateMutex();
+    if (s_notify_lock) xSemaphoreTake(s_notify_lock, portMAX_DELAY);
+    s_notify.read = true;
+    if (s_notify_lock) xSemaphoreGive(s_notify_lock);
+}
+
 void kiro_passport_network_clear_notify(void)
 {
     if (!s_notify_lock) s_notify_lock = xSemaphoreCreateMutex();
     if (s_notify_lock) xSemaphoreTake(s_notify_lock, portMAX_DELAY);
     s_notify.present = false; /* version 保持不变，供新通知递增检测 */
+    s_notify.read = false;
     if (s_notify_lock) xSemaphoreGive(s_notify_lock);
 }
 
@@ -459,6 +477,7 @@ static bool parse_notify(const char *message)
     snprintf(s_notify.content, sizeof(s_notify.content), "%s", content);
     s_notify.version++;
     s_notify.present = true;
+    s_notify.read = false;
     if (s_notify_lock) xSemaphoreGive(s_notify_lock);
 
     ESP_LOGI(TAG, "收到通知: id=%s, title=%s, len=%zu, v=%lu", s_notify.id, s_notify.title,
