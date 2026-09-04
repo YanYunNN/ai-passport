@@ -650,15 +650,15 @@ ${SIM_PAGE_CSS}
 
             <div class="device-keypad">
                 <button class="hw-btn" id="btn-up" data-key="up" title="上翻 / W / ↑">
-                    <span>▲ UP</span>
+                    <span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg> UP</span>
                     <span class="hw-btn-hint">[W] 0mV</span>
                 </button>
                 <button class="hw-btn" id="btn-ok" data-key="ok" title="确认 (短按) / 返回 (长按) / Enter">
-                    <span>● OK</span>
+                    <span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg> OK</span>
                     <span class="hw-btn-hint">[Enter] 595mV</span>
                 </button>
                 <button class="hw-btn" id="btn-down" data-key="down" title="下翻 / S / ↓">
-                    <span>▼ DOWN</span>
+                    <span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg> DOWN</span>
                     <span class="hw-btn-hint">[S] 300mV</span>
                 </button>
             </div>
@@ -689,16 +689,16 @@ ${SIM_PAGE_CSS}
     <!-- Right: Workspace -->
     <section class="workspace-col">
         <nav class="tabs-nav">
-            <button class="tab-btn active" data-tab="tab-flasher">🚀 固件在线烧录 (Web Serial / 动态加载)</button>
-            <button class="tab-btn" data-tab="tab-wokwi">⚡ Wokwi 指令级硬件拓扑 (RV32 Core)</button>
-            <button class="tab-btn" data-tab="tab-terminal">📟 串口监视器 (Serial Monitor)</button>
+            <button class="tab-btn active" data-tab="tab-flasher"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.85.6-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1z"/><path d="M9 12H4.5S5.1 9 6.5 8c1.6-1.2 5-.6 6.5 0a22 22 0 0 1 2-4c3-1.5 7 .2 8 .2.3 1-.4 5.2-2 6.5-1.5 1.4-3.5 2.4-6 2.8z"/><circle cx="14.5" cy="9.5" r="1.2"/></svg> 固件在线烧录 (Web Serial / 动态加载)</button>
+            <button class="tab-btn" data-tab="tab-wokwi"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg> Wokwi 指令级硬件拓扑 (RV32 Core)</button>
+            <button class="tab-btn" data-tab="tab-terminal"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> 串口监视器 (Serial Monitor)</button>
         </nav>
 
         <!-- Tab 1: Flasher -->
         <div class="tab-pane active" id="tab-flasher">
             <!-- Binary Info Banner -->
             <div class="binary-info-banner" id="binary-info-banner">
-                <div style="font-weight:600; color:var(--copper-hi);">🔍 正在加载固件 ELF/Image 解析信息</div>
+                <div style="font-weight:600; color:var(--copper-hi);"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg> 正在加载固件 ELF/Image 解析信息</div>
                 <div class="binary-info-grid">
                     <div class="binary-info-item"><span style="color:var(--steel);">工程:</span> <b id="bin-proj-name">--</b></div>
                     <div class="binary-info-item"><span style="color:var(--steel);">版本:</span> <b id="bin-proj-ver">--</b></div>
@@ -710,7 +710,7 @@ ${SIM_PAGE_CSS}
             <!-- URL Flasher Card -->
             <div class="card-box">
                 <div class="card-box-header">
-                    <span>🌐 动态输入任意公网 .bin 固件链接</span>
+                    <span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15.5 15.5 0 0 1 0 18M12 3a15.5 15.5 0 0 0 0 18"/></svg> 动态输入任意公网 .bin 固件链接</span>
                     <span style="font-size:0.75rem; color:var(--text-muted);">实时流式代理</span>
                 </div>
                 <div class="card-box-body">
@@ -718,7 +718,7 @@ ${SIM_PAGE_CSS}
                         <label class="form-label" for="bin-url-input">固件 .bin 文件公网下载链接 (支持任意社区链接 / GitHub Release)</label>
                         <div class="input-btn-group">
                             <input type="url" id="bin-url-input" class="form-control" placeholder="https://example.com/firmware.bin" value="https://mote.folotoy.cn/api/download/community/community-cff9b1ed">
-                            <button class="btn btn-primary" id="btn-fetch-flash">⚡ 下载并解析固件</button>
+                            <button class="btn btn-primary" id="btn-fetch-flash"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg> 下载并解析固件</button>
                         </div>
                     </div>
 
@@ -735,10 +735,10 @@ ${SIM_PAGE_CSS}
                     <!-- Web Serial Real Flash Box -->
                     <div class="real-hardware-box">
                         <div>
-                            <div style="font-weight:600; color:var(--ok); margin-bottom:3px;">🔌 真实烧录到物理开发板 (Web Serial API)</div>
+                            <div style="font-weight:600; color:var(--ok); margin-bottom:3px;"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M12 3V1.5"/><path d="M9 9h6"/><path d="M9.5 13.5h5"/></svg> 真实烧录到物理开发板 (Web Serial API)</div>
                             <div style="font-size:0.75rem; color:var(--steel);">使用 USB Type-C 连接真实 FoloToy AI Passport 开发板，以 460800 波特率直接写入 0x0 Flash</div>
                         </div>
-                        <button class="btn btn-primary" id="btn-web-serial-flash">🔌 真实硬件 USB 烧录</button>
+                        <button class="btn btn-primary" id="btn-web-serial-flash"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M12 3V1.5"/><path d="M9 9h6"/><path d="M9.5 13.5h5"/></svg> 真实硬件 USB 烧录</button>
                     </div>
                 </div>
             </div>
@@ -746,11 +746,11 @@ ${SIM_PAGE_CSS}
             <!-- Drag & Drop Upload Card -->
             <div class="card-box">
                 <div class="card-box-header">
-                    <span>📂 本地固件上传 (.bin 文件)</span>
+                    <span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg> 本地固件上传 (.bin 文件)</span>
                 </div>
                 <div class="card-box-body">
                     <div class="dropzone" id="file-dropzone">
-                        <div class="dropzone-icon">📥</div>
+                        <div class="dropzone-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 19h16"/></svg></div>
                         <div class="dropzone-text">点击选择或将 <code>.bin</code> 固件文件拖拽至此处</div>
                         <div class="dropzone-subtext">支持 0x0 merged-firmware.bin 完整镜像或 0x10000 单一 app.bin</div>
                         <input type="file" id="file-input" accept=".bin" style="display:none;">
@@ -761,7 +761,7 @@ ${SIM_PAGE_CSS}
             <!-- Presets Card -->
             <div class="card-box">
                 <div class="card-box-header">
-                    <span>📦 预设固件库 (一键秒级切换)</span>
+                    <span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg> 预设固件库 (一键秒级切换)</span>
                 </div>
                 <div class="card-box-body">
                     <div class="preset-list" id="preset-container">
@@ -775,7 +775,7 @@ ${SIM_PAGE_CSS}
         <div class="tab-pane" id="tab-wokwi">
             <div class="card-box">
                 <div class="card-box-header">
-                    <span>🔬 Wokwi ESP32-C3 + ST7789 指令级硬件拓扑沙箱</span>
+                    <span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg> Wokwi ESP32-C3 + ST7789 指令级硬件拓扑沙箱</span>
                     <button class="btn btn-accent btn-sm" onclick="window.open('https://wokwi.com/projects/new/esp32-c3', '_blank')">在新标签页打开 Wokwi 完整版 ↗</button>
                 </div>
                 <div class="card-box-body">
@@ -792,10 +792,10 @@ ${SIM_PAGE_CSS}
         <!-- Tab 3: Terminal -->
         <div class="tab-pane" id="tab-terminal">
             <div class="terminal-actions">
-                <button class="btn btn-secondary btn-sm" id="btn-term-clear">🧹 清屏</button>
-                <button class="btn btn-secondary btn-sm" id="btn-term-copy">📋 复制日志</button>
-                <button class="btn btn-secondary btn-sm" id="btn-term-export">💾 导出日志</button>
-                <button class="btn btn-danger btn-sm" id="btn-chip-reset" style="margin-left:auto;">🔄 芯片复位 (RST)</button>
+                <button class="btn btn-secondary btn-sm" id="btn-term-clear"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 9 6 6"/><path d="m15 9-6 6"/></svg> 清屏</button>
+                <button class="btn btn-secondary btn-sm" id="btn-term-copy"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h6"/></svg> 复制日志</button>
+                <button class="btn btn-secondary btn-sm" id="btn-term-export"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 19h16"/></svg> 导出日志</button>
+                <button class="btn btn-danger btn-sm" id="btn-chip-reset" style="margin-left:auto;"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/></svg> 芯片复位 (RST)</button>
             </div>
             <div class="terminal-container">
                 <div id="terminal-wrapper"></div>
@@ -893,7 +893,7 @@ function renderScreen(now) {
     ctx.fillStyle = "#7ecf9f";
     ctx.font = "10px sans-serif";
     ctx.textAlign = "right";
-    ctx.fillText("87% 🔋", 232, 17);
+    ctx.fillText("87%", 232, 17);
 
     // Frame content
     ctx.fillStyle = "#0e0f13";
@@ -906,7 +906,7 @@ function renderScreen(now) {
     ctx.fillStyle = "#7ecf9f";
     ctx.font = "bold 13px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("● 固件已动态加载就绪", 120, 85);
+    ctx.fillText("固件已动态加载就绪", 120, 85);
 
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 13.5px sans-serif";
@@ -1128,7 +1128,7 @@ function setupControls() {
                 }
             });
 
-            logSerial("\\r\\n\\x1b[32m🎉 真实硬件烧录成功！正在复位开发板并启动运行...\\x1b[0m\\r\\n");
+            logSerial("\\r\\n\\x1b[32m 真实硬件烧录成功！正在复位开发板并启动运行...\\x1b[0m\\r\\n");
             await esploader.after();
             alert("真实硬件烧录成功！开发板已复位运行！");
         } catch(err) {

@@ -225,7 +225,7 @@ function formatDate(timestamp: number | null): string {
 function activationPage(): Response {
     return htmlPage("Pair Passport device", `
         <div class="nav-bar">
-            <a href="/admin" class="nav-link">← 返回管理控制台</a>
+            <a href="/admin" class="nav-link"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg> 返回管理控制台</a>
         </div>
         <p class="desc">Enter the 6-digit code shown by your device. This legacy page approves immediately after submission.</p>
         <form method="post" action="/activate" class="pair-card">
@@ -249,13 +249,13 @@ function pairingPage(title: string, message: string, action: string, button: str
 
 function renderNav(active: string | null): string {
     const tabs: Array<{ id: string; label: string }> = [
-        { id: "overview", label: "📊 概览" },
-        { id: "snapshot", label: "📸 远程快照" },
-        { id: "images", label: "🖼️ 图片推送" },
-        { id: "wallpaper", label: "📟 信息壁纸" },
-        { id: "requests", label: "📨 审批推送" },
-        { id: "notify", label: "🔔 通知推送" },
-        { id: "devices", label: "📱 设备管理" },
+        { id: "overview", label: "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M18 20V10'/><path d='M12 20V4'/><path d='M6 20v-6'/></svg> 概览" },
+        { id: "snapshot", label: "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z'/><circle cx='12' cy='13' r='3'/></svg> 远程快照" },
+        { id: "images", label: "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='3' y='3' width='18' height='18' rx='2'/><circle cx='9' cy='9' r='2'/><path d='m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21'/></svg> 图片推送" },
+        { id: "wallpaper", label: "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/></svg> 信息壁纸" },
+        { id: "requests", label: "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m22 2-7 20-4-9-9-4Z'/><path d='M22 2 11 13'/></svg> 审批推送" },
+        { id: "notify", label: "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9'/><path d='M10.3 21a1.94 1.94 0 0 0 3.4 0'/></svg> 通知推送" },
+        { id: "devices", label: "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='7' y='2' width='10' height='20' rx='2'/><path d='M12 18h.01'/></svg> 设备管理" },
     ];
     const tabHtml = tabs
         .map((tab) => `<button type="button" class="nav-tab${active === tab.id ? " active" : ""}" data-tab="${tab.id}">${tab.label}</button>`)
@@ -263,13 +263,13 @@ function renderNav(active: string | null): string {
     return `
     <nav class="topnav">
         <div class="topnav-inner">
-            <a href="/admin" class="brand">🛂 <span>Kiro Passport</span></a>
+            <a href="/admin" class="brand"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="2"/><circle cx="8.5" cy="11" r="2.3"/><path d="M5.8 15.6c.7-1.5 1.5-2.2 2.7-2.2s2 .7 2.7 2.2"/><path d="M14.5 10h4"/><path d="M14.5 13.5h2.5"/></svg> <span>Kiro Passport</span></a>
             <div class="nav-tabs">${tabHtml}</div>
             <div class="topnav-actions">
-                <a href="/voice" class="btn btn-sm btn-accent" target="_blank">🎙️ 语音助手</a>
-                <a href="/simulator" class="btn btn-sm nav-btn" target="_blank">🎮 模拟器</a>
-                <a href="/admin" class="btn btn-sm nav-btn">🔄 刷新</a>
-                <a href="/admin/pair" class="btn btn-sm btn-primary">➕ 配对新设备</a>
+                <a href="/voice" class="btn btn-sm btn-accent" target="_blank"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v3"/></svg> 语音助手</a>
+                <a href="/simulator" class="btn btn-sm nav-btn" target="_blank"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg> 模拟器</a>
+                <a href="/admin" class="btn btn-sm nav-btn"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/></svg> 刷新</a>
+                <a href="/admin/pair" class="btn btn-sm btn-primary"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg> 配对新设备</a>
             </div>
         </div>
     </nav>`;
@@ -279,9 +279,9 @@ function renderSimpleNav(): string {
     return `
     <nav class="topnav">
         <div class="topnav-inner">
-            <a href="/admin" class="brand">🛂 <span>Kiro Passport</span></a>
+            <a href="/admin" class="brand"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="2"/><circle cx="8.5" cy="11" r="2.3"/><path d="M5.8 15.6c.7-1.5 1.5-2.2 2.7-2.2s2 .7 2.7 2.2"/><path d="M14.5 10h4"/><path d="M14.5 13.5h2.5"/></svg> <span>Kiro Passport</span></a>
             <div class="topnav-actions">
-                <a href="/admin" class="btn btn-sm nav-btn">← 返回管理控制台</a>
+                <a href="/admin" class="btn btn-sm nav-btn"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg> 返回管理控制台</a>
             </div>
         </div>
     </nav>`;
@@ -899,10 +899,10 @@ function renderHookLogRows(hookLogs: HookNotifyLogRow[]): string {
     let rows = "";
     for (const log of hookLogs) {
         const resultBadge = log.result === "sent"
-            ? `<span class="badge badge-active">✓ 已送达</span>`
+            ? `<span class="badge badge-active"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg> 已送达</span>`
             : log.result === "offline"
-                ? `<span class="badge" style="color:#d9b98a;border:1px solid rgba(217,185,138,0.3);background:rgba(217,185,138,0.12);">● 离线</span>`
-                : `<span class="badge" style="color:#eb9090;border:1px solid rgba(235,144,144,0.3);background:rgba(235,144,144,0.1);">✗ 失败</span>`;
+                ? `<span class="badge" style="color:#d9b98a;border:1px solid rgba(217,185,138,0.3);background:rgba(217,185,138,0.12);"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5.5" fill="currentColor" stroke="none"/></svg> 离线</span>`
+                : `<span class="badge" style="color:#eb9090;border:1px solid rgba(235,144,144,0.3);background:rgba(235,144,144,0.1);"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg> 失败</span>`;
         rows += `
         <tr>
             <td class="td-nowrap td-device"><span class="code-mono">${escapeHtml(log.device_id)}</span></td>
@@ -920,7 +920,7 @@ function renderDeviceOptions(deviceList: DeviceWithOnline[]): string {
     if (deviceList.length === 0) return `<option value="">请先配对设备</option>`;
     let options = "";
     for (const d of deviceList) {
-        options += `<option value="${escapeHtml(d.device_id)}">${escapeHtml(d.device_id)} (${d.online ? '🟢 在线' : '⚪ 离线'})</option>`;
+        options += `<option value="${escapeHtml(d.device_id)}">${escapeHtml(d.device_id)} (${d.online ? '在线' : '离线'})</option>`;
     }
     return options;
 }
@@ -977,9 +977,9 @@ function renderPushLogRows(pushLogs: ApprovalLogRow[]): string {
     let rows = "";
     for (const log of pushLogs) {
         let badge: string;
-        if (log.status === "allow") badge = `<span class="badge badge-active">✅ 已批准</span>`;
-        else if (log.status === "deny") badge = `<span class="badge badge-revoked">❌ 已拒绝</span>`;
-        else badge = `<span class="badge" style="background: rgba(204,145,102,0.13); color: #cc9166; border: 1px solid rgba(204,145,102,0.3);">⏳ 待审批</span>`;
+        if (log.status === "allow") badge = `<span class="badge badge-active"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg> 已批准</span>`;
+        else if (log.status === "deny") badge = `<span class="badge badge-revoked"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg> 已拒绝</span>`;
+        else badge = `<span class="badge" style="background: rgba(204,145,102,0.13); color: #cc9166; border: 1px solid rgba(204,145,102,0.3);"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 2v4.2a2 2 0 0 1-.6 1.4L12 12l-4.4-4.4a2 2 0 0 1-.6-1.4V2"/><path d="M7 22v-4.2a2 2 0 0 1 .6-1.4L12 12l4.4 4.4a2 2 0 0 1 .6 1.4V22"/></svg> 待审批</span>`;
         const resultText = log.status === "pending"
             ? "等待设备决定"
             : (reasonLabels[log.reason ?? ""] ?? log.reason ?? "—");
@@ -1190,7 +1190,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     <div class="gallery-date"><span class="code-mono" style="font-size:0.75rem;">${escapeHtml(img.device_id)}</span></div>
                     <div class="gallery-date">${formatDate(img.created_at)}</div>
                     <div class="gallery-actions">
-                        <button type="button" class="btn btn-sm btn-primary" onclick="repushImage('${escapeHtml(img.device_id)}', '${escapeHtml(img.title || 'Image')}', '${img.image_data}')">🚀 重新推送</button>
+                        <button type="button" class="btn btn-sm btn-primary" onclick="repushImage('${escapeHtml(img.device_id)}', '${escapeHtml(img.title || 'Image')}', '${img.image_data}')"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.85.6-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1z"/><path d="M9 12H4.5S5.1 9 6.5 8c1.6-1.2 5-.6 6.5 0a22 22 0 0 1 2-4c3-1.5 7 .2 8 .2.3 1-.4 5.2-2 6.5-1.5 1.4-3.5 2.4-6 2.8z"/><circle cx="14.5" cy="9.5" r="1.2"/></svg> 重新推送</button>
                         <button type="button" class="btn btn-sm btn-danger" onclick="deleteImage('${img.image_id}')">删除</button>
                     </div>
                 </div>
@@ -1201,28 +1201,28 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
     const content = `
         <section class="page active" data-page="overview">
             <div class="page-head">
-                <h1>📊 概览</h1>
+                <h1><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg> 概览</h1>
                 <p class="page-desc">已登录 <strong>${escapeHtml(username)}</strong> · Kiro Passport Relay 运行总览</p>
             </div>
 
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-icon">📱</div>
+                    <div class="stat-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M12 18h.01"/></svg></div>
                     <div class="stat-label">总设备数</div>
                     <div class="stat-value" id="statTotal">${totalCount}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-icon">🟢</div>
+                    <div class="stat-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg></div>
                     <div class="stat-label">在线设备</div>
                     <div class="stat-value" id="statOnline" style="color: var(--online);">${onlineCount}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-icon">✅</div>
+                    <div class="stat-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></div>
                     <div class="stat-label">活跃设备</div>
                     <div class="stat-value" id="statActive">${activeCount}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-icon">⏳</div>
+                    <div class="stat-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 2v4.2a2 2 0 0 1-.6 1.4L12 12l-4.4-4.4a2 2 0 0 1-.6-1.4V2"/><path d="M7 22v-4.2a2 2 0 0 1 .6-1.4L12 12l4.4 4.4a2 2 0 0 1 .6 1.4V22"/></svg></div>
                     <div class="stat-label">待处理配对</div>
                     <div class="stat-value" id="statPending" style="color: #cc9166;">${pendingCount}</div>
                 </div>
@@ -1231,42 +1231,42 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             <h2 class="section-title">快速操作</h2>
             <div class="quick-grid">
                 <a href="#" class="quick-card" onclick="switchTab('snapshot'); return false;">
-                    <span class="quick-icon">📸</span>
+                    <span class="quick-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg></span>
                     <div>
                         <div class="quick-title">远程屏幕快照</div>
                         <div class="quick-desc">实时抓取设备 240×320 屏幕</div>
                     </div>
                 </a>
                 <a href="#" class="quick-card" onclick="switchTab('images'); return false;">
-                    <span class="quick-icon">🖼️</span>
+                    <span class="quick-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg></span>
                     <div>
                         <div class="quick-title">推送图片</div>
                         <div class="quick-desc">缩放裁剪并推送壁纸封面</div>
                     </div>
                 </a>
                 <a href="#" class="quick-card" onclick="switchTab('requests'); return false;">
-                    <span class="quick-icon">🔔</span>
+                    <span class="quick-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span>
                     <div>
                         <div class="quick-title">审批推送</div>
                         <div class="quick-desc">向设备推送审批请求并查看日志</div>
                     </div>
                 </a>
                 <a href="#" class="quick-card" onclick="switchTab('notify'); return false;">
-                    <span class="quick-icon">📣</span>
+                    <span class="quick-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 11 18-5v12L3 13v-2z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></span>
                     <div>
                         <div class="quick-title">通知推送</div>
                         <div class="quick-desc">向设备屏幕推送通知（支持中文）</div>
                     </div>
                 </a>
                 <a href="/admin/pair" class="quick-card">
-                    <span class="quick-icon">➕</span>
+                    <span class="quick-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg></span>
                     <div>
                         <div class="quick-title">配对新设备</div>
                         <div class="quick-desc">输入设备 6 位配对码</div>
                     </div>
                 </a>
                 <a href="#" class="quick-card" onclick="switchTab('devices'); return false;">
-                    <span class="quick-icon">🔐</span>
+                    <span class="quick-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
                     <div>
                         <div class="quick-title">设备管理</div>
                         <div class="quick-desc">撤销授权 / 轮换凭证 / 删除</div>
@@ -1275,10 +1275,10 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             </div>
         </section>
 
-        <!-- 📸 远程屏幕快照与截屏 (Remote Screen Capture Studio) -->
+        <!-- <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg> 远程屏幕快照与截屏 (Remote Screen Capture Studio) -->
         <section class="page" data-page="snapshot">
             <div class="page-head">
-                <h1>📸 远程屏幕快照</h1>
+                <h1><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg> 远程屏幕快照</h1>
                 <p class="page-desc">实时抓取设备屏幕（240×320），支持自动轮询与保存高清截图</p>
             </div>
             <div class="card">
@@ -1293,7 +1293,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                         <div class="screen-frame" id="castFrame">
                             <canvas id="castCanvas" width="240" height="320" style="image-rendering: pixelated;"></canvas>
                             <div id="castPlaceholder" class="screen-placeholder" style="position: absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; background: rgba(4,4,6,0.88);">
-                                📱 板子屏幕快照<br><span style="font-size:0.75rem; color:#777a88; margin-top:0.5rem;">点击「立即抓取屏幕快照」</span>
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M12 18h.01"/></svg> 板子屏幕快照<br><span style="font-size:0.75rem; color:#777a88; margin-top:0.5rem;">点击「立即抓取屏幕快照」</span>
                             </div>
                         </div>
                         <div id="castMetrics" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.75rem; display: flex; gap: 0.75rem;">
@@ -1311,21 +1311,21 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                         </div>
                         <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                             <button type="button" id="castCaptureBtn" class="btn btn-primary" style="flex: 1; padding: 0.85rem; font-size: 1rem; font-weight: 600;" onclick="requestCapture()">
-                                📸 立即抓取屏幕快照
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg> 立即抓取屏幕快照
                             </button>
                         </div>
                         <div style="display: flex; align-items: center; gap: 0.5rem; margin: 0.25rem 0;">
                             <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--text-muted); cursor: pointer;">
                                 <input type="checkbox" id="autoSnapshotCheck" onchange="toggleAutoSnapshot()">
-                                <span>⏱️ 自动轮询快照 (每 5 秒刷新一次)</span>
+                                <span><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2h4"/><circle cx="12" cy="14" r="8"/><path d="M12 10v4l2.5 2.5"/></svg> 自动轮询快照 (每 5 秒刷新一次)</span>
                             </label>
                         </div>
                         <div style="display: flex; gap: 0.5rem;">
                             <button type="button" class="btn" style="background: rgba(226,227,233,0.06); border: 1px solid var(--border); color: var(--text); flex: 1;" onclick="downloadScreenshot()">
-                                💾 保存高清截图 (PNG)
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 19h16"/></svg> 保存高清截图 (PNG)
                             </button>
                             <button type="button" class="btn" style="background: rgba(226,227,233,0.06); border: 1px solid var(--border); color: var(--text-muted);" onclick="reconnectCastWs()">
-                                🔄 刷新连接
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/></svg> 刷新连接
                             </button>
                         </div>
                         <div id="castAlert" style="display:none; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem;"></div>
@@ -1334,10 +1334,10 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             </div>
         </section>
 
-        <!-- 🖼️ 图片推送工作台 (Image Studio) -->
+        <!-- <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg> 图片推送工作台 (Image Studio) -->
         <section class="page" data-page="images">
             <div class="page-head">
-                <h1>🖼️ 图片推送工作台</h1>
+                <h1><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg> 图片推送工作台</h1>
                 <p class="page-desc">将本地图片缩放裁剪至 240×320 并实时推送到设备屏幕</p>
             </div>
             <div class="card">
@@ -1348,7 +1348,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     <div class="preview-pane">
                         <div class="screen-frame" id="screenFrame">
                             <div class="screen-placeholder" id="placeholder">
-                                📱 240 × 320 预览<br><span style="font-size:0.75rem; color:#777a88;">请选择要推送的图片</span>
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M12 18h.01"/></svg> 240 × 320 预览<br><span style="font-size:0.75rem; color:#777a88;">请选择要推送的图片</span>
                             </div>
                             <canvas id="previewCanvas" width="240" height="320" style="display:none;"></canvas>
                         </div>
@@ -1368,7 +1368,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                             <input id="filePicker" type="file" accept="image/*" class="form-input">
                         </div>
                         <button type="button" id="pushBtn" class="btn btn-primary" style="padding: 0.75rem; font-size: 1rem;" onclick="pushCurrentCanvas()">
-                            🚀 立即推送到设备屏幕
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.85.6-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1z"/><path d="M9 12H4.5S5.1 9 6.5 8c1.6-1.2 5-.6 6.5 0a22 22 0 0 1 2-4c3-1.5 7 .2 8 .2.3 1-.4 5.2-2 6.5-1.5 1.4-3.5 2.4-6 2.8z"/><circle cx="14.5" cy="9.5" r="1.2"/></svg> 立即推送到设备屏幕
                         </button>
                         <div id="statusAlert" style="display:none; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem;"></div>
                     </div>
@@ -1376,7 +1376,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             </div>
             <div class="card">
                 <div class="card-header">
-                    <div class="card-title">🖼️ 历史图片库</div>
+                    <div class="card-title"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg> 历史图片库</div>
                 </div>
                 <div class="gallery-grid">
                     ${galleryHtml}
@@ -1384,18 +1384,18 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             </div>
         </section>
 
-        <!-- 📟 信息壁纸 (Info Wallpaper) -->
+        <!-- 信息壁纸 (Info Wallpaper) -->
         <section class="page" data-page="wallpaper">
             <div class="page-head">
-                <h1>📟 信息壁纸</h1>
+                <h1><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> 信息壁纸</h1>
                 <p class="page-desc">云端生成 240×320 信息屏（大时钟 + 天气 + 日程备注），经图片通道推送到设备 · 每小时自动更新</p>
             </div>
             <div class="card">
                 <div class="card-header">
                     <div class="card-title">实时预览</div>
                     <div class="header-actions">
-                        <button type="button" class="btn btn-sm nav-btn" onclick="refreshWallpaper()">🔄 刷新预览</button>
-                        <button type="button" class="btn btn-sm btn-primary" onclick="pushWallpaper()">🚀 推送到设备</button>
+                        <button type="button" class="btn btn-sm nav-btn" onclick="refreshWallpaper()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/></svg> 刷新预览</button>
+                        <button type="button" class="btn btn-sm btn-primary" onclick="pushWallpaper()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.85.6-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1z"/><path d="M9 12H4.5S5.1 9 6.5 8c1.6-1.2 5-.6 6.5 0a22 22 0 0 1 2-4c3-1.5 7 .2 8 .2.3 1-.4 5.2-2 6.5-1.5 1.4-3.5 2.4-6 2.8z"/><circle cx="14.5" cy="9.5" r="1.2"/></svg> 推送到设备</button>
                     </div>
                 </div>
                 <div class="image-studio">
@@ -1413,7 +1413,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                             <label class="form-label">今日日程 / 备注（最多 3 行，建议英文数字）</label>
                             <textarea id="wallpaperNotes" class="form-input" rows="4" placeholder="Water plants&#10;Call mom&#10;Read book"></textarea>
                         </div>
-                        <button type="button" class="btn" style="background:rgba(226,227,233,0.06);border:1px solid var(--border);" onclick="saveWallpaperNotes()">💾 保存备注</button>
+                        <button type="button" class="btn" style="background:rgba(226,227,233,0.06);border:1px solid var(--border);" onclick="saveWallpaperNotes()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 19h16"/></svg> 保存备注</button>
                         <div id="wallpaperStatus" style="display:none;padding:0.75rem;border-radius:6px;font-size:0.85rem;"></div>
                         <p class="desc" style="font-size:0.78rem;margin:0.4rem 0 0;">壁纸内容：大时钟 + 日期 + 天气（Open-Meteo 免费接口，城市在 WALLPAPER_CITY 配置）+ 备注。每小时整点自动推送一次。</p>
                     </div>
@@ -1421,10 +1421,10 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             </div>
         </section>
 
-        <!-- 🔔 审批推送 (Approval Push Center) -->
+        <!-- <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg> 审批推送 (Approval Push Center) -->
         <section class="page" data-page="requests">
             <div class="page-head">
-                <h1>🔔 审批推送</h1>
+                <h1><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg> 审批推送</h1>
                 <p class="page-desc">向在线设备推送审批请求（tool/summary 显示在设备屏幕，用户按键决定），并查看全部推送日志</p>
             </div>
             <div class="card">
@@ -1456,14 +1456,14 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                         <p class="desc" style="margin: 0.35rem 0 0; font-size: 0.78rem;">提示：内容需为可打印 ASCII 字符（不含引号 / 反斜杠），设备屏幕会原样显示。</p>
                     </div>
                     <button type="button" id="pushSendBtn" class="btn btn-primary" style="padding: 0.75rem; font-size: 1rem;" onclick="sendAdminPush()">
-                        🚀 立即推送审批请求
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.85.6-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1z"/><path d="M9 12H4.5S5.1 9 6.5 8c1.6-1.2 5-.6 6.5 0a22 22 0 0 1 2-4c3-1.5 7 .2 8 .2.3 1-.4 5.2-2 6.5-1.5 1.4-3.5 2.4-6 2.8z"/><circle cx="14.5" cy="9.5" r="1.2"/></svg> 立即推送审批请求
                     </button>
                     <div id="pushResult" style="display:none; padding: 0.75rem; border-radius: 6px; font-size: 0.85rem; margin-top: 0.5rem;"></div>
                 </div>
             </div>
             <div class="card">
                 <div class="card-header">
-                    <div class="card-title">📋 推送日志 (最近 ${pushLogs.length} 条)</div>
+                    <div class="card-title"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h6"/></svg> 推送日志 (最近 ${pushLogs.length} 条)</div>
                 </div>
                 <table>
                     <thead>
@@ -1481,10 +1481,10 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             </div>
         </section>
 
-        <!-- 📱 已注册设备列表 -->
+        <!-- <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M12 18h.01"/></svg> 已注册设备列表 -->
         <section class="page" data-page="devices">
             <div class="page-head">
-                <h1>📱 设备管理</h1>
+                <h1><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M12 18h.01"/></svg> 设备管理</h1>
                 <p class="page-desc">管理已注册设备：查看在线状态、撤销授权或彻底删除</p>
             </div>
             <div class="card">
@@ -1507,27 +1507,27 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             </div>
             <div class="card">
                 <div class="card-header">
-                    <div class="card-title">📈 设备心跳监控 (24h)</div>
+                    <div class="card-title"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17 9 11l4 4 8-8"/><path d="M21 7h-4M21 7v4"/></svg> 设备心跳监控 (24h)</div>
                     <div id="monitorUpdatedAt" class="badge" style="background: rgba(226,227,233,0.06); color: var(--text-muted);">等待数据...</div>
                 </div>
                 <div class="monitor-stats">
                     <div class="stat-card">
-                        <div class="stat-icon">🟢</div>
+                        <div class="stat-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg></div>
                         <div class="stat-label">当前在线</div>
                         <div class="stat-value" id="monOnline">-</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-icon">📶</div>
+                        <div class="stat-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9a14 14 0 0 1 20 0"/><path d="M5.5 13a9.5 9.5 0 0 1 13 0"/><path d="M9 16.5a4.5 4.5 0 0 1 6 0"/><circle cx="12" cy="19.5" r="0.9" fill="currentColor" stroke="none"/></svg></div>
                         <div class="stat-label">24h 在线率</div>
                         <div class="stat-value" id="monUptime">-</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-icon">⚠️</div>
+                        <div class="stat-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></div>
                         <div class="stat-label">24h 掉线次数</div>
                         <div class="stat-value" id="monOffline">-</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-icon">📱</div>
+                        <div class="stat-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M12 18h.01"/></svg></div>
                         <div class="stat-label">设备总数</div>
                         <div class="stat-value" id="monTotal">-</div>
                     </div>
@@ -1549,20 +1549,20 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             </div>
         </section>
 
-        <!-- 🔔 通知推送 (Hook Notify) -->
+        <!-- <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg> 通知推送 (Hook Notify) -->
         <section class="page" data-page="notify">
             <div class="page-head">
-                <h1>🔔 通知推送</h1>
+                <h1><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg> 通知推送</h1>
                 <p class="page-desc">向设备推送通知内容（支持中文，显示在设备屏幕），并查看 Hook 推送日志</p>
             </div>
             <div class="nav-tabs" style="margin-bottom:1rem;">
-                <button type="button" class="sub-tab active" id="notifyTabManual" onclick="notifySwitchTab('manual')">🚀 手动发送</button>
-                <button type="button" class="sub-tab" id="notifyTabAgent" onclick="notifySwitchTab('agent')">🤖 Agent 接入</button>
+                <button type="button" class="sub-tab active" id="notifyTabManual" onclick="notifySwitchTab('manual')"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.85.6-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1z"/><path d="M9 12H4.5S5.1 9 6.5 8c1.6-1.2 5-.6 6.5 0a22 22 0 0 1 2-4c3-1.5 7 .2 8 .2.3 1-.4 5.2-2 6.5-1.5 1.4-3.5 2.4-6 2.8z"/><circle cx="14.5" cy="9.5" r="1.2"/></svg> 手动发送</button>
+                <button type="button" class="sub-tab" id="notifyTabAgent" onclick="notifySwitchTab('agent')"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="11" rx="2"/><path d="M12 8V4"/><circle cx="9.5" cy="13" r="1"/><circle cx="14.5" cy="13" r="1"/></svg> Agent 接入</button>
             </div>
             <div id="agentHookPanel" style="display:none;">
             <div class="card">
                 <div class="card-header">
-                    <div class="card-title">🤖 Agent Hook 接入地址（kiro / 自定义 Agent → 设备）</div>
+                    <div class="card-title"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="11" rx="2"/><path d="M12 8V4"/><circle cx="9.5" cy="13" r="1"/><circle cx="14.5" cy="13" r="1"/></svg> Agent Hook 接入地址（kiro / 自定义 Agent → 设备）</div>
                 </div>
                 <div class="push-form">
                     <div class="push-grid">
@@ -1575,7 +1575,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                         <label class="form-label">Hook 接入地址（POST）</label>
                         <div style="display:flex;gap:8px;">
                             <input id="agentHookUrl" type="text" class="form-input code-mono" readonly spellcheck="false">
-                            <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookUrl')">📋 复制</button>
+                            <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookUrl')"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h6"/></svg> 复制</button>
                         </div>
                         <div style="color:var(--text-muted);font-size:0.75rem;margin-top:4px;">device_id 已固定在该地址里；供 kiro 的 stop-hook / 任务完成回调或其他 agent 调用，与下方日志联动。</div>
                     </div>
@@ -1583,7 +1583,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                         <label class="form-label">鉴权 Header（Bearer，与审批推送共用密钥）</label>
                         <div style="display:flex;gap:8px;">
                             <input id="agentHookAuth" type="text" class="form-input code-mono" readonly spellcheck="false">
-                            <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookAuth')">📋 复制</button>
+                            <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookAuth')"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h6"/></svg> 复制</button>
                         </div>
                         <div style="color:var(--text-muted);font-size:0.75rem;margin-top:4px;">即 HOOK_AUTH_SECRET。只填进受信任的 agent 进程，不要提交到代码仓库。</div>
                     </div>
@@ -1591,14 +1591,14 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                         <label class="form-label">请求 Body（JSON）</label>
                         <div style="display:flex;gap:8px;align-items:flex-start;">
                             <pre id="agentHookBody" style="flex:1;margin:0;background:rgba(8,9,12,0.85);border:1px solid rgba(46,48,56,0.9);border-radius:6px;padding:0.5rem 0.65rem;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:0.8rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;"></pre>
-                            <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookBody')">📋 复制</button>
+                            <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookBody')"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h6"/></svg> 复制</button>
                         </div>
                         <div style="color:var(--text-muted);font-size:0.75rem;margin-top:4px;">title 最长 32、建议用 ASCII（中文标题会被过滤为 "Agent"）；content 最长 2000、支持中文，显示在设备「Kiro Passport」页面。</div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">curl 示例（复制到 agent 里直接用）</label>
                         <pre id="agentHookCurl" style="margin:0;background:rgba(8,9,12,0.85);border:1px solid rgba(46,48,56,0.9);border-radius:6px;padding:0.5rem 0.65rem;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:0.8rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;"></pre>
-                        <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookCurl')">📋 复制 curl</button>
+                        <button type="button" class="btn btn-sm" onclick="copyAgentText('agentHookCurl')"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h6"/></svg> 复制 curl</button>
                     </div>
                     <details style="margin-top:8px;">
                         <summary style="cursor:pointer;color:var(--text-muted);font-size:0.85rem;">怎么配置 hook（接入步骤）</summary>
@@ -1613,7 +1613,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     <div class="form-group" id="agentHookTestWrap" style="display:none;margin-top:10px;">
                         <label class="form-label">从 Agent 入口发一条测试（验证地址 + 密钥链路）</label>
                         <textarea id="agentHookTestContent" class="form-input" rows="2" maxlength="2000" placeholder="例如：任务完成：已为你查好明天的航班时刻"></textarea>
-                        <button type="button" id="agentHookTestBtn" class="btn btn-primary" style="margin-top:8px;padding:0.6rem 1rem;font-size:0.9rem;" onclick="sendAgentHookTest()">📤 用 Hook 地址发送测试</button>
+                        <button type="button" id="agentHookTestBtn" class="btn btn-primary" style="margin-top:8px;padding:0.6rem 1rem;font-size:0.9rem;" onclick="sendAgentHookTest()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg> 用 Hook 地址发送测试</button>
                         <div id="agentHookTestStatus" style="display:none;padding:0.6rem;border-radius:6px;font-size:0.85rem;"></div>
                     </div>
                 </div>
@@ -1693,9 +1693,9 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                         else { statusBox.style.background = "rgba(235,144,144,0.12)"; statusBox.style.color = "#eb9090"; }
                         statusBox.innerHTML = text;
                     }
-                    if (!deviceId) { show("err", "❌ 请先选择目标设备"); return; }
-                    if (!content) { show("err", "❌ 请输入测试内容"); return; }
-                    if (!HOOK_SECRET) { show("err", "❌ HOOK_AUTH_SECRET 未配置，无法调用该地址"); return; }
+                    if (!deviceId) { show("err", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 请先选择目标设备"); return; }
+                    if (!content) { show("err", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 请输入测试内容"); return; }
+                    if (!HOOK_SECRET) { show("err", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> HOOK_AUTH_SECRET 未配置，无法调用该地址"); return; }
                     btn.disabled = true;
                     btn.innerText = "发送中...";
                     statusBox.style.display = "none";
@@ -1707,19 +1707,19 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                         return res.json().catch(function () { return {}; }).then(function (data) { return { status: res.status, data: data }; });
                     }).then(function (r) {
                         if (r.data.ok) {
-                            if (r.data.sent) show("ok", "✅ 已通过 Agent Hook 地址送达设备。可在设备「Kiro Passport」页面查看，下方日志同步记录。");
-                            else if (r.data.online) show("warn", "⚠️ 设备在线但页面未就绪，本次未送达。");
-                            else show("warn", "⚠️ 设备当前离线：已写入 Hook 日志，设备上线后不会自动补发，可稍后重试。");
+                            if (r.data.sent) show("ok", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m5 12 5 5 9-10'/></svg> 已通过 Agent Hook 地址送达设备。可在设备「Kiro Passport」页面查看，下方日志同步记录。");
+                            else if (r.data.online) show("warn", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z'/><path d='M12 9v4'/><path d='M12 17h.01'/></svg> 设备在线但页面未就绪，本次未送达。");
+                            else show("warn", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z'/><path d='M12 9v4'/><path d='M12 17h.01'/></svg> 设备当前离线：已写入 Hook 日志，设备上线后不会自动补发，可稍后重试。");
                         } else if (r.status === 401) {
-                            show("err", "❌ 401：HOOK_AUTH_SECRET 无效或未配置。");
+                            show("err", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 401：HOOK_AUTH_SECRET 无效或未配置。");
                         } else {
-                            show("err", "❌ 发送失败（HTTP " + r.status + "）：" + (r.data.error || "未知错误"));
+                            show("err", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 发送失败（HTTP " + r.status + "）：" + (r.data.error || "未知错误"));
                         }
                     }).catch(function (err) {
-                        show("err", "❌ 网络请求失败：" + err);
+                        show("err", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 网络请求失败：" + err);
                     }).finally(function () {
                         btn.disabled = false;
-                        btn.innerText = "📤 用 Hook 地址发送测试";
+                        btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m22 2-7 20-4-9-9-4Z'/><path d='M22 2 11 13'/></svg> 用 Hook 地址发送测试";
                         if (window.refreshHookLogs) window.refreshHookLogs();
                     });
                 };
@@ -1746,17 +1746,17 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     }).then(function (data) {
                         if (data && typeof data.rows === "string") {
                             if (body) body.innerHTML = data.rows;
-                            if (title) title.textContent = "🔔 Hook 推送日志 (最近 " + data.count + " 条)";
-                            if (btn) btn.textContent = "✅ 已刷新";
+                            if (title) title.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9'/><path d='M10.3 21a1.94 1.94 0 0 0 3.4 0'/></svg> Hook 推送日志 (最近 " + data.count + " 条)";
+                            if (btn) btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m5 12 5 5 9-10'/></svg> 已刷新";
                         } else if (btn) {
-                            btn.textContent = "❌ 刷新失败";
+                            btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 刷新失败";
                         }
                     }).catch(function () {
-                        if (btn) btn.textContent = "❌ 刷新失败";
+                        if (btn) btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 刷新失败";
                     }).finally(function () {
                         if (btn) {
                             btn.disabled = false;
-                            window.setTimeout(function () { btn.textContent = "🔄 手动刷新"; }, 1500);
+                            window.setTimeout(function () { btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M21 12a9 9 0 1 1-2.6-6.4'/><path d='M21 3v5h-5'/></svg> 手动刷新"; }, 1500);
                         }
                     });
                 };
@@ -1818,7 +1818,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             <div id="manualHookPanel">
             <div class="card">
                 <div class="card-header">
-                    <div class="card-title">🚀 在线发送通知 (Hook Notify)</div>
+                    <div class="card-title"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.85.6-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1z"/><path d="M9 12H4.5S5.1 9 6.5 8c1.6-1.2 5-.6 6.5 0a22 22 0 0 1 2-4c3-1.5 7 .2 8 .2.3 1-.4 5.2-2 6.5-1.5 1.4-3.5 2.4-6 2.8z"/><circle cx="14.5" cy="9.5" r="1.2"/></svg> 在线发送通知 (Hook Notify)</div>
                 </div>
                 <div class="push-form">
                     <div class="push-grid">
@@ -1836,7 +1836,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                         <textarea id="hookContent" class="form-input" rows="3" maxlength="2000" placeholder="要推送到设备屏幕显示的通知内容"></textarea>
                     </div>
                     <button type="button" id="hookSendBtn" class="btn btn-primary" style="padding:0.75rem;font-size:1rem;" onclick="pushHookNotify()">
-                        🔔 立即发送到设备
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg> 立即发送到设备
                     </button>
                     <div id="hookStatus" style="display:none;padding:0.75rem;border-radius:6px;font-size:0.85rem;"></div>
                 </div>
@@ -1844,8 +1844,8 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
             </div>
             <div class="card">
                 <div class="card-header">
-                    <div class="card-title" id="hookLogTitle">🔔 Hook 推送日志 (最近 ${hookLogs.length} 条)</div>
-                    <button type="button" class="btn btn-sm" id="hookLogRefreshBtn" onclick="refreshHookLogs()">🔄 手动刷新</button>
+                    <div class="card-title" id="hookLogTitle"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg> Hook 推送日志 (最近 ${hookLogs.length} 条)</div>
+                    <button type="button" class="btn btn-sm" id="hookLogRefreshBtn" onclick="refreshHookLogs()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/></svg> 手动刷新</button>
                 </div>
                 <div class="log-table-scroll">
                 <table class="hook-log-table">
@@ -2038,7 +2038,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     castAlert.style.display = "block";
                     castAlert.style.background = "rgba(217, 185, 138, 0.12)";
                     castAlert.style.color = "#d9b98a";
-                    castAlert.innerText = "⚠️ 设备可能处于离线状态，指令已尝试下发。";
+                    castAlert.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z'/><path d='M12 9v4'/><path d='M12 17h.01'/></svg> 设备可能处于离线状态，指令已尝试下发。";
                 } else {
                     castAlert.style.display = "none";
                 }
@@ -2151,7 +2151,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                     const body = document.getElementById("pushLogBody");
                     if (body && body.innerHTML !== data.pushLogRows) body.innerHTML = data.pushLogRows;
                 }
-                // Hook 日志不做自动刷新：notify 页默认只靠「🔄 手动刷新」更新。
+                // Hook 日志不做自动刷新：notify 页默认只靠「手动刷新」更新。
                 // 设备页激活时同步刷新心跳监控
                 const activePage = document.querySelector(".page.active");
                 if (activePage && activePage.dataset.page === "devices") {
@@ -2228,7 +2228,7 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 for (const e of data.recent_events) {
                     const on = e.event === "online";
                     html += '<div class="mon-event-row">' +
-                        '<span class="mon-event-badge ' + (on ? "mon-event-online" : "mon-event-offline") + '">' + (on ? "▲ 上线" : "▼ 离线") + '</span>' +
+                        '<span class="mon-event-badge ' + (on ? "mon-event-online" : "mon-event-offline") + '">' + (on ? "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M12 19V5'/><path d='m5 12 7-7 7 7'/></svg> 上线" : "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M12 5v14'/><path d='m19 12-7 7-7-7'/></svg> 离线") + '</span>' +
                         '<span class="code-mono" style="font-size:0.72rem;">' + e.device_id + '</span>' +
                         '<span style="color:var(--text-muted);font-size:0.72rem;margin-left:auto;white-space:nowrap;">' + new Date(e.created_at * 1000).toLocaleTimeString() + '</span>' +
                         '</div>';
@@ -2372,12 +2372,12 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 });
                 const data = await res.json();
                 if (data.ok) {
-                    wallpaperStatus("success", "✅ 已推送 " + data.pushed.length + " 台设备" + (deviceId ? "" : "（全部在线设备）"));
+                    wallpaperStatus("success", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m5 12 5 5 9-10'/></svg> 已推送 " + data.pushed.length + " 台设备" + (deviceId ? "" : "（全部在线设备）"));
                 } else {
-                    wallpaperStatus("error", "❌ 推送失败: " + (data.error || "未知错误"));
+                    wallpaperStatus("error", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 推送失败: " + (data.error || "未知错误"));
                 }
             } catch (err) {
-                wallpaperStatus("error", "❌ 推送失败: " + err);
+                wallpaperStatus("error", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 推送失败: " + err);
             }
         }
 
@@ -2391,12 +2391,12 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 });
                 const data = await res.json();
                 if (data.ok) {
-                    wallpaperStatus("success", "✅ 备注已保存，点「刷新预览」即可看到效果");
+                    wallpaperStatus("success", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m5 12 5 5 9-10'/></svg> 备注已保存，点「刷新预览」即可看到效果");
                 } else {
-                    wallpaperStatus("error", "❌ 保存失败");
+                    wallpaperStatus("error", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 保存失败");
                 }
             } catch (err) {
-                wallpaperStatus("error", "❌ 保存失败: " + err);
+                wallpaperStatus("error", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 保存失败: " + err);
             }
         }
 
@@ -2490,24 +2490,24 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                         alertBox.style.background = "rgba(126, 207, 159, 0.12)";
                         alertBox.style.border = "1px solid rgba(126, 207, 159, 0.3)";
                         alertBox.style.color = "#7ecf9f";
-                        alertBox.innerHTML = "✅ <strong>推送成功！</strong> 图片已通过 WebSocket 实时推送到设备屏幕并存入历史。";
+                        alertBox.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m5 12 5 5 9-10'/></svg> <strong>推送成功！</strong> 图片已通过 WebSocket 实时推送到设备屏幕并存入历史。";
                     } else {
                         alertBox.style.background = "rgba(217, 185, 138, 0.12)";
                         alertBox.style.border = "1px solid rgba(217, 185, 138, 0.3)";
                         alertBox.style.color = "#d9b98a";
-                        alertBox.innerHTML = "💾 <strong>图片已保存！</strong> 设备当前处于离线态，开机连接后可查看。";
+                        alertBox.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M12 3v12'/><path d='m7 10 5 5 5-5'/><path d='M4 19h16'/></svg> <strong>图片已保存！</strong> 设备当前处于离线态，开机连接后可查看。";
                     }
                 } else {
                     alertBox.style.background = "rgba(235, 144, 144, 0.12)";
                     alertBox.style.border = "1px solid rgba(235, 144, 144, 0.3)";
                     alertBox.style.color = "#eb9090";
-                    alertBox.innerHTML = "❌ 推送失败: " + (result.error || "未知错误");
+                    alertBox.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 推送失败: " + (result.error || "未知错误");
                 }
             } catch (err) {
                 alert("网络请求失败: " + err);
             } finally {
                 btn.disabled = false;
-                btn.innerText = "🚀 立即推送到设备屏幕";
+                btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.85.6-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1z'/><path d='M9 12H4.5S5.1 9 6.5 8c1.6-1.2 5-.6 6.5 0a22 22 0 0 1 2-4c3-1.5 7 .2 8 .2.3 1-.4 5.2-2 6.5-1.5 1.4-3.5 2.4-6 2.8z'/><circle cx='14.5' cy='9.5' r='1.2'/></svg> 立即推送到设备屏幕";
             }
         }
 
@@ -2538,33 +2538,33 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                         statusBox.style.background = "rgba(126, 207, 159, 0.12)";
                         statusBox.style.border = "1px solid rgba(126, 207, 159, 0.3)";
                         statusBox.style.color = "#7ecf9f";
-                        statusBox.innerHTML = "✅ <strong>已发送到设备</strong>（设备在线）。请到设备「Kiro Passport」页面查看。";
+                        statusBox.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m5 12 5 5 9-10'/></svg> <strong>已发送到设备</strong>（设备在线）。请到设备「Kiro Passport」页面查看。";
                     } else if (result.online) {
                         statusBox.style.background = "rgba(217, 185, 138, 0.12)";
                         statusBox.style.border = "1px solid rgba(217, 185, 138, 0.3)";
                         statusBox.style.color = "#d9b98a";
-                        statusBox.innerHTML = "⚠️ 设备在线但未送达（可能页面未就绪）。";
+                        statusBox.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z'/><path d='M12 9v4'/><path d='M12 17h.01'/></svg> 设备在线但未送达（可能页面未就绪）。";
                     } else {
                         statusBox.style.background = "rgba(217, 185, 138, 0.12)";
                         statusBox.style.border = "1px solid rgba(217, 185, 138, 0.3)";
                         statusBox.style.color = "#d9b98a";
-                        statusBox.innerHTML = "⚠️ 设备当前处于<strong>离线</strong>状态。已记录到 Hook 日志，设备上线后可重发。";
+                        statusBox.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z'/><path d='M12 9v4'/><path d='M12 17h.01'/></svg> 设备当前处于<strong>离线</strong>状态。已记录到 Hook 日志，设备上线后可重发。";
                     }
                 } else {
                     statusBox.style.background = "rgba(235, 144, 144, 0.12)";
                     statusBox.style.border = "1px solid rgba(235, 144, 144, 0.3)";
                     statusBox.style.color = "#eb9090";
-                    statusBox.innerHTML = "❌ 发送失败: " + (result.error || "未知错误");
+                    statusBox.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 发送失败: " + (result.error || "未知错误");
                 }
             } catch (err) {
                 statusBox.style.display = "block";
                 statusBox.style.background = "rgba(235, 144, 144, 0.12)";
                 statusBox.style.border = "1px solid rgba(235, 144, 144, 0.3)";
                 statusBox.style.color = "#eb9090";
-                statusBox.innerHTML = "❌ 网络请求失败: " + err;
+                statusBox.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 网络请求失败: " + err;
             } finally {
                 btn.disabled = false;
-                btn.innerText = "🔔 立即发送到设备";
+                btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9'/><path d='M10.3 21a1.94 1.94 0 0 0 3.4 0'/></svg> 立即发送到设备";
             }
         }
 
@@ -2642,13 +2642,13 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 });
                 const result = await res.json();
                 if (!res.ok || !result.ok) {
-                    showPushResult("error", "❌ 推送失败: " + (result.error || ("HTTP " + res.status)));
+                    showPushResult("error", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 推送失败: " + (result.error || ("HTTP " + res.status)));
                     return;
                 }
                 let status = result.status;
                 let reason = result.reason || "";
                 if (status === "pending") {
-                    showPushResult("info", "⏳ 请求已推送到设备，等待用户按键决定...");
+                    showPushResult("info", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M5 22h14'/><path d='M5 2h14'/><path d='M17 2v4.2a2 2 0 0 1-.6 1.4L12 12l-4.4-4.4a2 2 0 0 1-.6-1.4V2'/><path d='M7 22v-4.2a2 2 0 0 1 .6-1.4L12 12l4.4 4.4a2 2 0 0 1 .6 1.4V22'/></svg> 请求已推送到设备，等待用户按键决定...");
                     for (let i = 0; i < 12; i++) {
                         await new Promise((resolve) => setTimeout(resolve, 2000));
                         try {
@@ -2666,17 +2666,17 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                 }
                 const reasonText = reason ? (" (" + reason + ")") : "";
                 if (status === "allow") {
-                    showPushResult("success", "✅ 设备已批准该请求" + reasonText);
+                    showPushResult("success", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m5 12 5 5 9-10'/></svg> 设备已批准该请求" + reasonText);
                 } else if (status === "deny") {
-                    showPushResult("error", "❌ 请求已拒绝 / 未送达" + reasonText);
+                    showPushResult("error", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 请求已拒绝 / 未送达" + reasonText);
                 } else {
-                    showPushResult("info", "⏳ 仍在等待设备决定，可稍后刷新页面查看日志结果。");
+                    showPushResult("info", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M5 22h14'/><path d='M5 2h14'/><path d='M17 2v4.2a2 2 0 0 1-.6 1.4L12 12l-4.4-4.4a2 2 0 0 1-.6-1.4V2'/><path d='M7 22v-4.2a2 2 0 0 1 .6-1.4L12 12l4.4 4.4a2 2 0 0 1 .6 1.4V22'/></svg> 仍在等待设备决定，可稍后刷新页面查看日志结果。");
                 }
             } catch (err) {
-                showPushResult("error", "❌ 网络请求失败: " + err);
+                showPushResult("error", "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 网络请求失败: " + err);
             } finally {
                 btn.disabled = false;
-                btn.innerText = "🚀 立即推送审批请求";
+                btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.85.6-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1z'/><path d='M9 12H4.5S5.1 9 6.5 8c1.6-1.2 5-.6 6.5 0a22 22 0 0 1 2-4c3-1.5 7 .2 8 .2.3 1-.4 5.2-2 6.5-1.5 1.4-3.5 2.4-6 2.8z'/><circle cx='14.5' cy='9.5' r='1.2'/></svg> 立即推送审批请求";
             }
         }
         // ----------------- 通知推送 (Hook Notify) -----------------
@@ -2706,33 +2706,33 @@ async function adminDashboardPage(request: Request, env: Env): Promise<Response>
                         statusBox.style.background = "rgba(126, 207, 159, 0.12)";
                         statusBox.style.border = "1px solid rgba(126, 207, 159, 0.3)";
                         statusBox.style.color = "#7ecf9f";
-                        statusBox.innerHTML = "✅ <strong>已发送到设备</strong>（设备在线）。请到设备「Kiro Passport」页面查看。";
+                        statusBox.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m5 12 5 5 9-10'/></svg> <strong>已发送到设备</strong>（设备在线）。请到设备「Kiro Passport」页面查看。";
                     } else if (result.online) {
                         statusBox.style.background = "rgba(217, 185, 138, 0.12)";
                         statusBox.style.border = "1px solid rgba(217, 185, 138, 0.3)";
                         statusBox.style.color = "#d9b98a";
-                        statusBox.innerHTML = "⚠️ 设备在线但未送达（可能页面未就绪）。";
+                        statusBox.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z'/><path d='M12 9v4'/><path d='M12 17h.01'/></svg> 设备在线但未送达（可能页面未就绪）。";
                     } else {
                         statusBox.style.background = "rgba(217, 185, 138, 0.12)";
                         statusBox.style.border = "1px solid rgba(217, 185, 138, 0.3)";
                         statusBox.style.color = "#d9b98a";
-                        statusBox.innerHTML = "⚠️ 设备当前处于<strong>离线</strong>状态。已记录到 Hook 日志，设备上线后可重发。";
+                        statusBox.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z'/><path d='M12 9v4'/><path d='M12 17h.01'/></svg> 设备当前处于<strong>离线</strong>状态。已记录到 Hook 日志，设备上线后可重发。";
                     }
                 } else {
                     statusBox.style.background = "rgba(235, 144, 144, 0.12)";
                     statusBox.style.border = "1px solid rgba(235, 144, 144, 0.3)";
                     statusBox.style.color = "#eb9090";
-                    statusBox.innerHTML = "❌ 发送失败: " + (result.error || "未知错误");
+                    statusBox.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 发送失败: " + (result.error || "未知错误");
                 }
             } catch (err) {
                 statusBox.style.display = "block";
                 statusBox.style.background = "rgba(235, 144, 144, 0.12)";
                 statusBox.style.border = "1px solid rgba(235, 144, 144, 0.3)";
                 statusBox.style.color = "#eb9090";
-                statusBox.innerHTML = "❌ 网络请求失败: " + err;
+                statusBox.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 6l12 12'/><path d='M18 6 6 18'/></svg> 网络请求失败: " + err;
             } finally {
                 btn.disabled = false;
-                btn.innerText = "🔔 立即发送到设备";
+                btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9'/><path d='M10.3 21a1.94 1.94 0 0 0 3.4 0'/></svg> 立即发送到设备";
             }
         }
         </script>
@@ -3083,7 +3083,7 @@ async function previewAdminPair(env: Env, subject: string, userCode: string | nu
             <form method="post" action="/admin/pair">
                 <input type="hidden" name="action" value="confirm">
                 <input type="hidden" name="confirmation" value="${escapeHtml(confirmation)}">
-                <button type="submit" class="btn btn-primary btn-block">✅ 确认并绑定该设备</button>
+                <button type="submit" class="btn btn-primary btn-block"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg> 确认并绑定该设备</button>
             </form>
         </div>
     `, 200, undefined, renderSimpleNav());
@@ -3102,7 +3102,7 @@ async function confirmAdminPair(
     if (result.kind !== "approved") return pairUnavailablePage("该配对记录已不可用。", 400);
     return htmlPage("绑定完成", `
         <div class="pair-card" style="text-align: center;">
-            <div style="font-size: 3rem; margin-bottom: 1rem;">🎉</div>
+            <div style="font-size: 3rem; margin-bottom: 1rem;"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"/></svg></div>
             <h2 style="margin-bottom: 0.5rem;">设备绑定成功</h2>
             <p class="desc">设备 <strong class="code-mono">${escapeHtml(result.deviceId)}</strong> 已通过授权并注册完成。</p>
             <a href="/admin" class="btn btn-primary btn-block">返回设备管理控制台</a>

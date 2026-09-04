@@ -96,6 +96,25 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: var(--smoke); border: 2px solid transparent; background-clip: content-box; }
 button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--copper); outline-offset: 2px; }
+/* Inline SVG icons (emoji are banned in UI; stroke follows currentColor) */
+.icon {
+    display: inline-block;
+    flex: none;
+    width: 1.08em;
+    height: 1.08em;
+    vertical-align: -0.16em;
+}
+.brand .icon { width: 1.2em; height: 1.2em; color: var(--copper); }
+h1 .icon { width: 1.08em; height: 1.08em; }
+.btn .icon { width: 1.02em; height: 1.02em; }
+.badge .icon { width: 0.95em; height: 0.95em; }
+.stat-icon, .quick-icon { color: var(--silver); }
+.stat-icon .icon { width: 1.45rem; height: 1.45rem; color: var(--copper-hi); }
+.quick-icon .icon { width: 1.35rem; height: 1.35rem; color: var(--copper-hi); }
+.micbtn .icon { width: 1.35rem; height: 1.35rem; }
+.cfgbtn .icon, .logbtn .icon, .dropzone-icon { color: var(--steel); }
+.dropzone-icon .icon { width: 1.9rem; height: 1.9rem; }
+.logbubble .icon { width: 0.95em; height: 0.95em; }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }

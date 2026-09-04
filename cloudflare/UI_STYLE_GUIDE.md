@@ -47,6 +47,7 @@ ${ADMIN_PAGE_CSS}</style>   <!-- 其它页面同理替换为各自 PAGE_CSS -->
 - 正文/界面文字不要用旧 GitHub 霓虹绿 `#3fb950`、霓虹红 `#f85149` 这类高饱和值。
 - 不要在页面 CSS 里自造 hex 常量 —— 一律引用 token 或别名。
 - 展示文案不要用纯白 `#ffffff` 长文；图标容器不要发光。
+- **不要使用 emoji 当图标**：一律用内联 SVG 线条图标（`.icon`，见 §4.1 图标规范）。
 
 ---
 
@@ -118,6 +119,15 @@ ${ADMIN_PAGE_CSS}</style>   <!-- 其它页面同理替换为各自 PAGE_CSS -->
 | 数值 | — | `font-variant-numeric: tabular-nums` |
 | 代码/ID `.code-mono` | `0.86em` | `--font-mono`，`--carbon` 底 + `--graphite` 边 |
 
+### 4.1 图标（Iconography）
+
+- **全站图标一律使用内联 SVG，禁止使用 emoji。** emoji 跨平台配色不一致、与灰阶/单铜色体系冲突；内联 SVG 继承 `currentColor`，且无外网字体依赖（页面 CSP 不允许外链 icon font）。
+- 统一画风：`viewBox="0 0 24 24"`、`fill="none"`、`stroke="currentColor"`、`stroke-width="1.8"`、`stroke-linecap/linejoin="round"`（类 Lucide 线条风）。
+- 标准结构：`<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">…路径…</svg>`，颜色随所在元素 `color` 走。
+- 图标放进 **JS 字符串**时注意引号：外层字符串用双引号则 SVG 属性全部单引号，反之亦然；不要混用导致提前截断字符串。
+- 常用尺寸/颜色由 CSS 统一控制（`ui.ts` 内 `.icon` 及 `h1/.btn/.badge/.stat-icon/.quick-icon/.micbtn/.dropzone-icon` 等上下文规则），页面内只管放 `<svg class="icon">` 即可。
+- 已有图标语义（新增时沿用）：概览=柱图、快照/抓屏=相机、图片/壁纸=图片、时钟=信息壁纸、审批/发送=纸飞机、通知=铃铛、Hook/Agent=机器人、设备=手机、模拟器=显示器、语音=麦克风、刷新=旋转、配对=加号、返回=左箭头、检查/已批准/在线=对勾、错误/失败/拒绝=X、警告=三角、记录/日志=剪贴板、设置=滑杆、保存/导出=下载、烧录=闪电、上传/上传区=文件夹/下载箭头、终端=终端符、搜索=放大镜、USB 烧录=USB。
+
 ---
 
 ## 5. 组件规范
@@ -139,7 +149,7 @@ ${ADMIN_PAGE_CSS}</style>   <!-- 其它页面同理替换为各自 PAGE_CSS -->
 |---|---|
 | `.card` / `.stat-card` / `.quick-card` / `.card-box` | 底 `--onyx`、边 `--graphite`、圆角 `--r-card`、**无投影**；hover 边框升到 `--slate` |
 | `.card-header` | 与正文用 1px `--graphite` 分隔 |
-| `.stat-icon` / `.quick-icon` | emoji 置于 `--carbon` 圆形胶囊中（直径 38–42px），不发光 |
+| `.stat-icon` / `.quick-icon` | SVG 图标置于 `--carbon` 圆形胶囊中（直径 38–42px），不发光 |
 | `.stat-value` | `1.9rem` / 600 / 白 / tabular-nums |
 
 ### 5.3 按钮层级（重要）
@@ -225,6 +235,6 @@ hover 一律「背景微亮 / 边框升一级」，**不加发光阴影**；`:fo
 - [ ] `import { UI_CSS } from "./ui"`，`<style>` 只写 `${UI_CSS}` + 本页 CSS
 - [ ] 颜色引用 token；按钮按 5.3 层级（白色主按钮每屏 ≤1）
 - [ ] 路由注册进 `index.ts` fetch（带鉴权检查，admin 系复用 `verifyAdminBasicAuth`）
-- [ ] 页面文案与整体页面一致（`lang="zh-CN"`）；emoji 作为图形元素允许
+- [ ] 页面文案与整体页面一致（`lang="zh-CN"`）；图标一律用内联 SVG（`.icon`），不出现 emoji
 - [ ] `npx tsc --noEmit` 通过，页面渲染无 `${UI_CSS}` 字面残留
 - [ ] 部署：`npx wrangler deploy --keep-vars`

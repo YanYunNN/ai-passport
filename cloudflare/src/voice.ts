@@ -403,12 +403,12 @@ ${VOICE_PAGE_CSS}</style>
 </head>
 <body>
 <div class="topbar">
-    <div class="brand">🎙️ <span>Kiro Voice</span></div>
-    <button class="logbtn" id="logBtn" title="查看对话与录音追溯日志">📋 日志</button>
-    <button class="status" id="ttsToggle" title="自动朗读 AI 回复">🔊 自动朗读</button>
-    <button class="stopbtn" id="stopBtn" title="停止朗读" hidden>⏹ 停止</button>
+    <div class="brand"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v3"/></svg> <span>Kiro Voice</span></div>
+    <button class="logbtn" id="logBtn" title="查看对话与录音追溯日志"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h6"/></svg> 日志</button>
+    <button class="status" id="ttsToggle" title="自动朗读 AI 回复"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.8 5.8a9 9 0 0 1 0 12.4"/></svg> 自动朗读</button>
+    <button class="stopbtn" id="stopBtn" title="停止朗读" hidden><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="13" height="13" rx="1.5"/></svg> 停止</button>
     <div class="status" id="statusPill">检测中…</div>
-    <button class="cfgbtn" id="cfgBtn" title="TTS 设置">⚙️</button>
+    <button class="cfgbtn" id="cfgBtn" title="TTS 设置"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="2" y1="14" x2="6" y2="14"/><line x1="10" y1="8" x2="14" y2="8"/><line x1="18" y1="16" x2="22" y2="16"/></svg></button>
 </div>
 <div class="cfgpanel" id="cfgPanel">
     <div class="cfgrow">
@@ -437,7 +437,7 @@ ${VOICE_PAGE_CSS}</style>
         <span style="font-size:0.7rem; color:var(--muted);">流式：Edge 边合成边发送，页面边下边播（不支持 MSE 时自动降级为缓冲播放）</span>
     </div>
     <div class="cfgbtns">
-        <button class="cfgbtn-sec" id="previewBtn">🔊 试听</button>
+        <button class="cfgbtn-sec" id="previewBtn"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.8 5.8a9 9 0 0 1 0 12.4"/></svg> 试听</button>
         <button class="cfgbtn-act" id="saveCfgBtn">保存</button>
     </div>
 </div>
@@ -446,10 +446,10 @@ ${VOICE_PAGE_CSS}</style>
 </div>
 <div class="logpanel" id="logPanel">
     <div class="logheader">
-        <div class="logtitle">📋 <span>对话与录音追踪</span></div>
+        <div class="logtitle"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h6"/></svg> <span>对话与录音追踪</span></div>
         <div style="display:flex; gap:0.4rem;">
-            <button class="logbtn" id="refreshLogBtn">🔄 刷新</button>
-            <button class="logbtn" id="closeLogBtn">✕</button>
+            <button class="logbtn" id="refreshLogBtn"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/></svg> 刷新</button>
+            <button class="logbtn" id="closeLogBtn"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg></button>
         </div>
     </div>
     <div class="loglist" id="logList">
@@ -457,7 +457,7 @@ ${VOICE_PAGE_CSS}</style>
     </div>
 </div>
 <div class="inputbar">
-    <button class="micbtn" id="micBtn" title="点击开始/结束录音">🎙️</button>
+    <button class="micbtn" id="micBtn" title="点击开始/结束录音"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v3"/></svg></button>
     <input class="textinput" id="textInput" placeholder="输入文字，或点麦克风说话…" autocomplete="off">
     <button class="sendbtn" id="sendBtn">发送</button>
 </div>
@@ -519,7 +519,7 @@ ${VOICE_PAGE_CSS}</style>
         if (currentPlayBtn) {
             const isUser = currentPlayBtn.dataset.type === 'user';
             currentPlayBtn.classList.remove("playing");
-            currentPlayBtn.textContent = isUser ? "▶ 录音回放" : "🔊 AI回复";
+            currentPlayBtn.innerHTML = isUser ? "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m7 4 12 8-12 8z'/></svg> 录音回放" : "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M11 5 6 9H2v6h4l5 4V5z'/><path d='M15.5 8.5a5 5 0 0 1 0 7'/><path d='M18.8 5.8a9 9 0 0 1 0 12.4'/></svg> AI回复";
             currentPlayBtn = null;
         }
     }
@@ -533,11 +533,11 @@ ${VOICE_PAGE_CSS}</style>
             if (logAudio.paused) {
                 logAudio.play().catch(stopLogAudio);
                 btn.classList.add("playing");
-                btn.textContent = type === 'user' ? "⏸ 暂停原声" : "⏸ 暂停AI回复";
+                btn.innerHTML = type === 'user' ? "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='6' y='5' width='4' height='14' rx='1'/><rect x='14' y='5' width='4' height='14' rx='1'/></svg> 暂停原声" : "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='6' y='5' width='4' height='14' rx='1'/><rect x='14' y='5' width='4' height='14' rx='1'/></svg> 暂停AI回复";
             } else {
                 logAudio.pause();
                 btn.classList.remove("playing");
-                btn.textContent = type === 'user' ? "▶ 继续原声" : "🔊 继续AI回复";
+                btn.innerHTML = type === 'user' ? "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m7 4 12 8-12 8z'/></svg> 继续原声" : "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M11 5 6 9H2v6h4l5 4V5z'/><path d='M15.5 8.5a5 5 0 0 1 0 7'/><path d='M18.8 5.8a9 9 0 0 1 0 12.4'/></svg> 继续AI回复";
             }
             return;
         }
@@ -545,7 +545,7 @@ ${VOICE_PAGE_CSS}</style>
         stopPlayback();
         currentPlayBtn = btn;
         btn.classList.add("playing");
-        btn.textContent = "⏳ 加载中…";
+        btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M5 22h14'/><path d='M5 2h14'/><path d='M17 2v4.2a2 2 0 0 1-.6 1.4L12 12l-4.4-4.4a2 2 0 0 1-.6-1.4V2'/><path d='M7 22v-4.2a2 2 0 0 1 .6-1.4L12 12l4.4 4.4a2 2 0 0 1 .6 1.4V22'/></svg> 加载中…";
 
         const audioPath = "/v1/voice/audio/" + encodeURIComponent(id) + "?type=" + encodeURIComponent(type);
         try {
@@ -567,7 +567,7 @@ ${VOICE_PAGE_CSS}</style>
                 stopLogAudio();
             };
             await logAudio.play();
-            btn.textContent = type === 'user' ? "⏸ 暂停原声" : "⏸ 暂停AI回复";
+            btn.innerHTML = type === 'user' ? "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='6' y='5' width='4' height='14' rx='1'/><rect x='14' y='5' width='4' height='14' rx='1'/></svg> 暂停原声" : "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='6' y='5' width='4' height='14' rx='1'/><rect x='14' y='5' width='4' height='14' rx='1'/></svg> 暂停AI回复";
         } catch (err) {
             console.error("Audio playback error:", err);
             alert("音频暂未存储或加载失败 (" + err.message + ")");
@@ -607,13 +607,13 @@ ${VOICE_PAGE_CSS}</style>
                         <span>TTS: \${item.latency_tts_ms || 0}ms</span>
                         \${item.audio_bytes ? '<span>音频: ' + Math.round(item.audio_bytes/1024) + 'KB</span>' : ''}
                     </div>
-                    \${item.asr_text ? '<div class="logbubble u">🗣️ ' + escapeHtml(item.asr_text) + '</div>' : ''}
-                    \${item.ai_reply ? '<div class="logbubble a">🤖 ' + escapeHtml(item.ai_reply) + '</div>' : ''}
-                    \${item.error_msg ? '<div style="color:var(--err); margin-top:0.3rem; font-size:0.75rem;">⚠️ ' + escapeHtml(item.error_msg) + '</div>' : ''}
+                    \${item.asr_text ? '<div class="logbubble u"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 0 1 9 9 9 9 0 0 1-13.5 8L4 21l1.3-3.3A9 9 0 0 1 12 3Z"/></svg> ' + escapeHtml(item.asr_text) + '</div>' : ''}
+                    \${item.ai_reply ? '<div class="logbubble a"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="11" rx="2"/><path d="M12 8V4"/><circle cx="9.5" cy="13" r="1"/><circle cx="14.5" cy="13" r="1"/></svg> ' + escapeHtml(item.ai_reply) + '</div>' : ''}
+                    \${item.error_msg ? '<div style="color:var(--err); margin-top:0.3rem; font-size:0.75rem;"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> ' + escapeHtml(item.error_msg) + '</div>' : ''}
                     \${(item.has_user_audio || item.has_tts_audio) ? \`
                     <div class="logactions">
-                        \${item.has_user_audio ? \`<button class="logplay-btn" data-type="user" data-id="\${item.id}">▶ 录音回放</button>\` : ''}
-                        \${item.has_tts_audio ? \`<button class="logplay-btn" data-type="tts" data-id="\${item.id}">🔊 AI回复</button>\` : ''}
+                        \${item.has_user_audio ? \`<button class="logplay-btn" data-type="user" data-id="\${item.id}"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 4 12 8-12 8z"/></svg> 录音回放</button>\` : ''}
+                        \${item.has_tts_audio ? \`<button class="logplay-btn" data-type="tts" data-id="\${item.id}"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.8 5.8a9 9 0 0 1 0 12.4"/></svg> AI回复</button>\` : ''}
                     </div>
                     \` : ''}
                 \`;
@@ -630,7 +630,7 @@ ${VOICE_PAGE_CSS}</style>
 
     ttsToggle.addEventListener("click", () => {
         autoplay = !autoplay;
-        ttsToggle.textContent = autoplay ? "🔊 自动朗读" : "🔇 已静音";
+        ttsToggle.innerHTML = autoplay ? "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M11 5 6 9H2v6h4l5 4V5z'/><path d='M15.5 8.5a5 5 0 0 1 0 7'/><path d='M18.8 5.8a9 9 0 0 1 0 12.4'/></svg> 自动朗读" : "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M11 5 6 9H2v6h4l5 4V5z'/><path d='m22 9-6 6'/><path d='m16 9 6 6'/></svg> 已静音";
     });
 
     // 停止并重置当前朗读（无论播放中还是暂停）。幂等：无播放时直接返回。
@@ -642,7 +642,7 @@ ${VOICE_PAGE_CSS}</style>
             currentAudio = null;
         }
         if (currentBtn) {
-            currentBtn.textContent = "🔊";
+            currentBtn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M11 5 6 9H2v6h4l5 4V5z'/><path d='M15.5 8.5a5 5 0 0 1 0 7'/><path d='M18.8 5.8a9 9 0 0 1 0 12.4'/></svg>";
             currentBtn.classList.remove("playing", "paused");
             currentBtn.title = "朗读";
             currentBtn = null;
@@ -651,7 +651,7 @@ ${VOICE_PAGE_CSS}</style>
     }
     stopBtn.addEventListener("click", stopPlayback);
 
-    // ---------- TTS 设置（右上角 ⚙️，localStorage 持久化） ----------
+    // ---------- TTS 设置（右上角齿轮图标，localStorage 持久化） ----------
     const TTS_ZH_VOICES = [
         ["zh-CN-XiaoxiaoNeural", "晓晓 · 女声 温柔"],
         ["zh-CN-XiaoyiNeural", "晓伊 · 女声 活泼"],
@@ -880,7 +880,7 @@ ${VOICE_PAGE_CSS}</style>
         currentAudio = audio;
         currentBtn = btn;
         if (btn) {
-            btn.textContent = "⏸";
+            btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='6' y='5' width='4' height='14' rx='1'/><rect x='14' y='5' width='4' height='14' rx='1'/></svg>";
             btn.classList.add("playing");
             btn.classList.remove("paused");
             btn.title = "暂停";
@@ -950,10 +950,10 @@ ${VOICE_PAGE_CSS}</style>
         if (currentAudio && currentBtn === btn) {
             if (currentAudio.paused) {
                 currentAudio.play().catch(stopPlayback);
-                if (btn) { btn.textContent = "⏸"; btn.classList.remove("paused"); btn.classList.add("playing"); btn.title = "暂停"; }
+                if (btn) { btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><rect x='6' y='5' width='4' height='14' rx='1'/><rect x='14' y='5' width='4' height='14' rx='1'/></svg>"; btn.classList.remove("paused"); btn.classList.add("playing"); btn.title = "暂停"; }
             } else {
                 currentAudio.pause();
-                if (btn) { btn.textContent = "▶"; btn.classList.remove("playing"); btn.classList.add("paused"); btn.title = "继续播放"; }
+                if (btn) { btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='m7 4 12 8-12 8z'/></svg>"; btn.classList.remove("playing"); btn.classList.add("paused"); btn.title = "继续播放"; }
             }
             return;
         }
@@ -990,7 +990,7 @@ ${VOICE_PAGE_CSS}</style>
         const div = appendBubble(text, "ai");
         const btn = document.createElement("button");
         btn.className = "speakbtn";
-        btn.textContent = "🔊";
+        btn.innerHTML = "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'><path d='M11 5 6 9H2v6h4l5 4V5z'/><path d='M15.5 8.5a5 5 0 0 1 0 7'/><path d='M18.8 5.8a9 9 0 0 1 0 12.4'/></svg>";
         btn.title = "朗读";
         btn.onclick = () => speak(text, btn);
         div.appendChild(btn);
