@@ -321,6 +321,7 @@ export class PassportRelay extends DurableObject<Env> {
                                         }
                                     } catch {}
                                 },
+                                this.ctx,
                             );
                             socket.send(JSON.stringify({
                                 v: 1,

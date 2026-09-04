@@ -222,14 +222,22 @@ export interface VoiceLogRow {
     status: string;
     error_msg: string | null;
     created_at: number;
+    has_user_audio?: boolean;
+    has_tts_audio?: boolean;
+}
+
+export interface VoiceAudioPayload {
+    audioWav?: ArrayBuffer | Uint8Array | null;
+    ttsMp3?: ArrayBuffer | Uint8Array | null;
 }
 
 export async function writeVoiceLog(
     env: Env,
-    log: Omit<VoiceLogRow, "id">,
-): Promise<void> {
+    log: Omit<VoiceLogRow, "id" | "has_user_audio" | "has_tts_audio">,
+    audio?: VoiceAudioPayload,
+): Promise<number | null> {
     try {
-        await env.DB.prepare(
+        const res = await env.DB.prepare(
             "INSERT INTO voice_logs (device_id, session_id, asr_text, ai_reply, audio_bytes, mp3_bytes, " +
             "latency_asr_ms, latency_chat_ms, latency_tts_ms, latency_total_ms, status, error_msg, created_at) " +
             "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
@@ -248,10 +256,51 @@ export async function writeVoiceLog(
             log.error_msg,
             log.created_at,
         ).run();
+
+        const logId = res.meta?.last_row_id;
+        if (logId && audio && (audio.audioWav || audio.ttsMp3)) {
+            const wavU8 = audio.audioWav ? (audio.audioWav instanceof Uint8Array ? audio.audioWav : new Uint8Array(audio.audioWav)) : null;
+            const mp3U8 = audio.ttsMp3 ? (audio.ttsMp3 instanceof Uint8Array ? audio.ttsMp3 : new Uint8Array(audio.ttsMp3)) : null;
+            await env.DB.prepare(
+                "INSERT INTO voice_recordings (id, audio_wav, tts_mp3, created_at) VALUES (?1, ?2, ?3, ?4)",
+            ).bind(logId, wavU8, mp3U8, log.created_at).run();
+        }
+        return logId ?? null;
     } catch (err) {
         console.error("Failed to write voice log to DB:", err);
+        return null;
     }
 }
+
+export async function getVoiceAudio(
+    env: Env,
+    id: number,
+    type: "user" | "tts" = "user",
+): Promise<ArrayBuffer | null> {
+    try {
+        const col = type === "tts" ? "tts_mp3" : "audio_wav";
+        const row = await env.DB.prepare(
+            `SELECT ${col} AS audio_data FROM voice_recordings WHERE id = ?1`,
+        ).bind(id).first<{ audio_data?: any }>();
+        if (!row?.audio_data) return null;
+        if (row.audio_data instanceof ArrayBuffer) {
+            return row.audio_data;
+        }
+        if (ArrayBuffer.isView(row.audio_data)) {
+            const view = row.audio_data as ArrayBufferView;
+            return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength) as ArrayBuffer;
+        }
+        if (Array.isArray(row.audio_data)) {
+            return new Uint8Array(row.audio_data).buffer as ArrayBuffer;
+        }
+        return null;
+    } catch (err) {
+        console.error(`Failed to get voice audio (${type}, id=${id}) from DB:`, err);
+        return null;
+    }
+}
+
+export const writeVoiceLogWithAudio = writeVoiceLog;
 
 export async function listVoiceLogs(
     env: Env,
@@ -259,20 +308,30 @@ export async function listVoiceLogs(
 ): Promise<VoiceLogRow[]> {
     const limit = Math.max(1, Math.min(200, opts.limit ?? 50));
     try {
+        const sqlBase =
+            "SELECT l.id, l.device_id, l.session_id, l.asr_text, l.ai_reply, l.audio_bytes, l.mp3_bytes, " +
+            "l.latency_asr_ms, l.latency_chat_ms, l.latency_tts_ms, l.latency_total_ms, l.status, l.error_msg, l.created_at, " +
+            "(r.audio_wav IS NOT NULL) AS has_user_audio, (r.tts_mp3 IS NOT NULL) AS has_tts_audio " +
+            "FROM voice_logs l " +
+            "LEFT JOIN voice_recordings r ON l.id = r.id ";
         if (opts.deviceId) {
             const rows = await env.DB.prepare(
-                "SELECT id, device_id, session_id, asr_text, ai_reply, audio_bytes, mp3_bytes, " +
-                "latency_asr_ms, latency_chat_ms, latency_tts_ms, latency_total_ms, status, error_msg, created_at " +
-                "FROM voice_logs WHERE device_id = ?1 ORDER BY created_at DESC LIMIT ?2",
-            ).bind(opts.deviceId, limit).all<VoiceLogRow>();
-            return rows.results || [];
+                sqlBase + "WHERE l.device_id = ?1 ORDER BY l.created_at DESC LIMIT ?2",
+            ).bind(opts.deviceId, limit).all<any>();
+            return (rows.results || []).map(r => ({
+                ...r,
+                has_user_audio: Boolean(r.has_user_audio),
+                has_tts_audio: Boolean(r.has_tts_audio),
+            }));
         }
         const rows = await env.DB.prepare(
-            "SELECT id, device_id, session_id, asr_text, ai_reply, audio_bytes, mp3_bytes, " +
-            "latency_asr_ms, latency_chat_ms, latency_tts_ms, latency_total_ms, status, error_msg, created_at " +
-            "FROM voice_logs ORDER BY created_at DESC LIMIT ?1",
-        ).bind(limit).all<VoiceLogRow>();
-        return rows.results || [];
+            sqlBase + "ORDER BY l.created_at DESC LIMIT ?1",
+        ).bind(limit).all<any>();
+        return (rows.results || []).map(r => ({
+            ...r,
+            has_user_audio: Boolean(r.has_user_audio),
+            has_tts_audio: Boolean(r.has_tts_audio),
+        }));
     } catch (err) {
         console.error("Failed to list voice logs from DB:", err);
         return [];

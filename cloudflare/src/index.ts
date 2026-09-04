@@ -83,7 +83,7 @@ const json = (body: unknown, status = 200, additionalHeaders?: HeadersInit): Res
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
 export default {
-    async fetch(request: Request, env: Env): Promise<Response> {
+    async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
         try {
             const url = new URL(request.url);
             if (request.method === "GET" && url.pathname === "/healthz") return json({ ok: true });
@@ -95,10 +95,10 @@ export default {
                 return handleSimulatorPresets();
             }
             if (request.method === "GET" && url.pathname === "/voice") {
-                return handleVoice(request, env, url);
+                return handleVoice(request, env, url, ctx);
             }
             if (url.pathname.startsWith("/v1/voice/")) {
-                return handleVoice(request, env, url);
+                return handleVoice(request, env, url, ctx);
             }
 
             if (request.method === "GET" && (url.pathname === "/admin" || url.pathname === "/admin/devices")) {

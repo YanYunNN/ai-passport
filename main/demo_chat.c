@@ -292,6 +292,8 @@ static esp_err_t chat_play_mp3_stream(void)
     bool format_set = false;
 
     while (true) {
+        if (s_stop_record) break;
+
         if (buf_len < buf_cap && flash_off < s_mp3_len) {
             size_t want = buf_cap - buf_len;
             if (want > s_mp3_len - flash_off) want = s_mp3_len - flash_off;
@@ -301,15 +303,22 @@ static esp_err_t chat_play_mp3_stream(void)
             flash_off += want;
             buf_len += want;
         }
-        if (buf_len == 0) break;
+        if (buf_len == 0) {
+            if (s_tts_ready && flash_off >= s_mp3_len) break;
+            vTaskDelay(pdMS_TO_TICKS(15));
+            continue;
+        }
 
         int offset = MP3FindSyncWord(buf, (int)buf_len);
         if (offset < 0) {
-            if (flash_off < s_mp3_len) {
+            if (flash_off < s_mp3_len || !s_tts_ready) {
                 // 跳过 ID3/非音频元数据头，保留末尾 3 字节以防跨包同步字截断
                 if (buf_len > 3) {
                     memmove(buf, buf + buf_len - 3, 3);
                     buf_len = 3;
+                }
+                if (flash_off >= s_mp3_len && !s_tts_ready) {
+                    vTaskDelay(pdMS_TO_TICKS(15));
                 }
                 continue;
             }
@@ -341,13 +350,18 @@ static esp_err_t chat_play_mp3_stream(void)
             size_t pcm_bytes = (size_t)info.outputSamps * (info.nChans > 1 ? 2u : 1u) * sizeof(int16_t);
             if (bsp_audio_write(pcm, pcm_bytes) != ESP_OK) break;
         } else if (err == ERR_MP3_INDATA_UNDERFLOW || err == ERR_MP3_MAINDATA_UNDERFLOW) {
-            if (flash_off >= s_mp3_len) break;
+            if (flash_off >= s_mp3_len) {
+                if (s_tts_ready) break;
+                vTaskDelay(pdMS_TO_TICKS(15));
+                continue;
+            }
         } else if (in_left == before) {
             if (buf_len > 0) {
                 memmove(buf, buf + 1, buf_len - 1);
                 buf_len--;
             } else {
-                break;
+                if (s_tts_ready && flash_off >= s_mp3_len) break;
+                vTaskDelay(pdMS_TO_TICKS(15));
             }
         }
     }
@@ -451,12 +465,16 @@ static void chat_task(void *arg)
 
         if (st == CHAT_WAITING) {
             uint32_t wait_ticks = 0;
-            while (!s_tts_ready && !s_tts_error && wait_ticks < 600) {
+            while (!s_tts_error && wait_ticks < 600) {
                 if (s_state != CHAT_WAITING) {
                     break;
                 }
                 if (s_stop_record) {
                     // 用户在等待期间再次按 OK 主动取消
+                    break;
+                }
+                // 收到 2048 字节 (约 0.25 秒音频) 或服务端已告知结束，立刻提前起播！
+                if (s_mp3_len >= 2048 || s_tts_ready) {
                     break;
                 }
                 vTaskDelay(pdMS_TO_TICKS(50));
@@ -474,7 +492,7 @@ static void chat_task(void *arg)
                 chat_reset_to_idle(s_voice_err[0] ? s_voice_err : "识别失败");
                 continue;
             }
-            if (!s_tts_ready || s_mp3_len == 0) {
+            if (s_mp3_len == 0 && !s_tts_ready) {
                 ESP_LOGW(TAG, "等待 TTS 响应超时: wait_ticks=%lu", (unsigned long)wait_ticks);
                 chat_reset_to_idle("响应超时");
                 continue;

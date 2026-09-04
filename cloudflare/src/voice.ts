@@ -3,15 +3,19 @@
 // (Whisper via Cloudflare Workers AI). TTS goes through the Edge TTS proxy
 // Worker on tts.yanyun.asia (OpenAI-compatible POST /v1/audio/speech).
 import { bearerToken, hasBearerSecret, verifyAdminBasicAuth, verifyDeviceCredential } from "./auth";
-import { writeVoiceLog, listVoiceLogs } from "./db";
+import { writeVoiceLog, listVoiceLogs, getVoiceAudio, type VoiceLogRow, type VoiceAudioPayload } from "./db";
 import type { Env } from "./env";
 import { UI_CSS } from "./ui";
 
-const json = (body: unknown, status = 200): Response =>
-    new Response(JSON.stringify(body), {
-        status,
-        headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
-    });
+export type WaitUntilTarget = { waitUntil: (promise: Promise<any>) => void };
+
+const json = (body: unknown, status = 200, additionalHeaders?: HeadersInit): Response => {
+    const headers = new Headers({ "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    if (additionalHeaders) {
+        for (const [k, v] of new Headers(additionalHeaders)) headers.set(k, v);
+    }
+    return new Response(JSON.stringify(body), { status, headers });
+};
 
 async function voiceAuthorized(request: Request, env: Env): Promise<boolean> {
     if (hasBearerSecret(request, env.HOOK_AUTH_SECRET)) return true;
@@ -309,6 +313,36 @@ body {
 .logbubble { margin-top: 0.3rem; padding: 0.42rem 0.65rem; border-radius: 8px; font-size: 0.8rem; line-height: 1.5; }
 .logbubble.u { background: rgba(226, 227, 233, 0.08); color: var(--white); }
 .logbubble.a { background: rgba(226, 227, 233, 0.03); color: var(--mist); margin-top: 0.25rem; }
+.logactions {
+    display: flex;
+    gap: 0.45rem;
+    margin-top: 0.45rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.logplay-btn {
+    background: rgba(226, 227, 233, 0.06);
+    border: 1px solid var(--graphite);
+    color: var(--bone);
+    border-radius: var(--r-pill);
+    padding: 0.22rem 0.65rem;
+    font-size: 0.72rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.logplay-btn:hover {
+    background: rgba(226, 227, 233, 0.12);
+    border-color: var(--slate);
+    color: var(--copper-hi);
+}
+.logplay-btn.playing {
+    background: rgba(204, 145, 102, 0.2);
+    border-color: var(--copper);
+    color: var(--copper-hi);
+}
 .cfgrow { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.9rem; }
 .cfgrow label { font-size: 0.78rem; color: var(--steel); }
 .cfgrow select, .cfgrow input[type=text] {
@@ -459,8 +493,87 @@ ${VOICE_PAGE_CSS}</style>
         logPanel.classList.toggle("open");
         if (logPanel.classList.contains("open")) loadLogs();
     });
-    closeLogBtn.addEventListener("click", () => logPanel.classList.remove("open"));
-    refreshLogBtn.addEventListener("click", () => loadLogs());
+    closeLogBtn.addEventListener("click", () => {
+        stopLogAudio();
+        logPanel.classList.remove("open");
+    });
+    refreshLogBtn.addEventListener("click", () => {
+        stopLogAudio();
+        loadLogs();
+    });
+
+    let logAudio = null;
+    let logAudioUrl = null;
+    let currentPlayBtn = null;
+
+    function stopLogAudio() {
+        if (logAudio) {
+            logAudio.pause();
+            logAudio.currentTime = 0;
+            logAudio = null;
+        }
+        if (logAudioUrl) {
+            URL.revokeObjectURL(logAudioUrl);
+            logAudioUrl = null;
+        }
+        if (currentPlayBtn) {
+            const isUser = currentPlayBtn.dataset.type === 'user';
+            currentPlayBtn.classList.remove("playing");
+            currentPlayBtn.textContent = isUser ? "▶ 录音回放" : "🔊 AI回复";
+            currentPlayBtn = null;
+        }
+    }
+
+    logList.addEventListener("click", async (e) => {
+        const btn = e.target.closest(".logplay-btn");
+        if (!btn) return;
+        const id = btn.dataset.id;
+        const type = btn.dataset.type;
+        if (logAudio && currentPlayBtn === btn) {
+            if (logAudio.paused) {
+                logAudio.play().catch(stopLogAudio);
+                btn.classList.add("playing");
+                btn.textContent = type === 'user' ? "⏸ 暂停原声" : "⏸ 暂停AI回复";
+            } else {
+                logAudio.pause();
+                btn.classList.remove("playing");
+                btn.textContent = type === 'user' ? "▶ 继续原声" : "🔊 继续AI回复";
+            }
+            return;
+        }
+        stopLogAudio();
+        stopPlayback();
+        currentPlayBtn = btn;
+        btn.classList.add("playing");
+        btn.textContent = "⏳ 加载中…";
+
+        const audioPath = "/v1/voice/audio/" + encodeURIComponent(id) + "?type=" + encodeURIComponent(type);
+        try {
+            const res = await fetch(audioPath);
+            if (!res.ok) {
+                throw new Error("HTTP " + res.status);
+            }
+            const blob = await res.blob();
+            if (!blob || blob.size === 0) {
+                throw new Error("音频内容为空");
+            }
+            if (currentPlayBtn !== btn) return;
+            logAudioUrl = URL.createObjectURL(blob);
+            logAudio = new Audio(logAudioUrl);
+            logAudio.onended = stopLogAudio;
+            logAudio.onerror = (err) => {
+                console.error("logAudio decode error", err);
+                alert("音频解码或播放失败");
+                stopLogAudio();
+            };
+            await logAudio.play();
+            btn.textContent = type === 'user' ? "⏸ 暂停原声" : "⏸ 暂停AI回复";
+        } catch (err) {
+            console.error("Audio playback error:", err);
+            alert("音频暂未存储或加载失败 (" + err.message + ")");
+            stopLogAudio();
+        }
+    });
 
     function formatTime(unixSec) {
         if (!unixSec) return "--";
@@ -497,6 +610,12 @@ ${VOICE_PAGE_CSS}</style>
                     \${item.asr_text ? '<div class="logbubble u">🗣️ ' + escapeHtml(item.asr_text) + '</div>' : ''}
                     \${item.ai_reply ? '<div class="logbubble a">🤖 ' + escapeHtml(item.ai_reply) + '</div>' : ''}
                     \${item.error_msg ? '<div style="color:var(--err); margin-top:0.3rem; font-size:0.75rem;">⚠️ ' + escapeHtml(item.error_msg) + '</div>' : ''}
+                    \${(item.has_user_audio || item.has_tts_audio) ? \`
+                    <div class="logactions">
+                        \${item.has_user_audio ? \`<button class="logplay-btn" data-type="user" data-id="\${item.id}">▶ 录音回放</button>\` : ''}
+                        \${item.has_tts_audio ? \`<button class="logplay-btn" data-type="tts" data-id="\${item.id}">🔊 AI回复</button>\` : ''}
+                    </div>
+                    \` : ''}
                 \`;
                 logList.appendChild(div);
             }
@@ -516,6 +635,7 @@ ${VOICE_PAGE_CSS}</style>
 
     // 停止并重置当前朗读（无论播放中还是暂停）。幂等：无播放时直接返回。
     function stopPlayback() {
+        stopLogAudio();
         if (currentAudio) {
             currentAudio.pause();
             currentAudio.currentTime = 0;
@@ -954,7 +1074,7 @@ ${VOICE_PAGE_CSS}</style>
         headers: {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store",
-            "Content-Security-Policy": "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; media-src data: blob:; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+            "Content-Security-Policy": "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self' data: blob:; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
             "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
         },
@@ -1170,6 +1290,7 @@ export async function processVoicePipeline(
     deviceId = "device",
     sessionId: string | null = null,
     onStage?: VoiceStageCallback,
+    ctx?: WaitUntilTarget,
 ): Promise<VoicePipelineResult> {
     if (!audioWav || audioWav.byteLength === 0) {
         throw new VoiceError("音频数据为空", 400);
@@ -1177,6 +1298,18 @@ export async function processVoicePipeline(
     if (audioWav.byteLength > 2_000_000) {
         throw new VoiceError("音频过大（单次请控制在 30 秒内）", 400);
     }
+
+    const recordLogAsync = (
+        log: Omit<VoiceLogRow, "id" | "has_user_audio" | "has_tts_audio">,
+        audio?: VoiceAudioPayload,
+    ) => {
+        const p = writeVoiceLog(env, log, audio);
+        if (ctx && typeof ctx.waitUntil === "function") {
+            ctx.waitUntil(p);
+        } else {
+            p.catch(err => console.error("Async voice log write failed:", err));
+        }
+    };
 
     const t0 = Date.now();
     let asrText = "";
@@ -1194,7 +1327,7 @@ export async function processVoicePipeline(
         }));
     } catch (err: any) {
         const dur = Date.now() - t0;
-        await writeVoiceLog(env, {
+        recordLogAsync({
             device_id: deviceId,
             session_id: sessionId,
             asr_text: null,
@@ -1208,13 +1341,13 @@ export async function processVoicePipeline(
             status: "asr_error",
             error_msg: err?.message || String(err),
             created_at: Math.floor(Date.now() / 1000),
-        });
+        }, { audioWav });
         throw err;
     }
 
     if (!asrText) {
         const dur = t1 - t0;
-        await writeVoiceLog(env, {
+        recordLogAsync({
             device_id: deviceId,
             session_id: sessionId,
             asr_text: "",
@@ -1228,7 +1361,7 @@ export async function processVoicePipeline(
             status: "asr_empty",
             error_msg: "未识别到有效语音",
             created_at: Math.floor(Date.now() / 1000),
-        });
+        }, { audioWav });
         throw new VoiceError("未识别到有效语音", 400);
     }
 
@@ -1250,7 +1383,7 @@ export async function processVoicePipeline(
         }));
     } catch (err: any) {
         const tErr = Date.now();
-        await writeVoiceLog(env, {
+        recordLogAsync({
             device_id: deviceId,
             session_id: sessionId,
             asr_text: asrText,
@@ -1264,7 +1397,7 @@ export async function processVoicePipeline(
             status: "ai_error",
             error_msg: err?.message || String(err),
             created_at: Math.floor(Date.now() / 1000),
-        });
+        }, { audioWav });
         throw err;
     }
 
@@ -1290,7 +1423,7 @@ export async function processVoicePipeline(
         }));
     } catch (err: any) {
         const tErr = Date.now();
-        await writeVoiceLog(env, {
+        recordLogAsync({
             device_id: deviceId,
             session_id: sessionId,
             asr_text: asrText,
@@ -1304,12 +1437,12 @@ export async function processVoicePipeline(
             status: "tts_error",
             error_msg: err?.message || String(err),
             created_at: Math.floor(Date.now() / 1000),
-        });
+        }, { audioWav });
         throw err;
     }
 
     const totalMs = t3 - t0;
-    await writeVoiceLog(env, {
+    recordLogAsync({
         device_id: deviceId,
         session_id: sessionId,
         asr_text: asrText,
@@ -1323,6 +1456,9 @@ export async function processVoicePipeline(
         status: "success",
         error_msg: null,
         created_at: Math.floor(Date.now() / 1000),
+    }, {
+        audioWav,
+        ttsMp3: mp3Bytes,
     });
 
     return {
@@ -1336,7 +1472,12 @@ export async function processVoicePipeline(
     };
 }
 
-export async function handleVoice(request: Request, env: Env, url: URL): Promise<Response> {
+export async function handleVoice(
+    request: Request,
+    env: Env,
+    url: URL,
+    ctx?: WaitUntilTarget,
+): Promise<Response> {
     if (request.method === "GET" && url.pathname === "/voice") {
         const authorized = await voiceAuthorized(request, env);
         if (!authorized) {
@@ -1352,6 +1493,73 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
     }
 
     if (!url.pathname.startsWith("/v1/voice/")) return json({ error: "not found" }, 404);
+
+    // 音频流回放接口：公开直接访问，避免浏览器原生 <audio> 标签与流式播放被 Basic Auth 阻断
+    const audioMatch = url.pathname.match(/^\/v1\/voice\/audio\/(\d+)$/);
+    if (audioMatch) {
+        if (request.method === "OPTIONS") {
+            return new Response(null, {
+                status: 204,
+                headers: {
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+                    "Access-Control-Allow-Headers": "Range",
+                    "Access-Control-Max-Age": "86400",
+                },
+            });
+        }
+        if (request.method === "GET" || request.method === "HEAD") {
+            const id = parseInt(audioMatch[1], 10);
+            const type = (url.searchParams.get("type") === "tts" ? "tts" : "user") as "user" | "tts";
+            const audioData = await getVoiceAudio(env, id, type);
+            if (!audioData || audioData.byteLength === 0) {
+                return json({ error: "audio not found" }, 404, {
+                    "Access-Control-Allow-Origin": "*",
+                });
+            }
+            const contentType = type === "tts" ? "audio/mpeg" : "audio/wav";
+            const totalBytes = audioData.byteLength;
+            const rangeHeader = request.headers.get("Range");
+
+            const baseHeaders: Record<string, string> = {
+                "Content-Type": contentType,
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "public, max-age=86400",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Range",
+                "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges",
+            };
+
+            if (rangeHeader) {
+                const match = rangeHeader.match(/bytes=(\d+)-(\d+)?/);
+                if (match) {
+                    const start = parseInt(match[1], 10);
+                    const end = match[2] ? parseInt(match[2], 10) : totalBytes - 1;
+                    if (start < totalBytes && end < totalBytes && start <= end) {
+                        const chunk = audioData.slice(start, end + 1);
+                        return new Response(request.method === "HEAD" ? null : chunk, {
+                            status: 206,
+                            headers: {
+                                ...baseHeaders,
+                                "Content-Range": `bytes ${start}-${end}/${totalBytes}`,
+                                "Content-Length": String(chunk.byteLength),
+                            },
+                        });
+                    }
+                }
+            }
+
+            return new Response(request.method === "HEAD" ? null : audioData, {
+                status: 200,
+                headers: {
+                    ...baseHeaders,
+                    "Content-Length": String(totalBytes),
+                },
+            });
+        }
+        return json({ error: "method not allowed" }, 405);
+    }
+
     if (!(await voiceAuthorized(request, env))) return json({ error: "unauthorized" }, 401);
 
     try {
@@ -1421,7 +1629,7 @@ export async function handleVoice(request: Request, env: Env, url: URL): Promise
             }
 
             try {
-                const res = await processVoicePipeline(env, audio, history, deviceId);
+                const res = await processVoicePipeline(env, audio, history, deviceId, null, undefined, ctx);
                 return new Response(res.mp3Bytes, {
                     status: 200,
                     headers: {
