@@ -1407,9 +1407,11 @@ esp_err_t kiro_passport_network_voice_start(const char *history_json)
 
 esp_err_t kiro_passport_network_voice_send_pcm(const void *pcm_data, size_t len)
 {
-    if (!pcm_data || len == 0) return ESP_ERR_INVALID_ARG;
+    if (!pcm_data || len == 0 || len > INT_MAX) return ESP_ERR_INVALID_ARG;
     if (!kiro_passport_network_is_connected()) return ESP_ERR_INVALID_STATE;
-    int ret = kiro_passport_network_send_binary(pcm_data, len);
+    /* 语音流切片采用 2000ms 超时：既容忍 2.4G Wi-Fi 的偶发重传抖动，又避免永久阻塞 */
+    int ret = esp_websocket_client_send_bin(s_network.client, pcm_data, (int)len,
+                                           pdMS_TO_TICKS(2000));
     return ret > 0 ? ESP_OK : ESP_FAIL;
 }
 
