@@ -55,11 +55,10 @@ CONFIG_ESP_WIFI_ENT_FREE_DYNAMIC_BUFFER=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN=y
 CONFIG_MBEDTLS_HARDWARE_MPI=y
-# Keep one fixed 4KB RX buffer and one fixed 4KB TX buffer for each TLS connection.
-# Runtime allocation saved heap before, but fragmented internal RAM could not satisfy
-# the 8986-byte contiguous allocation when a WebSocket frame arrived.
+# Keep one fixed 16KB RX buffer (required by Cloudflare Edge standard TLS records) and 4KB TX buffer.
 # CONFIG_MBEDTLS_DYNAMIC_BUFFER is not set
-CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=4096
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384
 CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
+# CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE is not set
 
 

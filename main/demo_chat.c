@@ -68,9 +68,11 @@ static char s_reply[CHAT_AI_TEXT_MAX];
 static char s_voice_err[128];
 static volatile bool s_tts_ready;
 static volatile bool s_tts_error;
+static volatile bool s_abort_session;
 static HMP3Decoder s_mp3;
 static lv_obj_t *s_marquee_bar;
 static lv_obj_t *s_marquee_label;
+static lv_obj_t *s_panel;
 
 /* ---- Flash 暂存流水线流式架构（采集零丢帧、末尾软淡出消灭音爆、上传 100% 完整） ----
  * 根因与设计：
@@ -157,6 +159,7 @@ static void chat_reset_to_idle(const char *status)
     }
     s_state = CHAT_IDLE;
     s_stop_record = false;
+    s_abort_session = false;
     if (status) chat_set_status(status);
 }
 
@@ -280,6 +283,8 @@ static void chat_voice_cb(kiro_passport_voice_event_t event, const void *data, s
     case KIRO_PASSPORT_VOICE_EVT_TTS_START:
         ESP_LOGI(TAG, "TTS start: total_bytes=%zu", len);
         s_mp3_len = 0;
+        s_tts_ready = false;
+        s_tts_error = false;
         break;
     case KIRO_PASSPORT_VOICE_EVT_TTS_DATA:
         if (data && len > 0 && s_store) {
@@ -323,9 +328,11 @@ static esp_err_t chat_play_mp3_stream(void)
     size_t buf_len = 0;
     size_t flash_off = 0;
     bool format_set = false;
+    uint32_t stall_count = 0;
+    size_t last_mp3_len = 0;
 
     while (true) {
-        if (s_stop_record) break;
+        if (s_stop_record || s_abort_session || s_tts_error) break;
 
         if (buf_len < buf_cap && flash_off < s_mp3_len) {
             size_t want = buf_cap - buf_len;
@@ -336,6 +343,28 @@ static esp_err_t chat_play_mp3_stream(void)
             flash_off += want;
             buf_len += want;
         }
+
+        /* 检查网络状态与流式接收停滞超时 */
+        if (flash_off >= s_mp3_len && !s_tts_ready) {
+            if (!kiro_passport_network_is_connected()) {
+                ESP_LOGW(TAG, "Relay 连接已断开，停止播放");
+                break;
+            }
+            if (s_mp3_len != last_mp3_len) {
+                last_mp3_len = s_mp3_len;
+                stall_count = 0;
+            } else {
+                stall_count++;
+                if (stall_count > 150) { /* 150 * 15ms = 2.25s 停滞无新数据 */
+                    ESP_LOGW(TAG, "TTS 流式接收停滞超时 (2.25s)，停止播放");
+                    break;
+                }
+            }
+        } else {
+            stall_count = 0;
+            last_mp3_len = s_mp3_len;
+        }
+
         if (buf_len == 0) {
             if (s_tts_ready && flash_off >= s_mp3_len) break;
             vTaskDelay(pdMS_TO_TICKS(15));
@@ -465,6 +494,9 @@ static void chat_sender_task(void *arg)
     (void)arg;
     static uint8_t s_tx_chunk[CHAT_NET_CHUNK_BYTES];
     while (true) {
+        if (!kiro_passport_network_is_connected() || s_tts_error || s_abort_session) {
+            break;
+        }
         size_t available = (s_rec_captured > s_rec_sent) ? (s_rec_captured - s_rec_sent) : 0;
         if (available >= CHAT_NET_CHUNK_BYTES) {
             if (esp_partition_read(s_store, CHAT_REC_OFFSET + s_rec_sent, s_tx_chunk,
@@ -472,7 +504,13 @@ static void chat_sender_task(void *arg)
                 esp_err_t err = kiro_passport_network_voice_send_pcm(s_tx_chunk, CHAT_NET_CHUNK_BYTES);
                 if (err == ESP_OK) {
                     s_rec_sent += CHAT_NET_CHUNK_BYTES;
+                    /* 发送节奏控制（Pacing）：
+                     * 1024 字节音频对应 32ms 实际时长。
+                     * 发送后休眠 20ms，既保证传输速率（~50KB/s）略高于麦克风录入速率（32KB/s）以实现低延迟，
+                     * 又绝不充爆 lwIP 仅 5.7KB 的 TCP 发送窗口，彻底避免 socket poll_write 超时断网！ */
+                    vTaskDelay(pdMS_TO_TICKS(20));
                 } else {
+                    if (!kiro_passport_network_is_connected() || s_tts_error) break;
                     ESP_LOGW(TAG, "PCM 推送超时/网络抖动，稍候重试");
                     vTaskDelay(pdMS_TO_TICKS(50));
                 }
@@ -495,7 +533,7 @@ static void chat_sender_task(void *arg)
             break;
         } else {
             /* 采集任务还在写，但数据暂不足一个发送包，休眠等待 */
-            vTaskDelay(pdMS_TO_TICKS(10));
+            vTaskDelay(pdMS_TO_TICKS(15));
         }
     }
     s_send_task = NULL;
@@ -602,6 +640,9 @@ static void chat_task(void *arg)
             }
             int wait_flush = 0;
             while (s_send_task && wait_flush++ < 350) {
+                if (!kiro_passport_network_is_connected() || s_tts_error || s_abort_session) {
+                    break;
+                }
                 vTaskDelay(pdMS_TO_TICKS(10));
             }
 
@@ -610,6 +651,11 @@ static void chat_task(void *arg)
                      (unsigned)s_rec_captured, (unsigned)s_rec_sent,
                      (long long)((esp_timer_get_time() - rec_t0) / 1000));
             s_stop_record = false; // 进入 WAITING 前清除停止标志，避免被当成提前取消！
+
+            if (!kiro_passport_network_is_connected() || s_tts_error) {
+                chat_reset_to_idle(s_voice_err[0] ? s_voice_err : "网络断开");
+                continue;
+            }
 
             if (s_rec_captured < 1600 * sizeof(int16_t)) {
                 kiro_passport_network_voice_end();
@@ -622,6 +668,7 @@ static void chat_task(void *arg)
             chat_set_status("AI 思考中…");
             s_stop_record = false;
             s_state = CHAT_WAITING;
+            chat_store_erase(CHAT_MP3_OFFSET, CHAT_MP3_MAX_BYTES);
             continue;
         }
 
@@ -631,8 +678,7 @@ static void chat_task(void *arg)
                 if (s_state != CHAT_WAITING) {
                     break;
                 }
-                if (s_stop_record) {
-                    // 用户在等待期间再次按 OK 主动取消
+                if (s_stop_record || s_abort_session) {
                     break;
                 }
                 // 收到 2048 字节 (约 0.25 秒音频) 或服务端已告知结束，立刻提前起播！
@@ -646,7 +692,7 @@ static void chat_task(void *arg)
             if (s_state != CHAT_WAITING) {
                 continue;
             }
-            if (s_stop_record) {
+            if (s_stop_record || s_abort_session) {
                 chat_reset_to_idle("已取消");
                 continue;
             }
@@ -665,7 +711,7 @@ static void chat_task(void *arg)
         }
 
         if (st == CHAT_PLAYING) {
-            chat_set_status("朗读中… (长按 OK 退出)");
+            chat_set_status("朗读中… (OK: 停止 · 长按 OK: 退出)");
             chat_log_heap("playing_start");
             chat_marquee_start(s_reply);
             chat_play_mp3_stream();
@@ -676,7 +722,13 @@ static void chat_task(void *arg)
                 s_mp3 = NULL;
             }
             chat_log_heap("playing_end");
-            chat_reset_to_idle("OK: 录音  ·  长按 OK: 退出");
+            if (s_abort_session || s_stop_record) {
+                chat_reset_to_idle("已停止");
+            } else if (s_tts_error) {
+                chat_reset_to_idle(s_voice_err[0] ? s_voice_err : "接收中断");
+            } else {
+                chat_reset_to_idle("OK: 录音  ·  长按 OK: 退出");
+            }
             continue;
         }
     }
@@ -695,6 +747,7 @@ void demo_chat_enter(void)
     s_reply[0] = '\0';
     s_history_count = 0;
     s_stop_record = false;
+    s_abort_session = false;
     s_state = CHAT_IDLE;
 
     if (!s_task) {
@@ -721,24 +774,24 @@ void demo_chat_enter(void)
     lv_obj_set_style_text_align(s_status, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_pos(s_status, 16, 68);
 
-    lv_obj_t *panel = lv_obj_create(s_scr);
-    lv_obj_set_pos(panel, 14, 100);
-    lv_obj_set_size(panel, 212, 140);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(UI_SYSTEM_SURFACE), 0);
-    lv_obj_set_style_border_color(panel, lv_color_hex(UI_SYSTEM_BORDER), 0);
-    lv_obj_set_style_border_width(panel, 1, 0);
-    lv_obj_set_style_radius(panel, 4, 0);
-    lv_obj_set_style_pad_all(panel, 6, 0);
-    lv_obj_add_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_AUTO);
+    s_panel = lv_obj_create(s_scr);
+    lv_obj_set_pos(s_panel, 14, 100);
+    lv_obj_set_size(s_panel, 212, 140);
+    lv_obj_set_style_bg_color(s_panel, lv_color_hex(UI_SYSTEM_SURFACE), 0);
+    lv_obj_set_style_border_color(s_panel, lv_color_hex(UI_SYSTEM_BORDER), 0);
+    lv_obj_set_style_border_width(s_panel, 1, 0);
+    lv_obj_set_style_radius(s_panel, 4, 0);
+    lv_obj_set_style_pad_all(s_panel, 6, 0);
+    lv_obj_add_flag(s_panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(s_panel, LV_SCROLLBAR_MODE_AUTO);
 
-    s_log = lv_label_create(panel);
+    s_log = lv_label_create(s_panel);
     lv_obj_set_width(s_log, 196);
     lv_label_set_long_mode(s_log, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(s_log, &ui_font_noto_sc_14, 0);
     lv_obj_set_style_text_color(s_log, lv_color_hex(UI_SYSTEM_TEXT), 0);
 
-    lv_obj_t *hint = ui_system_label(s_scr, "OK: 录音  ·  长按 OK: 退出", &ui_font_noto_sc_14,
+    lv_obj_t *hint = ui_system_label(s_scr, "OK: 录音 · 上下: 翻看 · 长按: 退出", &ui_font_noto_sc_14,
                                      UI_SYSTEM_MUTED);
     lv_obj_set_width(hint, 208);
     lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
@@ -798,6 +851,7 @@ void demo_chat_exit(void)
         s_scr = NULL;
         s_status = NULL;
         s_log = NULL;
+        s_panel = NULL;
     }
     chat_log_heap("chat_exit");
     power_manager_set_light_sleep_enabled(app_settings_get()->light_sleep_enabled);
@@ -805,6 +859,24 @@ void demo_chat_exit(void)
 
 void demo_chat_key(bsp_btn_t btn, bsp_btn_ev_t ev)
 {
+    if (ev != BSP_BTN_CLICK && ev != BSP_BTN_HOLD) return;
+
+    /* 上下按钮支持对话历史文本滚动（单击步进 48px，长按连发 64px） */
+    if (btn == BSP_BTN_UP) {
+        if (s_panel) {
+            int32_t step = (ev == BSP_BTN_HOLD) ? 64 : 48;
+            lv_obj_scroll_by_bounded(s_panel, 0, step, LV_ANIM_ON);
+        }
+        return;
+    }
+    if (btn == BSP_BTN_DOWN) {
+        if (s_panel) {
+            int32_t step = (ev == BSP_BTN_HOLD) ? 64 : 48;
+            lv_obj_scroll_by_bounded(s_panel, 0, -step, LV_ANIM_ON);
+        }
+        return;
+    }
+
     if (ev != BSP_BTN_CLICK) return;
     if (s_state == CHAT_IDLE && btn == BSP_BTN_OK) {
         kiro_passport_network_config_t cfg;
@@ -822,8 +894,12 @@ void demo_chat_key(bsp_btn_t btn, bsp_btn_ev_t ev)
             return;
         }
         s_stop_record = false;
+        s_abort_session = false;
         s_state = CHAT_RECORDING;
     } else if ((s_state == CHAT_RECORDING || s_state == CHAT_WAITING) && btn == BSP_BTN_OK) {
+        s_stop_record = true;
+    } else if (s_state == CHAT_PLAYING && btn == BSP_BTN_OK) {
+        s_abort_session = true;
         s_stop_record = true;
     }
 }
@@ -831,7 +907,8 @@ void demo_chat_key(bsp_btn_t btn, bsp_btn_ev_t ev)
 bool demo_chat_back(void)
 {
     if (s_state != CHAT_IDLE) {
-        chat_set_status("处理中，请稍候…");
+        s_abort_session = true;
+        s_stop_record = true;
         return true;
     }
     return false;

@@ -15,6 +15,11 @@ if not port:
     sys.stdout.write('### could not open %s\n' % DEV)
     sys.stdout.flush()
     raise SystemExit(1)
+port.dtr = False
+port.rts = True
+time.sleep(0.05)
+port.rts = False
+port.dtr = True
 sys.stdout.write('--- serial console attached %s @115200 ---\n' % DEV)
 sys.stdout.flush()
 try:

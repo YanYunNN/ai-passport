@@ -42,6 +42,7 @@ static char s_active_image_title[64] = {0};
 static uint32_t s_active_image_version = 0;
 static SemaphoreHandle_t s_image_lock = NULL;
 static bool s_is_streaming_image = false;
+static bool s_is_binary_stream = false;
 static char s_b64_carry[4];
 static size_t s_b64_carry_len = 0;
 static char s_ctrl_rx_buffer[1024];
@@ -715,23 +716,32 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t event_id, 
         ESP_LOGW(TAG, "Relay WebSocket 连接断开 (DISCONNECTED)");
         kiro_passport_set_connection(false, NULL);
         s_network.transport_failed = true;
+        s_is_binary_stream = false;
+        if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_ERROR, "网络断开", strlen("网络断开"), s_voice_user_ctx);
         if (wifi_manager_get_state() == WIFI_MANAGER_CONNECTED) set_state(KIRO_PASSPORT_NETWORK_CONNECTING);
     } else if (event_id == WEBSOCKET_EVENT_CLOSED) {
         ESP_LOGW(TAG, "Relay WebSocket 会话关闭 (CLOSED)");
         kiro_passport_set_connection(false, NULL);
         s_network.transport_failed = true;
+        s_is_binary_stream = false;
+        if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_ERROR, "连接关闭", strlen("连接关闭"), s_voice_user_ctx);
         if (wifi_manager_get_state() == WIFI_MANAGER_CONNECTED) set_state(KIRO_PASSPORT_NETWORK_CONNECTING);
     } else if (event_id == WEBSOCKET_EVENT_ERROR) {
         ESP_LOGE(TAG, "Relay WebSocket 发生错误 (ERROR)");
         kiro_passport_set_connection(false, NULL);
         s_network.transport_failed = true;
+        s_is_binary_stream = false;
+        if (s_voice_cb) s_voice_cb(KIRO_PASSPORT_VOICE_EVT_ERROR, "连接错误", strlen("连接错误"), s_voice_user_ctx);
         set_state(KIRO_PASSPORT_NETWORK_ERROR);
     } else if (event_id == WEBSOCKET_EVENT_DATA) {
         if (event->op_code == WS_TRANSPORT_OPCODES_PING || event->op_code == WS_TRANSPORT_OPCODES_PONG) {
             return;
         }
 
-        if (event->op_code == WS_TRANSPORT_OPCODES_BINARY) {
+        bool is_binary = (event->op_code == WS_TRANSPORT_OPCODES_BINARY);
+        if (is_binary || (s_is_binary_stream && (event->op_code == WS_TRANSPORT_OPCODES_CONT || event->op_code == 0))) {
+            bool frame_finished = event->fin && (event->payload_offset + event->data_len >= event->payload_len);
+            s_is_binary_stream = !frame_finished;
             if (s_voice_cb && event->data_len > 0) {
                 s_voice_cb(KIRO_PASSPORT_VOICE_EVT_TTS_DATA, event->data_ptr, (size_t)event->data_len, s_voice_user_ctx);
             }
@@ -784,6 +794,7 @@ static void destroy_client(void)
 {
     if (!s_network.client) return;
     ESP_LOGI(TAG, "销毁 WebSocket 客户端");
+    s_is_binary_stream = false;
     esp_websocket_client_stop(s_network.client);
     esp_websocket_client_destroy(s_network.client);
     s_network.client = NULL;
@@ -813,7 +824,7 @@ static esp_err_t start_client(void)
         .enable_close_reconnect = false,
         .reconnect_timeout_ms = KIRO_NETWORK_RECONNECT_MS,
         .network_timeout_ms = 10000,
-        .buffer_size = 2048,
+        .buffer_size = 4096,
         .task_stack = 4096,
         .task_prio = 5,
         .ping_interval_sec = 20,
@@ -1409,9 +1420,9 @@ esp_err_t kiro_passport_network_voice_send_pcm(const void *pcm_data, size_t len)
 {
     if (!pcm_data || len == 0 || len > INT_MAX) return ESP_ERR_INVALID_ARG;
     if (!kiro_passport_network_is_connected()) return ESP_ERR_INVALID_STATE;
-    /* 语音流切片采用 2000ms 超时：既容忍 2.4G Wi-Fi 的偶发重传抖动，又避免永久阻塞 */
+    /* 语音流切片采用 6000ms 超时：容忍 2.4G Wi-Fi 偶发重传抖动，避免误报超时断开 WebSocket 连接 */
     int ret = esp_websocket_client_send_bin(s_network.client, pcm_data, (int)len,
-                                           pdMS_TO_TICKS(2000));
+                                           pdMS_TO_TICKS(6000));
     return ret > 0 ? ESP_OK : ESP_FAIL;
 }
 
